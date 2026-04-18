@@ -1,12 +1,16 @@
 # knx-rs
 
 [![CI](https://github.com/metaneutrons/knx-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/metaneutrons/knx-rs/actions/workflows/ci.yml)
-[![knx-core crates.io](https://img.shields.io/crates/v/knx-core.svg?label=knx-core)](https://crates.io/crates/knx-core)
-[![knx-ip crates.io](https://img.shields.io/crates/v/knx-ip.svg?label=knx-ip)](https://crates.io/crates/knx-ip)
-[![knx-device crates.io](https://img.shields.io/crates/v/knx-device.svg?label=knx-device)](https://crates.io/crates/knx-device)
-[![docs.rs](https://img.shields.io/docsrs/knx-core)](https://docs.rs/knx-core)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
 [![MSRV: 1.85](https://img.shields.io/badge/MSRV-1.85-orange.svg)](https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html)
+[![no_std](https://img.shields.io/badge/no__std-compatible-green.svg)](https://docs.rust-embedded.org/book/)
+
+<!-- Uncomment after publishing to crates.io:
+[![knx-core](https://img.shields.io/crates/v/knx-core.svg?label=knx-core)](https://crates.io/crates/knx-core)
+[![knx-ip](https://img.shields.io/crates/v/knx-ip.svg?label=knx-ip)](https://crates.io/crates/knx-ip)
+[![knx-device](https://img.shields.io/crates/v/knx-device.svg?label=knx-device)](https://crates.io/crates/knx-device)
+[![docs.rs](https://img.shields.io/docsrs/knx-core)](https://docs.rs/knx-core)
+-->
 
 A platform-independent KNX protocol stack in Rust — for embedded devices, servers, and everything in between.
 
