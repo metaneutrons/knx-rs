@@ -3,15 +3,15 @@
 
 //! `knx-device` — KNX device stack with ETS programming support.
 //!
-//! Provides the full device-side KNX stack:
+//! # Architecture
 //!
-//! - [`property`] — Property system (data types, read/write)
-//! - [`interface_object`] — Interface object model
-//! - [`device_object`] — Device object (individual address, serial number, etc.)
-//! - [`application_program`] — Application program object (ETS parameters)
-//! - [`address_table`] — Address table (TSAP → group address mapping)
-//! - [`association_table`] — Association table (TSAP → ASAP mapping)
-//! - [`group_object_table`] — Group object table (communication object descriptors)
+//! ```text
+//! Application code ←→ GroupObjects ←→ ApplicationLayer ←→ TransportLayer ←→ Bus
+//!                                          ↕
+//!                                   InterfaceObjects (properties, tables)
+//!                                          ↕
+//!                                      DeviceMemory (persistence)
+//! ```
 //!
 //! # `no_std` Support
 //!
@@ -23,10 +23,13 @@
 extern crate alloc;
 
 pub mod address_table;
+pub mod application_layer;
 pub mod application_program;
 pub mod association_table;
 pub mod device_object;
 pub mod group_object;
 pub mod group_object_table;
 pub mod interface_object;
+pub mod memory;
 pub mod property;
+pub mod transport_layer;
