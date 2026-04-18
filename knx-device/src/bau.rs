@@ -602,4 +602,36 @@ mod tests {
         bau.process_frame(&disconnect);
         assert!(!bau.transport.is_connected_to(0x1102));
     }
+
+    #[test]
+    fn memory_write_grows_area() {
+        let mut bau = test_bau();
+        bau.handle_memory_write(0x0010, &[0x01, 0x02]);
+        assert!(bau.memory_area.len() >= 0x12);
+        assert_eq!(bau.memory_area[0x10], 0x01);
+    }
+
+    #[test]
+    fn property_write_via_bau() {
+        let mut bau = test_bau();
+        bau.handle_property_write(0, 54, 1, 1, &[0x01]); // PID_PROG_MODE
+        assert!(device_object::prog_mode(bau.device()));
+    }
+
+    #[test]
+    fn property_read_multi_object() {
+        use crate::application_program::new_application_program_object;
+        let mut bau = test_bau();
+        let app_idx = bau.add_object(new_application_program_object());
+        bau.handle_property_read(0x1102, app_idx, 1, 1, 1); // PID_OBJECT_TYPE
+        assert!(bau.next_outgoing_frame().is_some());
+    }
+
+    #[test]
+    fn device_descriptor_response_to_source() {
+        let mut bau = test_bau();
+        bau.queue_device_descriptor_response(0x1102);
+        let resp = bau.next_outgoing_frame().unwrap();
+        assert_eq!(resp.destination_address_raw(), 0x1102);
+    }
 }

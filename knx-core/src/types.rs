@@ -179,3 +179,39 @@ impl TryFrom<u8> for DptMedium {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn priority_try_from() {
+        assert_eq!(Priority::try_from(0x00), Ok(Priority::System));
+        assert_eq!(Priority::try_from(0x04), Ok(Priority::Normal));
+        assert_eq!(Priority::try_from(0x08), Ok(Priority::Urgent));
+        assert_eq!(Priority::try_from(0x0C), Ok(Priority::Low));
+        assert_eq!(Priority::try_from(0xBC), Ok(Priority::Low)); // masked
+    }
+
+    #[test]
+    fn frame_format_try_from() {
+        assert_eq!(FrameFormat::try_from(0x80), Ok(FrameFormat::Standard));
+        assert_eq!(FrameFormat::try_from(0x00), Ok(FrameFormat::Extended));
+        assert_eq!(FrameFormat::try_from(0xBC), Ok(FrameFormat::Standard));
+    }
+
+    #[test]
+    fn address_type_try_from() {
+        assert_eq!(AddressType::try_from(0x80), Ok(AddressType::Group));
+        assert_eq!(AddressType::try_from(0x00), Ok(AddressType::Individual));
+        assert_eq!(AddressType::try_from(0xE0), Ok(AddressType::Group));
+    }
+
+    #[test]
+    fn dpt_medium_try_from() {
+        assert_eq!(DptMedium::try_from(0x00), Ok(DptMedium::Tp1));
+        assert_eq!(DptMedium::try_from(0x02), Ok(DptMedium::Rf));
+        assert_eq!(DptMedium::try_from(0x05), Ok(DptMedium::Ip));
+        assert!(DptMedium::try_from(0x03).is_err());
+    }
+}

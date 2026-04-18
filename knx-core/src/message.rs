@@ -255,3 +255,16 @@ impl TryFrom<u8> for MessageCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_code_try_from() {
+        assert_eq!(MessageCode::try_from(0x29), Ok(MessageCode::LDataInd));
+        assert_eq!(MessageCode::try_from(0x11), Ok(MessageCode::LDataReq));
+        assert_eq!(MessageCode::try_from(0x2E), Ok(MessageCode::LDataCon));
+        assert!(MessageCode::try_from(0x00).is_err());
+    }
+}

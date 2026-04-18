@@ -26,7 +26,7 @@ KNX_SRCS := \
 
 all: generate
 	./generate
-	cp dpt_vectors.json cemi_vectors.json ../knx-core/tests/fixtures/
+	cp dpt_vectors.json cemi_vectors.json cemi_setter_vectors.json ../knx-core/tests/fixtures/
 
 generate: generate.cpp $(KNX_SRCS)
 	$(CXX) $(CXXFLAGS) -o $@ $^

@@ -185,4 +185,76 @@ mod tests {
     fn parse_unsupported() {
         assert!(parse_indication(ApduType::SecureService, &[]).is_none());
     }
+
+    #[test]
+    fn parse_memory_read() {
+        let ind = parse_indication(ApduType::MemoryRead, &[0x03, 0x00, 0x10]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::MemoryRead {
+                count: 3,
+                address: 0x0010,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_memory_write() {
+        let ind = parse_indication(ApduType::MemoryWrite, &[0x02, 0x00, 0x20, 0xAA, 0xBB]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::MemoryWrite {
+                count: 2,
+                address: 0x0020,
+                ..
+            }
+        ));
+        if let AppIndication::MemoryWrite { data, .. } = ind {
+            assert_eq!(data, &[0xAA, 0xBB]);
+        }
+    }
+
+    #[test]
+    fn parse_individual_address_write() {
+        let ind = parse_indication(ApduType::IndividualAddressWrite, &[0x11, 0x05]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::IndividualAddressWrite { address: 0x1105 }
+        ));
+    }
+
+    #[test]
+    fn parse_individual_address_read() {
+        let ind = parse_indication(ApduType::IndividualAddressRead, &[]).unwrap();
+        assert!(matches!(ind, AppIndication::IndividualAddressRead));
+    }
+
+    #[test]
+    fn parse_authorize_request() {
+        let ind =
+            parse_indication(ApduType::AuthorizeRequest, &[0x00, 0x00, 0x00, 0x00, 0xFF]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::AuthorizeRequest { key: 0x0000_00FF }
+        ));
+    }
+
+    #[test]
+    fn parse_property_write() {
+        let ind = parse_indication(
+            ApduType::PropertyValueWrite,
+            &[0x00, 0x36, 0x10, 0x01, 0x01],
+        )
+        .unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::PropertyValueWrite {
+                object_index: 0,
+                property_id: 0x36,
+                count: 1,
+                start_index: 1,
+                ..
+            }
+        ));
+    }
 }
