@@ -132,7 +132,7 @@ All 34 main groups from the C++ reference are supported:
 
 ## Testing
 
-184 tests validated against the [OpenKNX/knx](https://github.com/OpenKNX/knx) C++ reference stack:
+Validated against the [OpenKNX/knx](https://github.com/OpenKNX/knx) C++ reference stack:
 
 - **Golden test vectors** — C++ harness (`test-vectors/generate.cpp`) generates JSON fixtures for CEMI frames, CEMI setters, and DPT conversions, verified byte-for-byte in Rust
 - **Integration tests** — tunnel server ↔ client on real UDP loopback (connect, heartbeat, frame exchange, disconnect)
