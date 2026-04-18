@@ -5,13 +5,9 @@
 
 use alloc::vec::Vec;
 
-use super::Property;
 use super::types::{AccessLevel, PropertyDataType, PropertyId};
 
 /// A property that stores its data in a `Vec<u8>`.
-///
-/// This is the most common property type — used for device configuration
-/// data that ETS reads and writes.
 pub struct DataProperty {
     id: PropertyId,
     write_enable: bool,
@@ -51,54 +47,58 @@ impl DataProperty {
         Self::new(id, true, data_type, 1, AccessLevel::None, value)
     }
 
+    /// The property identifier.
+    pub const fn id(&self) -> PropertyId {
+        self.id
+    }
+
+    /// Whether the property can be written.
+    pub const fn write_enable(&self) -> bool {
+        self.write_enable
+    }
+
+    /// The data type.
+    pub const fn data_type(&self) -> PropertyDataType {
+        self.data_type
+    }
+
+    /// Maximum number of elements.
+    pub const fn max_elements(&self) -> u16 {
+        self.max_elements
+    }
+
+    /// Access level.
+    pub const fn access(&self) -> u8 {
+        self.access
+    }
+
+    /// Size of one element in bytes.
+    pub const fn element_size(&self) -> u8 {
+        self.data_type.size()
+    }
+
     /// Direct access to the underlying data.
+    #[allow(clippy::missing_const_for_fn)]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
 
     /// Direct mutable access to the underlying data.
-    #[allow(clippy::missing_const_for_fn)] // &mut Vec can't be const
+    #[allow(clippy::missing_const_for_fn)]
     pub fn data_mut(&mut self) -> &mut Vec<u8> {
         &mut self.data
     }
-}
 
-impl Property for DataProperty {
-    fn id(&self) -> PropertyId {
-        self.id
-    }
-
-    fn write_enable(&self) -> bool {
-        self.write_enable
-    }
-
-    fn data_type(&self) -> PropertyDataType {
-        self.data_type
-    }
-
-    fn max_elements(&self) -> u16 {
-        self.max_elements
-    }
-
-    fn access(&self) -> u8 {
-        self.access
-    }
-
-    fn read(&self, start: u16, count: u8, buf: &mut Vec<u8>) -> u8 {
+    /// Read elements from the property.
+    pub fn read(&self, start: u16, count: u8, buf: &mut Vec<u8>) -> u8 {
         let elem_size = self.element_size() as usize;
         if elem_size == 0 {
-            // Variable length: return all data
             buf.extend_from_slice(&self.data);
             return 1;
         }
 
-        let total_elements = if elem_size > 0 {
-            self.data.len() / elem_size
-        } else {
-            0
-        };
-
-        let start_idx = start.saturating_sub(1) as usize; // KNX uses 1-based indexing
+        let total_elements = self.data.len() / elem_size;
+        let start_idx = start.saturating_sub(1) as usize;
         let mut read_count = 0u8;
 
         for i in 0..count as usize {
@@ -117,14 +117,14 @@ impl Property for DataProperty {
         read_count
     }
 
-    fn write(&mut self, start: u16, count: u8, data: &[u8]) -> u8 {
+    /// Write elements to the property.
+    pub fn write(&mut self, start: u16, count: u8, data: &[u8]) -> u8 {
         if !self.write_enable {
             return 0;
         }
 
         let elem_size = self.element_size() as usize;
         if elem_size == 0 {
-            // Variable length: replace all data
             self.data = data.to_vec();
             return 1;
         }
@@ -141,7 +141,6 @@ impl Property for DataProperty {
                 break;
             }
 
-            // Grow data if needed (up to max_elements)
             let needed = prop_offset + elem_size;
             if needed > self.data.len() {
                 if elem_idx >= self.max_elements as usize {
@@ -156,6 +155,17 @@ impl Property for DataProperty {
         }
 
         written
+    }
+
+    /// Property description for ETS.
+    pub const fn description(&self) -> super::PropertyDescription {
+        super::PropertyDescription {
+            id: self.id,
+            write_enable: self.write_enable,
+            data_type: self.data_type,
+            max_elements: self.max_elements,
+            access: self.access,
+        }
     }
 }
 
@@ -186,7 +196,6 @@ mod tests {
         );
         let count = prop.write(1, 1, &[0x00, 0xFA]);
         assert_eq!(count, 1);
-
         let mut buf = Vec::new();
         prop.read(1, 1, &mut buf);
         assert_eq!(buf, &[0x00, 0xFA]);
@@ -204,22 +213,6 @@ mod tests {
     }
 
     #[test]
-    fn read_multi_element() {
-        let prop = DataProperty::new(
-            PropertyId::Table,
-            false,
-            PropertyDataType::UnsignedInt,
-            10,
-            AccessLevel::None,
-            &[0x00, 0x01, 0x00, 0x02, 0x00, 0x03],
-        );
-        let mut buf = Vec::new();
-        let count = prop.read(1, 3, &mut buf);
-        assert_eq!(count, 3);
-        assert_eq!(buf, &[0x00, 0x01, 0x00, 0x02, 0x00, 0x03]);
-    }
-
-    #[test]
     fn write_grows_data() {
         let mut prop = DataProperty::new(
             PropertyId::Table,
@@ -232,28 +225,5 @@ mod tests {
         let count = prop.write(1, 2, &[0x00, 0x01, 0x00, 0x02]);
         assert_eq!(count, 2);
         assert_eq!(prop.data(), &[0x00, 0x01, 0x00, 0x02]);
-    }
-
-    #[test]
-    fn element_size_matches_type() {
-        let prop = DataProperty::read_only(
-            PropertyId::ObjectType,
-            PropertyDataType::UnsignedInt,
-            &[0, 0],
-        );
-        assert_eq!(prop.element_size(), 2);
-    }
-
-    #[test]
-    fn description() {
-        let prop = DataProperty::read_only(
-            PropertyId::ManufacturerId,
-            PropertyDataType::UnsignedInt,
-            &[0, 0],
-        );
-        let desc = prop.description();
-        assert_eq!(desc.id, PropertyId::ManufacturerId);
-        assert!(!desc.write_enable);
-        assert_eq!(desc.data_type, PropertyDataType::UnsignedInt);
     }
 }

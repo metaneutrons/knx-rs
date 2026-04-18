@@ -16,49 +16,59 @@ pub fn new_application_program_object() -> InterfaceObject {
     let mut obj = InterfaceObject::new(ObjectType::ApplicationProgram);
 
     // Program version (5 bytes, written by ETS)
-    obj.add_property(DataProperty::new(
-        PropertyId::ProgramVersion,
-        true,
-        PropertyDataType::Generic05,
-        1,
-        AccessLevel::WriteHigh,
-        &[0u8; 5],
-    ));
+    obj.add_property(
+        DataProperty::new(
+            PropertyId::ProgramVersion,
+            true,
+            PropertyDataType::Generic05,
+            1,
+            AccessLevel::WriteHigh,
+            &[0u8; 5],
+        )
+        .into(),
+    );
 
     // PEI type (always 0 for IP devices)
-    obj.add_property(DataProperty::read_only(
-        PropertyId::PeiType,
-        PropertyDataType::UnsignedChar,
-        &[0x00],
-    ));
+    obj.add_property(
+        DataProperty::read_only(PropertyId::PeiType, PropertyDataType::UnsignedChar, &[0x00])
+            .into(),
+    );
 
     // Load state control
-    obj.add_property(DataProperty::read_write(
-        PropertyId::LoadStateControl,
-        PropertyDataType::UnsignedChar,
-        &[LoadState::Unloaded as u8],
-    ));
+    obj.add_property(
+        DataProperty::read_write(
+            PropertyId::LoadStateControl,
+            PropertyDataType::UnsignedChar,
+            &[LoadState::Unloaded as u8],
+        )
+        .into(),
+    );
 
     // Table reference (pointer to application data in memory)
-    obj.add_property(DataProperty::read_write(
-        PropertyId::TableReference,
-        PropertyDataType::UnsignedLong,
-        &[0u8; 4],
-    ));
+    obj.add_property(
+        DataProperty::read_write(
+            PropertyId::TableReference,
+            PropertyDataType::UnsignedLong,
+            &[0u8; 4],
+        )
+        .into(),
+    );
 
     // MCB table (memory control block)
-    obj.add_property(DataProperty::read_write(
-        PropertyId::McbTable,
-        PropertyDataType::Generic08,
-        &[0u8; 8],
-    ));
+    obj.add_property(
+        DataProperty::read_write(PropertyId::McbTable, PropertyDataType::Generic08, &[0u8; 8])
+            .into(),
+    );
 
     // Error code
-    obj.add_property(DataProperty::read_only(
-        PropertyId::ErrorCode,
-        PropertyDataType::UnsignedChar,
-        &[0x00],
-    ));
+    obj.add_property(
+        DataProperty::read_only(
+            PropertyId::ErrorCode,
+            PropertyDataType::UnsignedChar,
+            &[0x00],
+        )
+        .into(),
+    );
 
     obj
 }

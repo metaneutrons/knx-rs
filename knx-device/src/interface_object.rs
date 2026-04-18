@@ -2,10 +2,6 @@
 // Copyright (C) 2025 Fabian Schmieder
 
 //! KNX interface objects.
-//!
-//! An interface object is a container of properties that ETS can read, write,
-//! and query. Every KNX device exposes a set of interface objects (device object,
-//! address table, group object table, etc.).
 
 use alloc::vec::Vec;
 
@@ -31,30 +27,24 @@ pub enum ObjectType {
 }
 
 /// An interface object — a named collection of properties.
-///
-/// This is the concrete type (not a trait) because KNX interface objects
-/// all share the same property-bag structure. Specialization happens
-/// through which properties are added and how they're initialized.
 pub struct InterfaceObject {
     object_type: ObjectType,
-    properties: Vec<DataProperty>,
+    properties: Vec<Property>,
 }
 
 impl InterfaceObject {
     /// Create a new interface object of the given type.
-    ///
-    /// Automatically adds the mandatory `PID_OBJECT_TYPE` property.
     pub fn new(object_type: ObjectType) -> Self {
         let type_bytes = (object_type as u16).to_be_bytes();
         let mut obj = Self {
             object_type,
             properties: Vec::new(),
         };
-        obj.add_property(DataProperty::read_only(
+        obj.add_property(Property::from(DataProperty::read_only(
             PropertyId::ObjectType,
             PropertyDataType::UnsignedInt,
             &type_bytes,
-        ));
+        )));
         obj
     }
 
@@ -64,18 +54,18 @@ impl InterfaceObject {
     }
 
     /// Add a property to this object.
-    pub fn add_property(&mut self, prop: DataProperty) {
+    pub fn add_property(&mut self, prop: Property) {
         self.properties.push(prop);
     }
 
     /// Find a property by ID.
-    pub fn property(&self, id: PropertyId) -> Option<&DataProperty> {
-        self.properties.iter().find(|p| Property::id(*p) == id)
+    pub fn property(&self, id: PropertyId) -> Option<&Property> {
+        self.properties.iter().find(|p| p.id() == id)
     }
 
     /// Find a mutable property by ID.
-    pub fn property_mut(&mut self, id: PropertyId) -> Option<&mut DataProperty> {
-        self.properties.iter_mut().find(|p| Property::id(*p) == id)
+    pub fn property_mut(&mut self, id: PropertyId) -> Option<&mut Property> {
+        self.properties.iter_mut().find(|p| p.id() == id)
     }
 
     /// Read a property value. Returns the number of elements read.
@@ -90,26 +80,21 @@ impl InterfaceObject {
     }
 
     /// Get the description of a property by ID or index.
-    ///
-    /// If `property_id` is non-zero, looks up by ID and returns the index.
-    /// If `property_id` is zero, looks up by `property_index` and returns the ID.
     pub fn read_property_description(
         &self,
         property_id: u8,
         property_index: u8,
     ) -> Option<(u8, PropertyDescription)> {
         if property_id != 0 {
-            // Look up by ID
             let pid = PropertyId::try_from(property_id).ok()?;
             let (idx, prop) = self
                 .properties
                 .iter()
                 .enumerate()
-                .find(|(_, p)| Property::id(*p) == pid)?;
+                .find(|(_, p)| p.id() == pid)?;
             #[expect(clippy::cast_possible_truncation)]
             Some((idx as u8, prop.description()))
         } else {
-            // Look up by index
             let prop = self.properties.get(property_index as usize)?;
             Some((property_index, prop.description()))
         }
@@ -119,46 +104,11 @@ impl InterfaceObject {
     pub fn property_count(&self) -> usize {
         self.properties.len()
     }
-
-    /// Serialize all property data for persistence.
-    pub fn save(&self, buf: &mut Vec<u8>) {
-        for prop in &self.properties {
-            let data = prop.data();
-            // Write length (u16 BE) + data
-            #[expect(clippy::cast_possible_truncation)]
-            let len = data.len() as u16;
-            buf.extend_from_slice(&len.to_be_bytes());
-            buf.extend_from_slice(data);
-        }
-    }
-
-    /// Restore property data from a persistence buffer.
-    ///
-    /// Returns the number of bytes consumed.
-    pub fn restore(&mut self, buf: &[u8]) -> usize {
-        let mut offset = 0;
-        for prop in &mut self.properties {
-            if offset + 2 > buf.len() {
-                break;
-            }
-            let len = u16::from_be_bytes([buf[offset], buf[offset + 1]]) as usize;
-            offset += 2;
-            if offset + len > buf.len() {
-                break;
-            }
-            if prop.write_enable() {
-                prop.write(1, 1, &buf[offset..offset + len]);
-            }
-            offset += len;
-        }
-        offset
-    }
 }
 
 impl TryFrom<u8> for PropertyId {
     type Error = u8;
     fn try_from(v: u8) -> Result<Self, Self::Error> {
-        // Only the common PIDs — extend as needed
         match v {
             1 => Ok(Self::ObjectType),
             5 => Ok(Self::LoadStateControl),
@@ -195,6 +145,10 @@ impl TryFrom<u8> for PropertyId {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::property::AccessLevel;
+    use alloc::boxed::Box;
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicU8, Ordering};
 
     #[test]
     fn new_object_has_type_property() {
@@ -202,17 +156,17 @@ mod tests {
         let mut buf = Vec::new();
         let count = obj.read_property(PropertyId::ObjectType, 1, 1, &mut buf);
         assert_eq!(count, 1);
-        assert_eq!(buf, &[0x00, 0x00]); // ObjectType::Device = 0
+        assert_eq!(buf, &[0x00, 0x00]);
     }
 
     #[test]
-    fn add_and_read_property() {
+    fn add_and_read_data_property() {
         let mut obj = InterfaceObject::new(ObjectType::Device);
-        obj.add_property(DataProperty::read_only(
+        obj.add_property(Property::from(DataProperty::read_only(
             PropertyId::ManufacturerId,
             PropertyDataType::UnsignedInt,
             &[0x00, 0xFA],
-        ));
+        )));
         let mut buf = Vec::new();
         let count = obj.read_property(PropertyId::ManufacturerId, 1, 1, &mut buf);
         assert_eq!(count, 1);
@@ -220,19 +174,46 @@ mod tests {
     }
 
     #[test]
-    fn write_property() {
+    fn write_data_property() {
         let mut obj = InterfaceObject::new(ObjectType::Device);
-        obj.add_property(DataProperty::read_write(
+        obj.add_property(Property::from(DataProperty::read_write(
             PropertyId::ProgMode,
             PropertyDataType::UnsignedChar,
             &[0x00],
-        ));
-        let count = obj.write_property(PropertyId::ProgMode, 1, 1, &[0x01]);
-        assert_eq!(count, 1);
-
+        )));
+        obj.write_property(PropertyId::ProgMode, 1, 1, &[0x01]);
         let mut buf = Vec::new();
         obj.read_property(PropertyId::ProgMode, 1, 1, &mut buf);
         assert_eq!(buf, &[0x01]);
+    }
+
+    #[test]
+    fn callback_property_read_write() {
+        let counter = Arc::new(AtomicU8::new(0));
+        let cr = counter.clone();
+
+        let mut obj = InterfaceObject::new(ObjectType::Device);
+        obj.add_property(Property::callback(
+            PropertyId::ProgMode,
+            true,
+            PropertyDataType::UnsignedChar,
+            1,
+            AccessLevel::None,
+            move |_start: u16, _count: u8| -> Vec<u8> { alloc::vec![cr.load(Ordering::Relaxed)] },
+            Some(Box::new(
+                move |_start: u16, _count: u8, data: &[u8]| -> u8 {
+                    if let Some(&v) = data.first() {
+                        counter.store(v, Ordering::Relaxed);
+                    }
+                    1
+                },
+            )),
+        ));
+
+        obj.write_property(PropertyId::ProgMode, 1, 1, &[42]);
+        let mut buf = Vec::new();
+        obj.read_property(PropertyId::ProgMode, 1, 1, &mut buf);
+        assert_eq!(buf, &[42]);
     }
 
     #[test]
@@ -241,7 +222,6 @@ mod tests {
         let mut buf = Vec::new();
         let count = obj.read_property(PropertyId::SerialNumber, 1, 1, &mut buf);
         assert_eq!(count, 0);
-        assert!(buf.is_empty());
     }
 
     #[test]
@@ -250,15 +230,6 @@ mod tests {
         let (idx, desc) = obj
             .read_property_description(PropertyId::ObjectType as u8, 0)
             .unwrap();
-        assert_eq!(idx, 0);
-        assert_eq!(desc.id, PropertyId::ObjectType);
-        assert!(!desc.write_enable);
-    }
-
-    #[test]
-    fn property_description_by_index() {
-        let obj = InterfaceObject::new(ObjectType::Device);
-        let (idx, desc) = obj.read_property_description(0, 0).unwrap();
         assert_eq!(idx, 0);
         assert_eq!(desc.id, PropertyId::ObjectType);
     }

@@ -14,51 +14,164 @@ pub use types::{
     AccessLevel, ErrorCode, LoadEvent, LoadState, PropertyDataType, PropertyDescription, PropertyId,
 };
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-/// A KNX property — the unit of configuration data in interface objects.
+/// Read callback signature: `(start, count) -> data bytes`.
+type ReadFn = Box<dyn Fn(u16, u8) -> Vec<u8> + Send>;
+/// Write callback signature: `(start, count, data) -> elements written`.
+pub type WriteFn = Box<dyn Fn(u16, u8, &[u8]) -> u8 + Send>;
+
+/// A KNX property with metadata and either data storage or callbacks.
 ///
-/// Properties are identified by [`PropertyId`] and have a type, access level,
-/// and one or more elements.
-pub trait Property {
+/// Metadata (id, type, access) is always stored inline for zero-cost access.
+/// The actual data is either a `DataProperty` or a pair of callbacks.
+pub struct Property {
+    id: PropertyId,
+    write_enable: bool,
+    data_type: PropertyDataType,
+    max_elements: u16,
+    access: u8,
+    storage: PropertyStorage,
+}
+
+enum PropertyStorage {
+    Data(DataProperty),
+    Callback {
+        read_fn: ReadFn,
+        write_fn: Option<WriteFn>,
+    },
+}
+
+impl Property {
+    /// Create a data-backed property.
+    pub const fn data(prop: DataProperty) -> Self {
+        Self {
+            id: prop.id(),
+            write_enable: prop.write_enable(),
+            data_type: prop.data_type(),
+            max_elements: prop.max_elements(),
+            access: prop.access(),
+            storage: PropertyStorage::Data(prop),
+        }
+    }
+
+    /// Create a callback-backed property.
+    pub fn callback(
+        id: PropertyId,
+        write_enable: bool,
+        data_type: PropertyDataType,
+        max_elements: u16,
+        access: AccessLevel,
+        read_fn: impl Fn(u16, u8) -> Vec<u8> + Send + 'static,
+        write_fn: Option<WriteFn>,
+    ) -> Self {
+        Self {
+            id,
+            write_enable,
+            data_type,
+            max_elements,
+            access: access as u8,
+            storage: PropertyStorage::Callback {
+                read_fn: Box::new(read_fn),
+                write_fn,
+            },
+        }
+    }
+
     /// The property identifier.
-    fn id(&self) -> PropertyId;
+    pub const fn id(&self) -> PropertyId {
+        self.id
+    }
 
     /// Whether the property can be written.
-    fn write_enable(&self) -> bool;
+    pub const fn write_enable(&self) -> bool {
+        self.write_enable
+    }
 
-    /// The data type of the property.
-    fn data_type(&self) -> PropertyDataType;
+    /// The data type.
+    pub const fn data_type(&self) -> PropertyDataType {
+        self.data_type
+    }
 
     /// Maximum number of elements.
-    fn max_elements(&self) -> u16;
+    pub const fn max_elements(&self) -> u16 {
+        self.max_elements
+    }
 
-    /// Access level (read/write).
-    fn access(&self) -> u8;
+    /// Access level.
+    pub const fn access(&self) -> u8 {
+        self.access
+    }
 
     /// Size of one element in bytes.
-    fn element_size(&self) -> u8 {
-        self.data_type().size()
+    pub const fn element_size(&self) -> u8 {
+        self.data_type.size()
     }
 
     /// Read elements from the property.
-    ///
-    /// Returns the number of elements actually read. Data is written to `buf`.
-    fn read(&self, start: u16, count: u8, buf: &mut Vec<u8>) -> u8;
+    pub fn read(&self, start: u16, count: u8, buf: &mut Vec<u8>) -> u8 {
+        match &self.storage {
+            PropertyStorage::Data(d) => d.read(start, count, buf),
+            PropertyStorage::Callback { read_fn, .. } => {
+                let data = read_fn(start, count);
+                if data.is_empty() {
+                    return 0;
+                }
+                let elem_size = self.element_size() as usize;
+                #[expect(clippy::cast_possible_truncation)]
+                let read_count = if elem_size > 0 {
+                    (data.len() / elem_size) as u8
+                } else {
+                    1
+                };
+                buf.extend_from_slice(&data);
+                read_count
+            }
+        }
+    }
 
     /// Write elements to the property.
-    ///
-    /// Returns the number of elements actually written.
-    fn write(&mut self, start: u16, count: u8, data: &[u8]) -> u8;
+    pub fn write(&mut self, start: u16, count: u8, data: &[u8]) -> u8 {
+        match &mut self.storage {
+            PropertyStorage::Data(d) => d.write(start, count, data),
+            PropertyStorage::Callback { write_fn, .. } => {
+                write_fn.as_ref().map_or(0, |wf| wf(start, count, data))
+            }
+        }
+    }
+
+    /// Get the underlying `DataProperty`, if this is data-backed.
+    pub const fn as_data(&self) -> Option<&DataProperty> {
+        match &self.storage {
+            PropertyStorage::Data(d) => Some(d),
+            PropertyStorage::Callback { .. } => None,
+        }
+    }
+
+    /// Get the underlying `DataProperty` mutably.
+    pub const fn as_data_mut(&mut self) -> Option<&mut DataProperty> {
+        match &mut self.storage {
+            PropertyStorage::Data(d) => Some(d),
+            PropertyStorage::Callback { .. } => None,
+        }
+    }
 
     /// Property description for ETS.
-    fn description(&self) -> PropertyDescription {
+    pub const fn description(&self) -> PropertyDescription {
         PropertyDescription {
-            id: self.id(),
-            write_enable: self.write_enable(),
-            data_type: self.data_type(),
-            max_elements: self.max_elements(),
-            access: self.access(),
+            id: self.id,
+            write_enable: self.write_enable,
+            data_type: self.data_type,
+            max_elements: self.max_elements,
+            access: self.access,
         }
+    }
+}
+
+/// Convenience: create a `Property` from a `DataProperty`.
+impl From<DataProperty> for Property {
+    fn from(d: DataProperty) -> Self {
+        Self::data(d)
     }
 }

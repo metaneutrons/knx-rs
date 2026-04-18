@@ -92,10 +92,12 @@ pub enum AppIndication {
 /// Returns `None` for unsupported or malformed APDUs.
 pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndication> {
     match apdu_type {
-        ApduType::GroupValueWrite => Some(AppIndication::GroupValueWrite {
-            asap: 0, // filled in by caller from association table
-            data: data.to_vec(),
-        }),
+        ApduType::GroupValueWrite | ApduType::GroupValueResponse => {
+            Some(AppIndication::GroupValueWrite {
+                asap: 0,
+                data: data.to_vec(),
+            })
+        }
         ApduType::GroupValueRead => Some(AppIndication::GroupValueRead { asap: 0 }),
         ApduType::PropertyValueRead if data.len() >= 3 => Some(AppIndication::PropertyValueRead {
             object_index: data[0],
