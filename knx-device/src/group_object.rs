@@ -7,8 +7,14 @@
 //! Each group object has a value, a state machine (`ComFlag`), and
 //! configuration flags from the group object table.
 
+use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
+
+use knx_core::dpt::{self, Dpt, DptError};
+
+/// Callback invoked when a group object is updated from the bus.
+pub type GroupObjectCallback = Box<dyn Fn(&GroupObject) + Send>;
 
 /// Communication flag — tracks the state of a group object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,6 +44,8 @@ pub struct GroupObject {
     asap: u16,
     comm_flag: ComFlag,
     data: Vec<u8>,
+    dpt: Option<Dpt>,
+    on_update: Option<GroupObjectCallback>,
 }
 
 impl GroupObject {
@@ -47,7 +55,39 @@ impl GroupObject {
             asap,
             comm_flag: ComFlag::Uninitialized,
             data: vec![0u8; size],
+            dpt: None,
+            on_update: None,
         }
+    }
+
+    /// Create a group object with a specific DPT.
+    pub fn with_dpt(asap: u16, dpt: Dpt) -> Self {
+        Self {
+            asap,
+            comm_flag: ComFlag::Uninitialized,
+            data: vec![0u8; dpt.data_length() as usize],
+            dpt: Some(dpt),
+            on_update: None,
+        }
+    }
+
+    /// Set the DPT for this group object.
+    pub fn set_dpt(&mut self, dpt: Dpt) {
+        self.dpt = Some(dpt);
+        let needed = dpt.data_length() as usize;
+        if self.data.len() < needed {
+            self.data.resize(needed, 0);
+        }
+    }
+
+    /// The configured DPT, if any.
+    pub const fn dpt(&self) -> Option<Dpt> {
+        self.dpt
+    }
+
+    /// Register a callback invoked when the value is updated from the bus.
+    pub fn on_update(&mut self, callback: impl Fn(&Self) + Send + 'static) {
+        self.on_update = Some(Box::new(callback));
     }
 
     /// The ASAP (application service access point) — the group object number (1-based).
@@ -121,6 +161,51 @@ impl GroupObject {
         let len = data.len().min(self.data.len());
         self.data[..len].copy_from_slice(&data[..len]);
         self.comm_flag = ComFlag::Updated;
+        if let Some(cb) = &self.on_update {
+            cb(self);
+        }
+    }
+
+    /// Read the value as a decoded `f64` using the configured DPT.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DptError`] if no DPT is configured or decoding fails.
+    pub fn value_as_f64(&self) -> Result<f64, DptError> {
+        let dpt = self.dpt.ok_or(DptError::OutOfRange)?;
+        dpt::decode(dpt, &self.data)
+    }
+
+    /// Write a value from an `f64` using the configured DPT, and mark as `WriteRequest`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DptError`] if no DPT is configured or encoding fails.
+    pub fn set_value_f64(&mut self, value: f64) -> Result<(), DptError> {
+        let dpt = self.dpt.ok_or(DptError::OutOfRange)?;
+        let encoded = dpt::encode(dpt, value)?;
+        let len = encoded.len().min(self.data.len());
+        self.data[..len].copy_from_slice(&encoded[..len]);
+        self.comm_flag = ComFlag::WriteRequest;
+        Ok(())
+    }
+
+    /// Write a value only if it differs from the current value (avoids bus traffic).
+    /// Returns `true` if the value changed and a write was queued.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DptError`] if no DPT is configured or encoding fails.
+    pub fn set_value_if_changed(&mut self, value: f64) -> Result<bool, DptError> {
+        let dpt = self.dpt.ok_or(DptError::OutOfRange)?;
+        let encoded = dpt::encode(dpt, value)?;
+        let len = encoded.len().min(self.data.len());
+        if self.data[..len] == encoded[..len] {
+            return Ok(false);
+        }
+        self.data[..len].copy_from_slice(&encoded[..len]);
+        self.comm_flag = ComFlag::WriteRequest;
+        Ok(true)
     }
 
     /// Called by the transport layer when a transmit completes.
@@ -192,6 +277,7 @@ impl GroupObjectStore {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use knx_core::dpt::{DPT_SWITCH, DPT_VALUE_TEMP};
 
     #[test]
     fn new_group_object_is_uninitialized() {
@@ -278,6 +364,55 @@ mod tests {
 
         store.get_mut(3).unwrap().value_from_bus(&[1]);
         assert_eq!(store.next_updated(), Some(3));
+    }
+
+    #[test]
+    fn dpt_aware_value() {
+        let mut go = GroupObject::with_dpt(1, DPT_VALUE_TEMP);
+        go.set_value_f64(21.5).unwrap();
+        assert_eq!(go.comm_flag(), ComFlag::WriteRequest);
+
+        let val = go.value_as_f64().unwrap();
+        assert!((val - 21.5).abs() < 0.1, "got {val}");
+    }
+
+    #[test]
+    fn set_value_if_changed_no_change() {
+        let mut go = GroupObject::with_dpt(1, DPT_SWITCH);
+        go.set_value_f64(1.0).unwrap();
+        go.set_comm_flag(ComFlag::Ok);
+
+        let changed = go.set_value_if_changed(1.0).unwrap();
+        assert!(!changed);
+        assert_eq!(go.comm_flag(), ComFlag::Ok); // not changed to WriteRequest
+    }
+
+    #[test]
+    fn set_value_if_changed_with_change() {
+        let mut go = GroupObject::with_dpt(1, DPT_SWITCH);
+        go.set_value_f64(0.0).unwrap();
+        go.set_comm_flag(ComFlag::Ok);
+
+        let changed = go.set_value_if_changed(1.0).unwrap();
+        assert!(changed);
+        assert_eq!(go.comm_flag(), ComFlag::WriteRequest);
+    }
+
+    #[test]
+    fn callback_on_bus_update() {
+        use alloc::sync::Arc;
+        use core::sync::atomic::{AtomicBool, Ordering};
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = called.clone();
+
+        let mut go = GroupObject::new(1, 1);
+        go.on_update(move |_| {
+            called_clone.store(true, Ordering::Relaxed);
+        });
+
+        go.value_from_bus(&[1]);
+        assert!(called.load(Ordering::Relaxed));
     }
 
     #[test]
