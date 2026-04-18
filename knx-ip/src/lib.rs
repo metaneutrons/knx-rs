@@ -27,6 +27,7 @@
 mod error;
 mod router;
 mod tunnel;
+pub mod tunnel_server;
 mod url;
 
 pub mod discovery;
@@ -36,6 +37,7 @@ pub use error::KnxIpError;
 pub use multiplex::{MultiplexHandle, Multiplexer};
 pub use router::{KNX_MULTICAST_ADDR, KNX_PORT, RouterConnection};
 pub use tunnel::{TunnelConfig, TunnelConnection};
+pub use tunnel_server::{DeviceServer, ServerEvent};
 pub use url::{ConnectionSpec, connect, parse_url};
 
 use knx_core::cemi::CemiFrame;
