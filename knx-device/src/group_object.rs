@@ -1,0 +1,308 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2025 Fabian Schmieder
+
+//! KNX Group Objects (communication objects).
+//!
+//! A group object is the application-level interface to the KNX bus.
+//! Each group object has a value, a state machine (`ComFlag`), and
+//! configuration flags from the group object table.
+
+use alloc::vec;
+use alloc::vec::Vec;
+
+/// Communication flag — tracks the state of a group object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum ComFlag {
+    /// Value was updated from the bus.
+    Updated = 0,
+    /// A read request is pending.
+    ReadRequest = 1,
+    /// A write request is pending (value should be sent to bus).
+    WriteRequest = 2,
+    /// Currently being transmitted.
+    Transmitting = 3,
+    /// Last operation completed successfully.
+    Ok = 4,
+    /// Last operation failed.
+    Error = 5,
+    /// Value has never been set.
+    Uninitialized = 6,
+}
+
+/// A single group object (communication object / KO).
+///
+/// Application code reads and writes values through group objects.
+/// The device stack handles bus communication based on the `ComFlag` state.
+pub struct GroupObject {
+    asap: u16,
+    comm_flag: ComFlag,
+    data: Vec<u8>,
+}
+
+impl GroupObject {
+    /// Create a new group object with the given ASAP and data size.
+    pub fn new(asap: u16, size: usize) -> Self {
+        Self {
+            asap,
+            comm_flag: ComFlag::Uninitialized,
+            data: vec![0u8; size],
+        }
+    }
+
+    /// The ASAP (application service access point) — the group object number (1-based).
+    pub const fn asap(&self) -> u16 {
+        self.asap
+    }
+
+    /// Current communication flag.
+    pub const fn comm_flag(&self) -> ComFlag {
+        self.comm_flag
+    }
+
+    /// Set the communication flag. Application code should set to `Ok` after
+    /// processing an `Updated` value.
+    pub const fn set_comm_flag(&mut self, flag: ComFlag) {
+        self.comm_flag = flag;
+    }
+
+    /// Whether the value has been initialized (set from bus or application).
+    pub const fn initialized(&self) -> bool {
+        !matches!(self.comm_flag, ComFlag::Uninitialized)
+    }
+
+    /// Request a read from the bus. Sets flag to `ReadRequest`.
+    pub const fn request_object_read(&mut self) {
+        self.comm_flag = ComFlag::ReadRequest;
+    }
+
+    /// Mark the object as written (value should be sent to bus).
+    /// Sets flag to `WriteRequest`.
+    pub const fn object_written(&mut self) {
+        self.comm_flag = ComFlag::WriteRequest;
+    }
+
+    /// Raw value bytes.
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn value_ref(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Mutable raw value bytes.
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn value_mut(&mut self) -> &mut [u8] {
+        &mut self.data
+    }
+
+    /// Size of the value in bytes.
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn value_size(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Write a value and mark as `WriteRequest` (triggers bus send).
+    pub fn write_value(&mut self, data: &[u8]) {
+        let len = data.len().min(self.data.len());
+        self.data[..len].copy_from_slice(&data[..len]);
+        self.comm_flag = ComFlag::WriteRequest;
+    }
+
+    /// Write a value without triggering a bus send.
+    pub fn write_value_no_send(&mut self, data: &[u8]) {
+        let len = data.len().min(self.data.len());
+        self.data[..len].copy_from_slice(&data[..len]);
+        if self.comm_flag == ComFlag::Uninitialized {
+            self.comm_flag = ComFlag::Ok;
+        }
+    }
+
+    /// Called by the transport layer when a value is received from the bus.
+    pub fn value_from_bus(&mut self, data: &[u8]) {
+        let len = data.len().min(self.data.len());
+        self.data[..len].copy_from_slice(&data[..len]);
+        self.comm_flag = ComFlag::Updated;
+    }
+
+    /// Called by the transport layer when a transmit completes.
+    pub const fn transmit_done(&mut self, success: bool) {
+        self.comm_flag = if success { ComFlag::Ok } else { ComFlag::Error };
+    }
+}
+
+/// A collection of group objects managed by the device stack.
+pub struct GroupObjectStore {
+    objects: Vec<GroupObject>,
+}
+
+impl GroupObjectStore {
+    /// Create a store with the given number of group objects, each with `size` bytes.
+    pub fn new(count: u16, default_size: usize) -> Self {
+        let mut objects = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            objects.push(GroupObject::new(i + 1, default_size));
+        }
+        Self { objects }
+    }
+
+    /// Get a group object by ASAP (1-based).
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn get(&self, asap: u16) -> Option<&GroupObject> {
+        if asap == 0 {
+            return None;
+        }
+        self.objects.get((asap - 1) as usize)
+    }
+
+    /// Get a mutable group object by ASAP (1-based).
+    pub fn get_mut(&mut self, asap: u16) -> Option<&mut GroupObject> {
+        if asap == 0 {
+            return None;
+        }
+        self.objects.get_mut((asap - 1) as usize)
+    }
+
+    /// Number of group objects.
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn count(&self) -> u16 {
+        self.objects.len() as u16
+    }
+
+    /// Find the next group object with `WriteRequest` or `ReadRequest` flag.
+    /// Returns the ASAP of the pending object, if any.
+    pub fn next_pending(&self) -> Option<u16> {
+        self.objects.iter().find_map(|go| {
+            if go.comm_flag == ComFlag::WriteRequest || go.comm_flag == ComFlag::ReadRequest {
+                Some(go.asap)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Find the next group object with `Updated` flag.
+    pub fn next_updated(&self) -> Option<u16> {
+        self.objects
+            .iter()
+            .find(|go| go.comm_flag == ComFlag::Updated)
+            .map(|go| go.asap)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_group_object_is_uninitialized() {
+        let go = GroupObject::new(1, 1);
+        assert_eq!(go.comm_flag(), ComFlag::Uninitialized);
+        assert!(!go.initialized());
+        assert_eq!(go.asap(), 1);
+        assert_eq!(go.value_size(), 1);
+    }
+
+    #[test]
+    fn write_value_sets_write_request() {
+        let mut go = GroupObject::new(1, 2);
+        go.write_value(&[0x0C, 0x34]);
+        assert_eq!(go.comm_flag(), ComFlag::WriteRequest);
+        assert_eq!(go.value_ref(), &[0x0C, 0x34]);
+    }
+
+    #[test]
+    fn write_no_send_initializes() {
+        let mut go = GroupObject::new(1, 1);
+        assert!(!go.initialized());
+        go.write_value_no_send(&[42]);
+        assert!(go.initialized());
+        assert_eq!(go.comm_flag(), ComFlag::Ok);
+        assert_eq!(go.value_ref(), &[42]);
+    }
+
+    #[test]
+    fn value_from_bus_sets_updated() {
+        let mut go = GroupObject::new(1, 1);
+        go.value_from_bus(&[1]);
+        assert_eq!(go.comm_flag(), ComFlag::Updated);
+        assert!(go.initialized());
+    }
+
+    #[test]
+    fn request_read() {
+        let mut go = GroupObject::new(1, 1);
+        go.request_object_read();
+        assert_eq!(go.comm_flag(), ComFlag::ReadRequest);
+    }
+
+    #[test]
+    fn transmit_done_success() {
+        let mut go = GroupObject::new(1, 1);
+        go.write_value(&[1]);
+        go.set_comm_flag(ComFlag::Transmitting);
+        go.transmit_done(true);
+        assert_eq!(go.comm_flag(), ComFlag::Ok);
+    }
+
+    #[test]
+    fn transmit_done_error() {
+        let mut go = GroupObject::new(1, 1);
+        go.set_comm_flag(ComFlag::Transmitting);
+        go.transmit_done(false);
+        assert_eq!(go.comm_flag(), ComFlag::Error);
+    }
+
+    #[test]
+    fn store_get_by_asap() {
+        let store = GroupObjectStore::new(3, 1);
+        assert_eq!(store.count(), 3);
+        assert!(store.get(0).is_none());
+        assert_eq!(store.get(1).unwrap().asap(), 1);
+        assert_eq!(store.get(3).unwrap().asap(), 3);
+        assert!(store.get(4).is_none());
+    }
+
+    #[test]
+    fn store_next_pending() {
+        let mut store = GroupObjectStore::new(3, 1);
+        assert!(store.next_pending().is_none());
+
+        store.get_mut(2).unwrap().write_value(&[1]);
+        assert_eq!(store.next_pending(), Some(2));
+    }
+
+    #[test]
+    fn store_next_updated() {
+        let mut store = GroupObjectStore::new(3, 1);
+        assert!(store.next_updated().is_none());
+
+        store.get_mut(3).unwrap().value_from_bus(&[1]);
+        assert_eq!(store.next_updated(), Some(3));
+    }
+
+    #[test]
+    fn state_machine_full_cycle() {
+        let mut go = GroupObject::new(1, 1);
+
+        // Uninitialized → WriteRequest (app writes value)
+        assert_eq!(go.comm_flag(), ComFlag::Uninitialized);
+        go.write_value(&[1]);
+        assert_eq!(go.comm_flag(), ComFlag::WriteRequest);
+
+        // WriteRequest → Transmitting (stack picks it up)
+        go.set_comm_flag(ComFlag::Transmitting);
+        assert_eq!(go.comm_flag(), ComFlag::Transmitting);
+
+        // Transmitting → Ok (ack received)
+        go.transmit_done(true);
+        assert_eq!(go.comm_flag(), ComFlag::Ok);
+
+        // Ok → Updated (value received from bus)
+        go.value_from_bus(&[2]);
+        assert_eq!(go.comm_flag(), ComFlag::Updated);
+
+        // Updated → Ok (app acknowledges)
+        go.set_comm_flag(ComFlag::Ok);
+        assert_eq!(go.comm_flag(), ComFlag::Ok);
+    }
+}

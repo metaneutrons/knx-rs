@@ -26,6 +26,7 @@ pub mod address_table;
 pub mod application_program;
 pub mod association_table;
 pub mod device_object;
+pub mod group_object;
 pub mod group_object_table;
 pub mod interface_object;
 pub mod property;
