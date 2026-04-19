@@ -7,24 +7,23 @@ on:
         description: "Publish knx-core"
         type: string
         default: "false"
-      knx_core_version:
-        description: "knx-core version"
-        type: string
-        default: ""
       knx_ip_release:
         description: "Publish knx-ip"
         type: string
         default: "false"
-      knx_ip_version:
-        description: "knx-ip version"
+      knx_device_release:
+        description: "Publish knx-device"
         type: string
-        default: ""
+        default: "false"
+      knx_tp_release:
+        description: "Publish knx-tp"
+        type: string
+        default: "false"
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── Verify before publish ────────────────────────────────────
   verify:
     name: Verify
     runs-on: ubuntu-latest
@@ -34,18 +33,13 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Tests
-        run: cargo test -p knx-core -p knx-ip
-      - name: Clippy
-        run: cargo clippy -p knx-core -p knx-ip -- -D warnings
-      - name: "no_std check"
-        run: cargo check -p knx-core --no-default-features
-      - name: Dry-run package (knx-core)
-        run: cargo package -p knx-core --allow-dirty
-      - name: Dry-run package (knx-ip)
-        run: cargo package -p knx-ip --allow-dirty
+      - run: cargo test -p knx-core -p knx-ip -p knx-device -p knx-tp
+      - run: cargo clippy -p knx-core -p knx-ip -p knx-device -p knx-tp -- -D warnings
+      - run: cargo check -p knx-core --no-default-features
+      - run: cargo check -p knx-device --no-default-features
+      - run: cargo check -p knx-tp --no-default-features
 
-  # ── Publish knx-core (must go first — knx-ip depends on it) ─
+  # knx-core first — all others depend on it
   publish-knx-core:
     name: "Publish knx-core"
     needs: verify
@@ -70,7 +64,7 @@ jobs:
         if: steps.check_token.outputs.has_token == 'true'
         run: sleep 30
 
-  # ── Publish knx-ip (depends on knx-core being published) ────
+  # knx-ip depends on knx-core
   publish-knx-ip:
     name: "Publish knx-ip"
     needs: [verify, publish-knx-core]
@@ -91,3 +85,50 @@ jobs:
       - name: Publish to crates.io
         if: steps.check_token.outputs.has_token == 'true'
         run: cargo publish -p knx-ip --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Wait for crates.io index
+        if: steps.check_token.outputs.has_token == 'true'
+        run: sleep 30
+
+  # knx-device depends on knx-core
+  publish-knx-device:
+    name: "Publish knx-device"
+    needs: [verify, publish-knx-core]
+    runs-on: ubuntu-latest
+    if: always() && inputs.knx_device_release == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check for CARGO_REGISTRY_TOKEN
+        id: check_token
+        run: |
+          if [[ -n "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CARGO_REGISTRY_TOKEN not set — skipping crates.io publish"
+          fi
+      - name: Publish to crates.io
+        if: steps.check_token.outputs.has_token == 'true'
+        run: cargo publish -p knx-device --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # knx-tp depends on knx-core
+  publish-knx-tp:
+    name: "Publish knx-tp"
+    needs: [verify, publish-knx-core]
+    runs-on: ubuntu-latest
+    if: always() && inputs.knx_tp_release == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check for CARGO_REGISTRY_TOKEN
+        id: check_token
+        run: |
+          if [[ -n "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CARGO_REGISTRY_TOKEN not set — skipping crates.io publish"
+          fi
+      - name: Publish to crates.io
+        if: steps.check_token.outputs.has_token == 'true'
+        run: cargo publish -p knx-tp --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

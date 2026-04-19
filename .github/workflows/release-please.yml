@@ -11,14 +11,6 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    outputs:
-      releases_created: ${{ steps.release.outputs.releases_created }}
-      knx-core--release_created: ${{ steps.release.outputs['knx-core--release_created'] }}
-      knx-core--tag_name: ${{ steps.release.outputs['knx-core--tag_name'] }}
-      knx-core--version: ${{ steps.release.outputs['knx-core--version'] }}
-      knx-ip--release_created: ${{ steps.release.outputs['knx-ip--release_created'] }}
-      knx-ip--tag_name: ${{ steps.release.outputs['knx-ip--tag_name'] }}
-      knx-ip--version: ${{ steps.release.outputs['knx-ip--version'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -33,7 +25,7 @@ jobs:
         run: |
           gh workflow run publish.yml \
             --repo ${{ github.repository }} \
-            -f knx_core_version="${{ steps.release.outputs['knx-core--version'] || '' }}" \
-            -f knx_ip_version="${{ steps.release.outputs['knx-ip--version'] || '' }}" \
             -f knx_core_release="${{ steps.release.outputs['knx-core--release_created'] || 'false' }}" \
-            -f knx_ip_release="${{ steps.release.outputs['knx-ip--release_created'] || 'false' }}"
+            -f knx_ip_release="${{ steps.release.outputs['knx-ip--release_created'] || 'false' }}" \
+            -f knx_device_release="${{ steps.release.outputs['knx-device--release_created'] || 'false' }}" \
+            -f knx_tp_release="${{ steps.release.outputs['knx-tp--release_created'] || 'false' }}"

@@ -1,3 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["knx-core", "knx-ip", "knx-device", "knx-tp", "examples/knx-demo-device"]
+members = [
+  "knx-core",
+  "knx-ip",
+  "knx-device",
+  "knx-tp",
+  "examples/knx-demo-device",
+  "examples/knx-demo-client",
+]

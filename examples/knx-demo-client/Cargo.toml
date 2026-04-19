@@ -1,0 +1,12 @@
+[package]
+name = "knx-demo-client"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+knx-core = { path = "../../knx-core" }
+knx-ip = { path = "../../knx-ip" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
