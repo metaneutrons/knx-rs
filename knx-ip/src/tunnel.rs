@@ -245,6 +245,13 @@ async fn tunnel_task(
                 match cmd {
                     Some(TunnelCmd::Send(frame, reply)) => {
                         let result = state.send_with_retry(&frame).await;
+                        if result.is_err() && config.auto_reconnect {
+                            let _ = reply.send(result);
+                            if !try_reconnect(&config, &mut state, &mut heartbeat).await {
+                                break;
+                            }
+                            continue;
+                        }
                         let _ = reply.send(result);
                     }
                     Some(TunnelCmd::Close) | None => {

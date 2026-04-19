@@ -256,3 +256,180 @@ async fn heartbeat_with_wrong_channel_returns_error() {
     assert_eq!(hb.body[0], 0xFF);
     assert_ne!(hb.body[1], 0x00); // should be error
 }
+
+#[tokio::test]
+async fn full_device_stack_group_read_response() {
+    use knx_core::dpt::{DPT_SWITCH, DPT_VALUE_TEMP, DptValue};
+    use knx_device::bau::Bau;
+    use knx_device::device_object;
+    use knx_device::group_object::ComFlag;
+
+    // ── Set up BAU with loaded tables and a temperature value ──
+    let device = device_object::new_device_object([0x00, 0xFA, 0xDE, 0xD0, 0x00, 0x01], [0x00; 6]);
+    let mut bau = Bau::new(device, 2, 2);
+    device_object::set_individual_address(bau.device_mut(), 0x1101);
+
+    bau.group_objects
+        .get_mut(1)
+        .unwrap()
+        .set_dpt(DPT_VALUE_TEMP);
+    bau.group_objects.get_mut(2).unwrap().set_dpt(DPT_SWITCH);
+
+    // Address table: own address + 2 group addresses
+    bau.address_table
+        .load(&[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]);
+    // Association table: GA 1 → GO 1, GA 2 → GO 2
+    bau.association_table
+        .load(&[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02]);
+
+    // Set initial temperature value
+    bau.group_objects
+        .get_mut(1)
+        .unwrap()
+        .set_value(&DptValue::Float(21.5))
+        .unwrap();
+    bau.group_objects
+        .get_mut(1)
+        .unwrap()
+        .set_comm_flag(ComFlag::Ok);
+
+    // ── Start server ──
+    let mut server = DeviceServer::start(Ipv4Addr::LOCALHOST).await.unwrap();
+
+    let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let client_port = client.local_addr().unwrap().port();
+    let server_addr: SocketAddr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 3671).into();
+
+    // ── Connect tunnel ──
+    let resp_bytes = send_recv(&client, server_addr, &build_connect_request(client_port)).await;
+    let resp = KnxIpFrame::parse(&resp_bytes).unwrap();
+    let channel_id = resp.body[0];
+    assert_eq!(resp.body[1], 0x00);
+
+    // ── Send GroupValueRead for GA 1/0/1 (temperature) ──
+    let read_cemi = CemiFrame::new_l_data(
+        MessageCode::LDataReq,
+        IndividualAddress::from_raw(0x1102), // source: some other device
+        DestinationAddress::Group(GroupAddress::from_raw(0x0801)),
+        Priority::Low,
+        &[0x00, 0x00], // GroupValueRead
+    );
+    let tunnel_req = build_tunneling_request(channel_id, 0, &read_cemi);
+    let ack_bytes = send_recv(&client, server_addr, &tunnel_req).await;
+    let ack = KnxIpFrame::parse(&ack_bytes).unwrap();
+    assert_eq!(ack.service_type, ServiceType::TunnelingAck);
+
+    // ── BAU processes the frame ──
+    let event = timeout(TEST_TIMEOUT, server.recv())
+        .await
+        .expect("timeout")
+        .expect("event");
+    let ServerEvent::TunnelFrame(frame) = event else {
+        panic!("expected TunnelFrame");
+    };
+
+    bau.process_frame(&frame);
+
+    // BAU should have generated a GroupValueResponse
+    bau.poll();
+    let response = bau.next_outgoing_frame();
+    assert!(response.is_some(), "BAU should generate a response frame");
+    let response = response.unwrap();
+
+    // ── Send response back through server ──
+    server.send_frame(response.clone()).await.unwrap();
+
+    // ── Client receives the response ──
+    let mut buf = [0u8; 512];
+    let (n, _) = timeout(TEST_TIMEOUT, client.recv_from(&mut buf))
+        .await
+        .expect("timeout waiting for response frame")
+        .unwrap();
+    let resp_frame = KnxIpFrame::parse(&buf[..n]).unwrap();
+    assert_eq!(resp_frame.service_type, ServiceType::TunnelingRequest);
+
+    // Parse the CEMI from the tunneling request
+    let cemi_data = &resp_frame.body[ConnectionHeader::LEN as usize..];
+    let resp_cemi = CemiFrame::parse(cemi_data).unwrap();
+
+    // Verify it's a GroupValueResponse to 1/0/1
+    assert_eq!(resp_cemi.destination_address_raw(), 0x0801);
+    // Payload should contain temperature data (DPT 9, 2 bytes after APCI)
+    assert!(
+        resp_cemi.payload().len() >= 3,
+        "response should have DPT9 data"
+    );
+
+    // Cleanup
+    client
+        .send_to(&build_disconnect(channel_id, client_port), server_addr)
+        .await
+        .unwrap();
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn tunnel_client_reconnects_after_server_disconnect() {
+    use knx_ip::{KnxConnection, TunnelConfig, TunnelConnection};
+
+    let server = DeviceServer::start(Ipv4Addr::LOCALHOST).await.unwrap();
+    let server_addr: SocketAddr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 3671).into();
+
+    // Connect with auto-reconnect
+    let config = TunnelConfig::new(server_addr).with_auto_reconnect();
+    let mut conn = TunnelConnection::connect_with_config(config).await.unwrap();
+
+    // Verify connection works
+    let cemi = CemiFrame::new_l_data(
+        MessageCode::LDataReq,
+        IndividualAddress::from_raw(0x0000),
+        DestinationAddress::Group(GroupAddress::from_raw(0x0801)),
+        Priority::Low,
+        &[0x00, 0x00],
+    );
+    conn.send(cemi).await.unwrap();
+
+    // Stop the server — tunnel loses connection
+    server.stop().await;
+    drop(server);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Restart the server before the client tries to reconnect
+    let mut server2 = DeviceServer::start(Ipv4Addr::LOCALHOST).await.unwrap();
+
+    // Send a frame — first attempt will fail (ack timeout), triggering reconnect.
+    // After reconnect, the frame won't be re-sent, but the connection is restored.
+    let cemi2 = CemiFrame::new_l_data(
+        MessageCode::LDataReq,
+        IndividualAddress::from_raw(0x0000),
+        DestinationAddress::Group(GroupAddress::from_raw(0x0802)),
+        Priority::Low,
+        &[0x00, 0x81],
+    );
+    // This send will fail (old connection is dead), but triggers reconnect
+    let _ = conn.send(cemi2).await;
+
+    // Give reconnect time to complete (1s initial delay + connect handshake)
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Now send again — should succeed on the new connection
+    let cemi3 = CemiFrame::new_l_data(
+        MessageCode::LDataReq,
+        IndividualAddress::from_raw(0x0000),
+        DestinationAddress::Group(GroupAddress::from_raw(0x0803)),
+        Priority::Low,
+        &[0x00, 0x80],
+    );
+    let result = conn.send(cemi3).await;
+    assert!(
+        result.is_ok(),
+        "send after reconnect should succeed: {result:?}"
+    );
+
+    // Server should receive the frame
+    let event = timeout(TEST_TIMEOUT, server2.recv()).await;
+    assert!(event.is_ok(), "server should receive frame after reconnect");
+
+    conn.close().await;
+    server2.stop().await;
+}
