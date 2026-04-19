@@ -79,6 +79,34 @@ const fn check_len(payload: &[u8], min: usize) -> Result<(), DptError> {
     }
 }
 
+/// Truncate a `u32` to `u8`. Value must be ≤ 255 (masked or clamped by caller).
+const fn low_u8(v: u32) -> u8 {
+    (v & 0xFF) as u8
+}
+
+/// Truncate a `u32` to `u16`. Value must be ≤ 65535 (masked or clamped by caller).
+const fn low_u16(v: u32) -> u16 {
+    (v & 0xFFFF) as u16
+}
+
+/// Truncate an `i32` to `i8`. Value must be in `[-128, 127]` (clamped by caller).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "caller guarantees value fits in i8"
+)]
+const fn low_i8(v: i32) -> i8 {
+    v as i8
+}
+
+/// Truncate an `i32` to `i16`. Value must be in `[-32768, 32767]` (clamped by caller).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "caller guarantees value fits in i16"
+)]
+const fn low_i16(v: i32) -> i16 {
+    v as i16
+}
+
 /// Extract a `bool` from a `DptValue`, coercing numeric types.
 fn val_bool(value: &DptValue) -> Result<bool, DptError> {
     match value {
@@ -219,7 +247,7 @@ fn decode_dpt2(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt2(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_u32(value)?;
-    Ok(alloc::vec![u8::try_from(v & 0x03).unwrap_or(0)])
+    Ok(alloc::vec![low_u8(v & 0x03)])
 }
 
 // ── DPT 3: 3-bit controlled (4 bits) ─────────────────────────
@@ -231,7 +259,7 @@ fn decode_dpt3(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt3(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_u32(value)?;
-    Ok(alloc::vec![u8::try_from(v & 0x0F).unwrap_or(0)])
+    Ok(alloc::vec![low_u8(v & 0x0F)])
 }
 
 // ── DPT 4: Character (1 byte) ────────────────────────────────
@@ -243,7 +271,7 @@ fn decode_dpt4(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt4(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_u32(value)?;
-    Ok(alloc::vec![u8::try_from(v & 0xFF).unwrap_or(0xFF)])
+    Ok(alloc::vec![low_u8(v)])
 }
 
 // ── DPT 5: Unsigned 8-bit (1 byte) ───────────────────────────
@@ -270,7 +298,7 @@ fn encode_dpt5(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
         }
         _ => {
             let v = val_u32(value)?;
-            Ok(alloc::vec![u8::try_from(v.min(255)).unwrap_or(255)])
+            Ok(alloc::vec![low_u8(v.min(255))])
         }
     }
 }
@@ -285,9 +313,7 @@ fn decode_dpt6(payload: &[u8]) -> Result<DptValue, DptError> {
 fn encode_dpt6(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_i32(value)?;
     let clamped = v.clamp(-128, 127);
-    Ok(alloc::vec![
-        i8::try_from(clamped).unwrap_or(0).to_ne_bytes()[0]
-    ])
+    Ok(alloc::vec![low_i8(clamped).to_ne_bytes()[0]])
 }
 
 // ── DPT 7: Unsigned 16-bit (2 bytes) ─────────────────────────
@@ -301,7 +327,7 @@ fn decode_dpt7(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt7(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_u32(value)?;
-    let clamped = u16::try_from(v.min(65535)).unwrap_or(u16::MAX);
+    let clamped = low_u16(v.min(65535));
     Ok(clamped.to_be_bytes().to_vec())
 }
 
@@ -316,7 +342,7 @@ fn decode_dpt8(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt8(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_i32(value)?;
-    let clamped = i16::try_from(v.clamp(-32768, 32767)).unwrap_or(0);
+    let clamped = low_i16(v.clamp(-32768, 32767));
     Ok(clamped.to_be_bytes().to_vec())
 }
 
@@ -361,7 +387,7 @@ fn encode_dpt9(value: &DptValue) -> Result<Vec<u8>, DptError> {
         return Err(DptError::OutOfRange);
     }
 
-    let m = u16::try_from(mantissa & 0x07FF).unwrap_or(0);
+    let m = low_u16((mantissa & 0x07FF).unsigned_abs());
     let sign: u16 = if mantissa < 0 { 0x8000 } else { 0 };
     let raw = sign | (exponent << 11) | m;
     Ok(raw.to_be_bytes().to_vec())
@@ -379,9 +405,9 @@ fn encode_dpt10(value: &DptValue) -> Result<Vec<u8>, DptError> {
         DptValue::Bytes(b) if b.len() >= 3 => Ok(b[..3].to_vec()),
         DptValue::UInt(secs) => {
             let total = (*secs).min(86399);
-            let hours = u8::try_from(total / 3600).unwrap_or(23);
-            let minutes = u8::try_from((total % 3600) / 60).unwrap_or(59);
-            let seconds = u8::try_from(total % 60).unwrap_or(59);
+            let hours = low_u8(total / 3600);
+            let minutes = low_u8((total % 3600) / 60);
+            let seconds = low_u8(total % 60);
             Ok(alloc::vec![hours & 0x1F, minutes & 0x3F, seconds & 0x3F])
         }
         _ => Err(DptError::TypeMismatch),
@@ -471,7 +497,7 @@ fn encode_dpt15(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let mut v = val_u32(value)?.min(999_999);
     let mut buf = [0u8; 4];
     for i in (0..6).rev() {
-        let digit = u8::try_from(v % 10).unwrap_or(0);
+        let digit = low_u8(v % 10);
         v /= 10;
         if i % 2 == 0 {
             buf[i / 2] |= digit << 4;
@@ -491,7 +517,7 @@ fn decode_dpt17(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt17(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_u32(value)?;
-    Ok(alloc::vec![u8::try_from(v & 0x3F).unwrap_or(0x3F)])
+    Ok(alloc::vec![low_u8(v & 0x3F)])
 }
 
 // ── DPT 18: Scene control (1 byte) ───────────────────────────
@@ -503,7 +529,7 @@ fn decode_dpt18(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt18(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_u32(value)?;
-    Ok(alloc::vec![u8::try_from(v & 0xFF).unwrap_or(0xFF)])
+    Ok(alloc::vec![low_u8(v)])
 }
 
 // ── DPT 19: Date and time (8 bytes) ──────────────────────────
@@ -545,9 +571,9 @@ fn decode_dpt232(payload: &[u8]) -> Result<DptValue, DptError> {
 fn encode_dpt232(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let rgb = val_u32(value)?.min(0x00FF_FFFF);
     Ok(alloc::vec![
-        u8::try_from((rgb >> 16) & 0xFF).unwrap_or(0),
-        u8::try_from((rgb >> 8) & 0xFF).unwrap_or(0),
-        u8::try_from(rgb & 0xFF).unwrap_or(0),
+        low_u8((rgb >> 16) & 0xFF),
+        low_u8((rgb >> 8) & 0xFF),
+        low_u8(rgb & 0xFF),
     ])
 }
 
