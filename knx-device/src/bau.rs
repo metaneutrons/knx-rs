@@ -142,15 +142,13 @@ impl Bau {
             AppIndication::GroupValueRead { .. } => {
                 self.handle_group_value_read(frame);
             }
-            AppIndication::IndividualAddressWrite { address } => {
-                if device_object::prog_mode(self.device()) {
-                    device_object::set_individual_address(self.device_mut(), address);
-                }
+            AppIndication::IndividualAddressWrite { address }
+                if device_object::prog_mode(self.device()) =>
+            {
+                device_object::set_individual_address(self.device_mut(), address);
             }
-            AppIndication::IndividualAddressRead => {
-                if device_object::prog_mode(self.device()) {
-                    self.queue_individual_address_response();
-                }
+            AppIndication::IndividualAddressRead if device_object::prog_mode(self.device()) => {
+                self.queue_individual_address_response();
             }
             AppIndication::PropertyValueRead {
                 object_index,
@@ -169,10 +167,8 @@ impl Bau {
             } => {
                 self.handle_property_write(object_index, property_id, count, start_index, &data);
             }
-            AppIndication::DeviceDescriptorRead { descriptor_type } => {
-                if descriptor_type == 0 {
-                    self.queue_device_descriptor_response(source);
-                }
+            AppIndication::DeviceDescriptorRead { descriptor_type: 0 } => {
+                self.queue_device_descriptor_response(source);
             }
             AppIndication::MemoryRead { count, address } => {
                 self.handle_memory_read(source, count, address);

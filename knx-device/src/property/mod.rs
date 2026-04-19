@@ -120,11 +120,7 @@ impl Property {
                 }
                 let elem_size = self.element_size() as usize;
                 #[expect(clippy::cast_possible_truncation)]
-                let read_count = if elem_size > 0 {
-                    (data.len() / elem_size) as u8
-                } else {
-                    1
-                };
+                let read_count = data.len().checked_div(elem_size).unwrap_or(1) as u8;
                 buf.extend_from_slice(&data);
                 read_count
             }

@@ -10,9 +10,9 @@
 //! The TP-UART chip handles physical bus timing and ACK generation.
 //! This crate implements the host-side serial protocol:
 //!
-//! - [`TpUartProtocol`] — command/indication protocol over UART
-//! - [`TpFrame`] — TP bus frame encoding/decoding with CRC-8
-//! - [`UartInterface`] — trait for platform-specific UART access
+//! - [`commands`] — command/indication protocol constants
+//! - [`frame`] — TP bus frame encoding/decoding with CRC-8
+//! - [`protocol`] — host-side protocol handler with UART trait
 
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
