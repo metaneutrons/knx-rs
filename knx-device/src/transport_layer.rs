@@ -68,7 +68,7 @@ impl TransportLayer {
     }
 
     /// Increment the send sequence counter. Returns the current value before increment.
-    #[allow(clippy::missing_const_for_fn)] // mutable match arms can't be const
+    #[expect(clippy::missing_const_for_fn)] // mutable match arms prevent const
     pub fn next_send_seq(&mut self) -> Option<u8> {
         if let ConnectionState::Open {
             ref mut send_seq, ..
@@ -84,7 +84,7 @@ impl TransportLayer {
 
     /// Check and increment the receive sequence counter.
     /// Returns `true` if the sequence number matches (valid).
-    #[allow(clippy::missing_const_for_fn)]
+    #[expect(clippy::missing_const_for_fn)] // mutable match arms prevent const
     pub fn check_recv_seq(&mut self, seq: u8) -> bool {
         if let ConnectionState::Open {
             ref mut recv_seq, ..

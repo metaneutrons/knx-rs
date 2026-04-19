@@ -123,7 +123,7 @@ impl GroupObject {
     }
 
     /// Raw value bytes.
-    #[allow(clippy::missing_const_for_fn)]
+    #[allow(clippy::missing_const_for_fn)] // clippy false positive: Vec deref not const
     pub fn value_ref(&self) -> &[u8] {
         &self.data
     }

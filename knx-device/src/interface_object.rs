@@ -10,7 +10,7 @@ use crate::property::{DataProperty, Property, PropertyDataType, PropertyDescript
 /// KNX interface object type. See KNX 3/7/3 §2.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
-#[allow(missing_docs)]
+#[allow(missing_docs)] // KNX spec names are self-documenting
 pub enum ObjectType {
     Device = 0,
     AddressTable = 1,

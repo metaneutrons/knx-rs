@@ -87,7 +87,7 @@ impl PropertyDataType {
 /// Property identifier. Values match the KNX specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
-#[allow(missing_docs)] // IDs are self-documenting by name
+#[allow(missing_docs)] // KNX spec names are self-documenting
 pub enum PropertyId {
     // ── Object-type independent ───────────────────────────────
     ObjectType = 1,

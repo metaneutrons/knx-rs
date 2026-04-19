@@ -194,10 +194,9 @@ fn encode_dpt5(dpt: Dpt, value: f64) -> Vec<u8> {
 
 // ── DPT 6: Signed 8-bit (1 byte) ─────────────────────────────
 
-#[expect(clippy::cast_possible_wrap)]
 fn decode_dpt6(payload: &[u8]) -> Result<f64, DptError> {
     check_len(payload, 1)?;
-    Ok(f64::from(payload[0] as i8))
+    Ok(f64::from(i8::from_ne_bytes([payload[0]])))
 }
 
 #[expect(clippy::cast_sign_loss)]
