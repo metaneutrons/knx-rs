@@ -32,6 +32,7 @@ mod url;
 
 pub mod discovery;
 pub mod multiplex;
+pub mod ops;
 
 pub use error::KnxIpError;
 pub use multiplex::{MultiplexHandle, Multiplexer};
