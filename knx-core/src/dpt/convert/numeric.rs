@@ -33,7 +33,7 @@ const fn f64_to_u8(v: f64) -> u8 {
 fn f64_to_u32(v: f64) -> Result<u32, DptError> {
     let r = round(v);
     if r < 0.0 || r > f64::from(u32::MAX) {
-        return Err(DptError::OutOfRange);
+        return Err(DptError::out_of_range("expected 0..=4294967295"));
     }
     // SAFETY: range validated above.
     #[expect(
@@ -50,7 +50,7 @@ fn f64_to_u32(v: f64) -> Result<u32, DptError> {
 fn f64_to_i32(v: f64) -> Result<i32, DptError> {
     let r = round(v);
     if r < f64::from(i32::MIN) || r > f64::from(i32::MAX) {
-        return Err(DptError::OutOfRange);
+        return Err(DptError::out_of_range("expected -2147483648..=2147483647"));
     }
     // SAFETY: range validated above.
     #[expect(clippy::cast_possible_truncation, reason = "range validated above")]
@@ -123,7 +123,9 @@ fn val_u32(value: &DptValue) -> Result<u32, DptError> {
     match value {
         DptValue::UInt(v) => Ok(*v),
         DptValue::Bool(v) => Ok(u32::from(*v)),
-        DptValue::Int(v) => u32::try_from(*v).map_err(|_| DptError::OutOfRange),
+        DptValue::Int(v) => {
+            u32::try_from(*v).map_err(|_| DptError::out_of_range("negative value for unsigned DPT"))
+        }
         DptValue::Float(v) => f64_to_u32(*v),
         _ => Err(DptError::TypeMismatch),
     }
@@ -133,7 +135,9 @@ fn val_u32(value: &DptValue) -> Result<u32, DptError> {
 fn val_i32(value: &DptValue) -> Result<i32, DptError> {
     match value {
         DptValue::Int(v) => Ok(*v),
-        DptValue::UInt(v) => i32::try_from(*v).map_err(|_| DptError::OutOfRange),
+        DptValue::UInt(v) => {
+            i32::try_from(*v).map_err(|_| DptError::out_of_range("unsigned value exceeds i32::MAX"))
+        }
         DptValue::Bool(v) => Ok(i32::from(*v)),
         DptValue::Float(v) => f64_to_i32(*v),
         _ => Err(DptError::TypeMismatch),
@@ -369,7 +373,7 @@ fn encode_dpt9(value: &DptValue) -> Result<Vec<u8>, DptError> {
     // round once, then range-check without re-rounding
     let scaled = round(v * 100.0);
     if scaled < f64::from(i32::MIN) || scaled > f64::from(i32::MAX) {
-        return Err(DptError::OutOfRange);
+        return Err(DptError::out_of_range("KNX F16 mantissa overflow"));
     }
     #[expect(clippy::cast_possible_truncation, reason = "range validated above")]
     let mut mantissa = scaled as i32;
@@ -384,7 +388,7 @@ fn encode_dpt9(value: &DptValue) -> Result<Vec<u8>, DptError> {
         exponent += 1;
     }
     if exponent > 15 {
-        return Err(DptError::OutOfRange);
+        return Err(DptError::out_of_range("KNX F16 exponent overflow (>15)"));
     }
 
     let m = low_u16((mantissa & 0x07FF).unsigned_abs());

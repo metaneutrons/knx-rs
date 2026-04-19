@@ -56,7 +56,7 @@ fn decode_dpt28(payload: &[u8]) -> Result<String, DptError> {
         .unwrap_or(payload.len());
     core::str::from_utf8(&payload[..end])
         .map(String::from)
-        .map_err(|_| DptError::OutOfRange)
+        .map_err(|_| DptError::out_of_range("invalid UTF-8 in DPT 28 payload"))
 }
 
 fn encode_dpt28(value: &str) -> Vec<u8> {

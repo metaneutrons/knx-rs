@@ -55,6 +55,14 @@ fn input_to_value(main: u16, sub: u16, input: f64) -> DptValue {
     }
 }
 
+/// Returns true if this DPT main group decodes to `Bytes` (structured DPTs).
+const fn is_bytes_dpt(main: u16) -> bool {
+    matches!(
+        main,
+        10 | 11 | 19 | 217 | 219 | 221 | 225 | 231 | 234 | 235 | 239
+    )
+}
+
 #[test]
 fn dpt_encode_matches_cpp() {
     let json = include_str!("fixtures/dpt_vectors.json");
@@ -71,11 +79,8 @@ fn dpt_encode_matches_cpp() {
             continue;
         }
 
-        // Skip multi-byte structured DPTs that changed from f64 to Bytes
-        if matches!(
-            v.main,
-            10 | 11 | 19 | 217 | 219 | 221 | 225 | 231 | 234 | 235 | 239
-        ) {
+        // Structured DPTs decode to Bytes — can't encode from f64 input
+        if is_bytes_dpt(v.main) {
             skipped += 1;
             continue;
         }
@@ -126,18 +131,24 @@ fn dpt_decode_from_cpp_bytes() {
             continue;
         }
 
-        // Skip multi-byte structured DPTs that changed from f64 to Bytes
-        if matches!(
-            v.main,
-            10 | 11 | 19 | 217 | 219 | 221 | 225 | 231 | 234 | 235 | 239
-        ) {
-            skipped += 1;
-            continue;
-        }
-
         match dpt::decode(dpt_id, &v.bytes) {
             Ok(decoded) => {
-                // Re-encode and verify bytes match (roundtrip consistency)
+                // For Bytes DPTs, verify decode→encode roundtrip preserves bytes
+                if is_bytes_dpt(v.main) {
+                    if let Ok(re_encoded) = dpt::encode(dpt_id, &decoded) {
+                        let expected_len = v.bytes.len().min(re_encoded.len());
+                        assert_eq!(
+                            &re_encoded[..expected_len],
+                            &v.bytes[..expected_len],
+                            "DPT {dpt_id} bytes roundtrip: decode({:?})={decoded:?} → {re_encoded:?}",
+                            v.bytes
+                        );
+                    }
+                    passed += 1;
+                    continue;
+                }
+
+                // For numeric DPTs, re-encode and verify bytes match
                 if let Ok(re_encoded) = dpt::encode(dpt_id, &decoded) {
                     if v.main == 9 {
                         assert!(

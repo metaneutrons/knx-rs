@@ -24,6 +24,7 @@ use core::fmt;
 
 /// A KNX Datapoint Type identifier (main group / sub group / index).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Dpt {
     /// Main group number.
     pub main: u16,
@@ -79,6 +80,7 @@ impl fmt::Display for Dpt {
 /// Each variant matches the natural type for its DPT group.
 /// Use [`From`] impls for ergonomic construction.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DptValue {
     /// Boolean (DPT 1).
     Bool(bool),
@@ -94,6 +96,28 @@ pub enum DptValue {
     Text(String),
     /// Raw bytes (DPT 10, 11, 19, 217, 219, 221, 225, 231, 234, 235, 239, 251).
     Bytes(Vec<u8>),
+}
+
+impl fmt::Display for DptValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bool(v) => write!(f, "{v}"),
+            Self::UInt(v) => write!(f, "{v}"),
+            Self::Int(v) => write!(f, "{v}"),
+            Self::Float(v) => write!(f, "{v}"),
+            Self::Int64(v) => write!(f, "{v}"),
+            Self::Text(s) => f.write_str(s),
+            Self::Bytes(b) => {
+                for (i, byte) in b.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" ")?;
+                    }
+                    write!(f, "{byte:02X}")?;
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 impl DptValue {
@@ -238,6 +262,12 @@ impl From<&str> for DptValue {
     }
 }
 
+impl From<Vec<u8>> for DptValue {
+    fn from(b: Vec<u8>) -> Self {
+        Self::Bytes(b)
+    }
+}
+
 /// Error returned when DPT encoding or decoding fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DptError {
@@ -246,11 +276,21 @@ pub enum DptError {
     /// The DPT main group is not supported.
     UnsupportedDpt(Dpt),
     /// The value is out of range for the requested DPT.
-    OutOfRange,
+    OutOfRange {
+        /// Human-readable context (e.g. "expected 0..=255, got 300").
+        context: &'static str,
+    },
     /// Wrong value type for the DPT (e.g. Bool for a float DPT).
     TypeMismatch,
     /// No DPT configured on the group object.
     NoDpt,
+}
+
+impl DptError {
+    /// Create an `OutOfRange` error with context.
+    pub const fn out_of_range(context: &'static str) -> Self {
+        Self::OutOfRange { context }
+    }
 }
 
 impl fmt::Display for DptError {
@@ -258,7 +298,7 @@ impl fmt::Display for DptError {
         match self {
             Self::PayloadTooShort => f.write_str("payload too short for DPT"),
             Self::UnsupportedDpt(dpt) => write!(f, "unsupported DPT: {dpt}"),
-            Self::OutOfRange => f.write_str("value out of range for DPT"),
+            Self::OutOfRange { context } => write!(f, "value out of range: {context}"),
             Self::TypeMismatch => f.write_str("wrong value type for DPT"),
             Self::NoDpt => f.write_str("no DPT configured on group object"),
         }
