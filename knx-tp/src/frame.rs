@@ -6,6 +6,7 @@
 //! Handles conversion between CEMI frames and TP wire format,
 //! including CRC calculation.
 
+use knx_core::address::IndividualAddress;
 use knx_core::cemi::CemiFrame;
 
 /// A TP bus frame (raw bytes on the twisted-pair wire).
@@ -53,16 +54,17 @@ impl TpFrame {
     }
 
     /// Source address.
-    pub const fn source(&self) -> u16 {
-        if self.is_extended() {
+    pub const fn source(&self) -> IndividualAddress {
+        let raw = if self.is_extended() {
             u16::from_be_bytes([self.data[2], self.data[3]])
         } else {
             u16::from_be_bytes([self.data[1], self.data[2]])
-        }
+        };
+        IndividualAddress::from_raw(raw)
     }
 
-    /// Destination address.
-    pub const fn destination(&self) -> u16 {
+    /// Destination address (raw u16 — could be individual or group).
+    pub const fn destination_raw(&self) -> u16 {
         if self.is_extended() {
             u16::from_be_bytes([self.data[4], self.data[5]])
         } else {
@@ -163,8 +165,8 @@ mod tests {
         );
         let tp = TpFrame::from_cemi(&cemi);
         assert!(!tp.is_extended());
-        assert_eq!(tp.source(), 0x1101);
-        assert_eq!(tp.destination(), 0x0801);
+        assert_eq!(tp.source().raw(), 0x1101);
+        assert_eq!(tp.destination_raw(), 0x0801);
         assert_eq!(tp.apdu_size(), 1);
         assert!(tp.is_valid());
     }
@@ -176,8 +178,8 @@ mod tests {
         data[8] = CemiFrame::calc_crc_tp(&data[..8]);
         let frame = TpFrame::from_bytes(&data).unwrap();
         assert!(!frame.is_extended());
-        assert_eq!(frame.source(), 0x1101);
-        assert_eq!(frame.destination(), 0x0801);
+        assert_eq!(frame.source().raw(), 0x1101);
+        assert_eq!(frame.destination_raw(), 0x0801);
         assert!(frame.is_valid());
     }
 

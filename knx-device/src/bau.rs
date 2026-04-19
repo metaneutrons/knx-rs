@@ -94,8 +94,8 @@ impl Bau {
     }
 
     /// The device's individual address.
-    pub fn individual_address(&self) -> u16 {
-        device_object::individual_address(self.device())
+    pub fn individual_address(&self) -> IndividualAddress {
+        IndividualAddress::from_raw(device_object::individual_address(self.device()))
     }
 
     /// Process an incoming CEMI frame.
@@ -345,7 +345,7 @@ impl Bau {
     // ── Frame builders ────────────────────────────────────────
 
     fn queue_group_value_write(&mut self, ga: u16, data: &[u8]) {
-        let src = IndividualAddress::from_raw(self.individual_address());
+        let src = self.individual_address();
         let dst = DestinationAddress::Group(GroupAddress::from_raw(ga));
         let mut payload = Vec::with_capacity(2 + data.len());
         payload.push(0x00);
@@ -365,7 +365,7 @@ impl Bau {
     }
 
     fn queue_group_value_read(&mut self, ga: u16) {
-        let src = IndividualAddress::from_raw(self.individual_address());
+        let src = self.individual_address();
         let dst = DestinationAddress::Group(GroupAddress::from_raw(ga));
         self.outbox.push(CemiFrame::new_l_data(
             MessageCode::LDataReq,
@@ -377,7 +377,7 @@ impl Bau {
     }
 
     fn queue_group_value_response(&mut self, ga: u16, data: &[u8]) {
-        let src = IndividualAddress::from_raw(self.individual_address());
+        let src = self.individual_address();
         let dst = DestinationAddress::Group(GroupAddress::from_raw(ga));
         let mut payload = Vec::with_capacity(2 + data.len());
         payload.push(0x00);
@@ -397,7 +397,7 @@ impl Bau {
     }
 
     fn queue_individual_address_response(&mut self) {
-        let src = IndividualAddress::from_raw(self.individual_address());
+        let src = self.individual_address();
         let dst = DestinationAddress::Group(GroupAddress::from_raw(0));
         self.outbox.push(CemiFrame::new_l_data(
             MessageCode::LDataReq,
@@ -409,7 +409,7 @@ impl Bau {
     }
 
     fn queue_device_descriptor_response(&mut self, destination: u16) {
-        let src = IndividualAddress::from_raw(self.individual_address());
+        let src = self.individual_address();
         let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
         let mask = MASK_VERSION_IP.to_be_bytes();
         self.outbox.push(CemiFrame::new_l_data(
@@ -430,7 +430,7 @@ impl Bau {
         start_index: u16,
         data: &[u8],
     ) {
-        let src = IndividualAddress::from_raw(self.individual_address());
+        let src = self.individual_address();
         let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
         let mut payload = Vec::with_capacity(6 + data.len());
         payload.push(0x03);
@@ -450,7 +450,7 @@ impl Bau {
     }
 
     fn queue_memory_response(&mut self, destination: u16, address: u16, data: &[u8]) {
-        let src = IndividualAddress::from_raw(self.individual_address());
+        let src = self.individual_address();
         let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
         let mut payload = Vec::with_capacity(5 + data.len());
         payload.push(0x02);
@@ -540,7 +540,7 @@ mod tests {
         ])
         .unwrap();
         bau.process_frame(&frame);
-        assert_eq!(bau.individual_address(), 0x1105);
+        assert_eq!(bau.individual_address().raw(), 0x1105);
     }
 
     #[test]
@@ -551,7 +551,7 @@ mod tests {
         ])
         .unwrap();
         bau.process_frame(&frame);
-        assert_eq!(bau.individual_address(), 0x1101);
+        assert_eq!(bau.individual_address().raw(), 0x1101);
     }
 
     #[test]

@@ -104,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bau = create_demo_bau(address);
 
     tracing::info!(
-        address = %knx_core::address::IndividualAddress::from_raw(bau.individual_address()),
+        address = %bau.individual_address(),
         "KNX demo device starting"
     );
     tracing::info!("  GO 1: Temperature (1/0/1, DPT 9.001) — publishes every 5s");

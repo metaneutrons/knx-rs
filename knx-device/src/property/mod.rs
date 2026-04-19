@@ -19,8 +19,8 @@ use alloc::vec::Vec;
 
 /// Read callback signature: `(start, count) -> data bytes`.
 type ReadFn = Box<dyn Fn(u16, u8) -> Vec<u8> + Send>;
-/// Write callback signature: `(start, count, data) -> elements written`.
-pub type WriteFn = Box<dyn Fn(u16, u8, &[u8]) -> u8 + Send>;
+/// Write callback: `(start_index, count, data) -> elements_written`.
+pub type PropertyWriteFn = Box<dyn Fn(u16, u8, &[u8]) -> u8 + Send>;
 
 /// A KNX property with metadata and either data storage or callbacks.
 ///
@@ -39,7 +39,7 @@ enum PropertyStorage {
     Data(DataProperty),
     Callback {
         read_fn: ReadFn,
-        write_fn: Option<WriteFn>,
+        write_fn: Option<PropertyWriteFn>,
     },
 }
 
@@ -64,7 +64,7 @@ impl Property {
         max_elements: u16,
         access: AccessLevel,
         read_fn: impl Fn(u16, u8) -> Vec<u8> + Send + 'static,
-        write_fn: Option<WriteFn>,
+        write_fn: Option<PropertyWriteFn>,
     ) -> Self {
         Self {
             id,
