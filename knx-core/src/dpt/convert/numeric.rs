@@ -12,11 +12,9 @@ fn round(v: f64) -> f64 {
     libm::round(v)
 }
 
-/// Convert a range-checked `f64` to `u8`.
+/// Convert a clamped `f64` to `u8`.
 ///
-/// # Safety invariant
-///
-/// Caller must ensure `0.0 <= v <= 255.0`. Clamps as a defense.
+/// Clamps to `[0, 255]` before conversion.
 const fn f64_to_u8(v: f64) -> u8 {
     // SAFETY: value is clamped to [0, 255], truncation and sign loss are impossible.
     #[expect(
@@ -29,11 +27,9 @@ const fn f64_to_u8(v: f64) -> u8 {
     }
 }
 
-/// Convert a range-checked `f64` to `u32`.
+/// Convert an `f64` to `u32`, rounding to nearest.
 ///
-/// # Safety invariant
-///
-/// Caller must ensure `0.0 <= v <= u32::MAX`. Returns `Err` if out of range.
+/// Returns `Err(OutOfRange)` if the value is negative or exceeds `u32::MAX`.
 fn f64_to_u32(v: f64) -> Result<u32, DptError> {
     let r = round(v);
     if r < 0.0 || r > f64::from(u32::MAX) {
@@ -48,11 +44,9 @@ fn f64_to_u32(v: f64) -> Result<u32, DptError> {
     Ok(r as u32)
 }
 
-/// Convert a range-checked `f64` to `i32`.
+/// Convert an `f64` to `i32`, rounding to nearest.
 ///
-/// # Safety invariant
-///
-/// Caller must ensure `i32::MIN <= v <= i32::MAX`. Returns `Err` if out of range.
+/// Returns `Err(OutOfRange)` if the value exceeds `i32` range.
 fn f64_to_i32(v: f64) -> Result<i32, DptError> {
     let r = round(v);
     if r < f64::from(i32::MIN) || r > f64::from(i32::MAX) {
@@ -346,7 +340,13 @@ fn decode_dpt9(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt9(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_f64(value)?;
-    let mut mantissa = f64_to_i32(v * 100.0)?;
+    // round once, then range-check without re-rounding
+    let scaled = round(v * 100.0);
+    if scaled < f64::from(i32::MIN) || scaled > f64::from(i32::MAX) {
+        return Err(DptError::OutOfRange);
+    }
+    #[expect(clippy::cast_possible_truncation, reason = "range validated above")]
+    let mut mantissa = scaled as i32;
     let mut exponent: u16 = 0;
 
     while mantissa > 2047 {

@@ -9,9 +9,9 @@
 //! | Variant | DPT groups |
 //! |---------|------------|
 //! | `Bool` | 1 |
-//! | `UInt` | 2, 3, 4, 5, 7, 12, 15, 17, 18, 26, 232, 238 |
+//! | `UInt` | 2, 3, 4, 5 (raw), 7, 12, 15, 17, 18, 26, 232, 238 |
 //! | `Int` | 6, 8, 13, 27 |
-//! | `Float` | 9, 14 |
+//! | `Float` | 5.001/5.003 (scaled), 9, 14 |
 //! | `Int64` | 29 |
 //! | `Text` | 16, 28 |
 //! | `Bytes` | 10, 11, 19, 217, 219, 221, 225, 231, 234, 235, 239, 251 |
@@ -249,6 +249,8 @@ pub enum DptError {
     OutOfRange,
     /// Wrong value type for the DPT (e.g. Bool for a float DPT).
     TypeMismatch,
+    /// No DPT configured on the group object.
+    NoDpt,
 }
 
 impl fmt::Display for DptError {
@@ -258,6 +260,7 @@ impl fmt::Display for DptError {
             Self::UnsupportedDpt(dpt) => write!(f, "unsupported DPT: {dpt}"),
             Self::OutOfRange => f.write_str("value out of range for DPT"),
             Self::TypeMismatch => f.write_str("wrong value type for DPT"),
+            Self::NoDpt => f.write_str("no DPT configured on group object"),
         }
     }
 }

@@ -172,7 +172,7 @@ impl GroupObject {
     ///
     /// Returns [`DptError`] if no DPT is configured or decoding fails.
     pub fn value(&self) -> Result<DptValue, DptError> {
-        let dpt = self.dpt.ok_or(DptError::OutOfRange)?;
+        let dpt = self.dpt.ok_or(DptError::NoDpt)?;
         dpt::decode(dpt, &self.data)
     }
 
@@ -182,7 +182,7 @@ impl GroupObject {
     ///
     /// Returns [`DptError`] if no DPT is configured or encoding fails.
     pub fn set_value(&mut self, value: &DptValue) -> Result<(), DptError> {
-        let dpt = self.dpt.ok_or(DptError::OutOfRange)?;
+        let dpt = self.dpt.ok_or(DptError::NoDpt)?;
         let encoded = dpt::encode(dpt, value)?;
         let len = encoded.len().min(self.data.len());
         self.data[..len].copy_from_slice(&encoded[..len]);
@@ -197,7 +197,7 @@ impl GroupObject {
     ///
     /// Returns [`DptError`] if no DPT is configured or encoding fails.
     pub fn set_value_if_changed(&mut self, value: &DptValue) -> Result<bool, DptError> {
-        let dpt = self.dpt.ok_or(DptError::OutOfRange)?;
+        let dpt = self.dpt.ok_or(DptError::NoDpt)?;
         let encoded = dpt::encode(dpt, value)?;
         let len = encoded.len().min(self.data.len());
         if self.data[..len] == encoded[..len] {

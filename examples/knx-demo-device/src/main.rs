@@ -25,10 +25,7 @@ fn log_updated_group_objects(bau: &mut Bau) {
         if let Some(go) = bau.group_objects.get(asap) {
             match asap {
                 1 => {
-                    if let Ok(temp) = go
-                        .value()
-                        .and_then(|v| v.as_f64().ok_or(knx_core::dpt::DptError::TypeMismatch))
-                    {
+                    if let Some(temp) = go.value().ok().and_then(|v| v.as_f64()) {
                         tracing::info!(
                             ga = "1/0/1",
                             value = format!("{temp:.1}°C"),
@@ -46,10 +43,7 @@ fn log_updated_group_objects(bau: &mut Bau) {
                     }
                 }
                 3 => {
-                    if let Ok(val) = go
-                        .value()
-                        .and_then(|v| v.as_f64().ok_or(knx_core::dpt::DptError::TypeMismatch))
-                    {
+                    if let Some(val) = go.value().ok().and_then(|v| v.as_f64()) {
                         tracing::info!(
                             ga = "1/0/3",
                             percent = format!("{val:.0}%"),
