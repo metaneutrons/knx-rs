@@ -3,6 +3,8 @@
 
 //! KNX Device Object — the mandatory root interface object.
 
+use knx_core::address::IndividualAddress;
+
 use crate::interface_object::{InterfaceObject, ObjectType};
 use crate::property::{AccessLevel, DataProperty, PropertyDataType, PropertyId};
 
@@ -126,14 +128,14 @@ fn add_config_properties(obj: &mut InterfaceObject, hw_type: [u8; 6]) {
 }
 
 /// Read the individual address from a device object.
-pub fn individual_address(obj: &InterfaceObject) -> u16 {
+pub fn individual_address(obj: &InterfaceObject) -> IndividualAddress {
     let mut subnet = alloc::vec::Vec::new();
     let mut device = alloc::vec::Vec::new();
     obj.read_property(PropertyId::SubnetAddr, 1, 1, &mut subnet);
     obj.read_property(PropertyId::DeviceAddr, 1, 1, &mut device);
     let s = subnet.first().copied().unwrap_or(0xFF);
     let d = device.first().copied().unwrap_or(0xFF);
-    u16::from(s) << 8 | u16::from(d)
+    IndividualAddress::from_raw(u16::from(s) << 8 | u16::from(d))
 }
 
 /// Set the individual address on a device object.
@@ -175,14 +177,14 @@ mod tests {
 
     #[test]
     fn individual_address_default() {
-        assert_eq!(individual_address(&test_device()), 0xFFFF);
+        assert_eq!(individual_address(&test_device()).raw(), 0xFFFF);
     }
 
     #[test]
     fn set_and_get_individual_address() {
         let mut obj = test_device();
         set_individual_address(&mut obj, 0x1101);
-        assert_eq!(individual_address(&obj), 0x1101);
+        assert_eq!(individual_address(&obj).raw(), 0x1101);
     }
 
     #[test]

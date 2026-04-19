@@ -95,7 +95,7 @@ impl Bau {
 
     /// The device's individual address.
     pub fn individual_address(&self) -> IndividualAddress {
-        IndividualAddress::from_raw(device_object::individual_address(self.device()))
+        device_object::individual_address(self.device())
     }
 
     /// Process an incoming CEMI frame.
