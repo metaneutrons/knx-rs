@@ -33,7 +33,7 @@ use std::str::FromStr;
 
 use knx_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
 use knx_core::cemi::CemiFrame;
-use knx_core::dpt::{self, DPT_SCALING, DPT_SWITCH, DPT_VALUE_TEMP};
+use knx_core::dpt::{self, DPT_SCALING, DPT_SWITCH, DPT_VALUE_TEMP, DptValue};
 use knx_core::message::MessageCode;
 use knx_core::types::Priority;
 use knx_ip::{KnxConnection, connect, parse_url};
@@ -58,14 +58,20 @@ fn parse_ga(s: &str) -> GroupAddress {
 
 fn encode_value(s: &str) -> Vec<u8> {
     match s {
-        "on" | "ON" | "1" | "true" => dpt::encode(DPT_SWITCH, 1.0).unwrap_or_else(|_| vec![1]),
-        "off" | "OFF" | "0" | "false" => dpt::encode(DPT_SWITCH, 0.0).unwrap_or_else(|_| vec![0]),
+        "on" | "ON" | "1" | "true" => {
+            dpt::encode(DPT_SWITCH, &DptValue::Bool(true)).unwrap_or_else(|_| vec![1])
+        }
+        "off" | "OFF" | "0" | "false" => {
+            dpt::encode(DPT_SWITCH, &DptValue::Bool(false)).unwrap_or_else(|_| vec![0])
+        }
         _ => {
             if let Ok(pct) = s.parse::<f64>() {
                 if pct > 1.0 {
-                    dpt::encode(DPT_SCALING, pct).unwrap_or_else(|_| vec![pct as u8])
+                    dpt::encode(DPT_SCALING, &DptValue::Float(pct))
+                        .unwrap_or_else(|_| vec![pct as u8])
                 } else {
-                    dpt::encode(DPT_SWITCH, pct).unwrap_or_else(|_| vec![pct as u8])
+                    dpt::encode(DPT_SWITCH, &DptValue::Bool(pct != 0.0))
+                        .unwrap_or_else(|_| vec![pct as u8])
                 }
             } else {
                 eprintln!("Unknown value: {s}");
@@ -105,16 +111,20 @@ fn build_group_read(ga: GroupAddress) -> CemiFrame {
 
 fn decode_and_print(ga: &GroupAddress, payload: &[u8]) {
     // Try common DPTs
-    if let Ok(val) = dpt::decode(DPT_VALUE_TEMP, payload) {
-        println!("  {ga}: {val:.1}°C (DPT 9.001)");
+    if let Some(f) = dpt::decode(DPT_VALUE_TEMP, payload)
+        .ok()
+        .and_then(|v| v.as_f64())
+    {
+        println!("  {ga}: {f:.1}°C (DPT 9.001)");
         return;
     }
-    if payload.len() == 1 && dpt::decode(DPT_SWITCH, payload).is_ok() {
-        let val = dpt::decode(DPT_SWITCH, payload).unwrap_or(0.0);
-        println!(
-            "  {ga}: {} (DPT 1.001)",
-            if val != 0.0 { "ON" } else { "OFF" }
-        );
+    if let Some(on) = payload
+        .first()
+        .filter(|_| payload.len() == 1)
+        .and_then(|_| dpt::decode(DPT_SWITCH, payload).ok())
+        .and_then(|v| v.as_bool())
+    {
+        println!("  {ga}: {} (DPT 1.001)", if on { "ON" } else { "OFF" });
         return;
     }
     // Fallback: hex

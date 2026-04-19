@@ -36,7 +36,11 @@ pub struct Dpt {
 impl Dpt {
     /// Create a new DPT identifier.
     pub const fn new(main: u16, sub: u16) -> Self {
-        Self { main, sub, index: 0 }
+        Self {
+            main,
+            sub,
+            index: 0,
+        }
     }
 
     /// Create a new DPT identifier with index.
@@ -118,13 +122,19 @@ impl DptValue {
     }
 
     /// Get as f64. Converts from any numeric variant.
+    ///
+    /// Note: `Int64` → `f64` may lose precision for values > 2^53.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "i64→f64 precision loss is inherent and documented"
+    )]
     pub const fn as_f64(&self) -> Option<f64> {
         match self {
             Self::Float(v) => Some(*v),
             Self::Bool(v) => Some(if *v { 1.0 } else { 0.0 }),
-            Self::UInt(v) => Some(*v as f64),
-            Self::Int(v) => Some(*v as f64),
-            Self::Int64(v) => Some(*v as f64),
+            Self::UInt(v) => Some(*v as f64), // lossless: f64 covers all u32
+            Self::Int(v) => Some(*v as f64),  // lossless: f64 covers all i32
+            Self::Int64(v) => Some(*v as f64), // lossy for |v| > 2^53
             _ => None,
         }
     }
@@ -157,51 +167,75 @@ impl DptValue {
 // ── From impls ────────────────────────────────────────────────
 
 impl From<bool> for DptValue {
-    fn from(v: bool) -> Self { Self::Bool(v) }
+    fn from(v: bool) -> Self {
+        Self::Bool(v)
+    }
 }
 
 impl From<u8> for DptValue {
-    fn from(v: u8) -> Self { Self::UInt(u32::from(v)) }
+    fn from(v: u8) -> Self {
+        Self::UInt(u32::from(v))
+    }
 }
 
 impl From<u16> for DptValue {
-    fn from(v: u16) -> Self { Self::UInt(u32::from(v)) }
+    fn from(v: u16) -> Self {
+        Self::UInt(u32::from(v))
+    }
 }
 
 impl From<u32> for DptValue {
-    fn from(v: u32) -> Self { Self::UInt(v) }
+    fn from(v: u32) -> Self {
+        Self::UInt(v)
+    }
 }
 
 impl From<i8> for DptValue {
-    fn from(v: i8) -> Self { Self::Int(i32::from(v)) }
+    fn from(v: i8) -> Self {
+        Self::Int(i32::from(v))
+    }
 }
 
 impl From<i16> for DptValue {
-    fn from(v: i16) -> Self { Self::Int(i32::from(v)) }
+    fn from(v: i16) -> Self {
+        Self::Int(i32::from(v))
+    }
 }
 
 impl From<i32> for DptValue {
-    fn from(v: i32) -> Self { Self::Int(v) }
+    fn from(v: i32) -> Self {
+        Self::Int(v)
+    }
 }
 
 impl From<i64> for DptValue {
-    fn from(v: i64) -> Self { Self::Int64(v) }
+    fn from(v: i64) -> Self {
+        Self::Int64(v)
+    }
 }
 
 impl From<f32> for DptValue {
-    fn from(v: f32) -> Self { Self::Float(f64::from(v)) }
+    fn from(v: f32) -> Self {
+        Self::Float(f64::from(v))
+    }
 }
 
 impl From<f64> for DptValue {
-    fn from(v: f64) -> Self { Self::Float(v) }
+    fn from(v: f64) -> Self {
+        Self::Float(v)
+    }
 }
 
 impl From<String> for DptValue {
-    fn from(s: String) -> Self { Self::Text(s) }
+    fn from(s: String) -> Self {
+        Self::Text(s)
+    }
 }
 
 impl From<&str> for DptValue {
-    fn from(s: &str) -> Self { Self::Text(String::from(s)) }
+    fn from(s: &str) -> Self {
+        Self::Text(String::from(s))
+    }
 }
 
 /// Error returned when DPT encoding or decoding fails.

@@ -3,7 +3,7 @@
 
 //! KNX demo device — reusable device setup for the demo and tests.
 
-use knx_core::dpt::{DPT_SCALING, DPT_STRING_ASCII, DPT_SWITCH, DPT_VALUE_TEMP};
+use knx_core::dpt::{DPT_SCALING, DPT_STRING_ASCII, DPT_SWITCH, DPT_VALUE_TEMP, DptValue};
 use knx_device::bau::Bau;
 use knx_device::device_object;
 use knx_device::group_object::ComFlag;
@@ -36,7 +36,7 @@ pub fn create_demo_bau(individual_address: u16) -> Bau {
     ]);
 
     if let Some(go) = bau.group_objects.get_mut(1) {
-        let _ = go.set_value_f64(21.0);
+        let _ = go.set_value(&DptValue::Float(21.0));
         go.set_comm_flag(ComFlag::Ok);
     }
 

@@ -11,14 +11,15 @@
 //! use knx_ip::{KnxConnection, connect, parse_url};
 //! use knx_ip::ops::GroupOps;
 //! use knx_core::address::GroupAddress;
-//! use knx_core::dpt::DPT_SWITCH;
+//! use knx_core::dpt::{DptValue, DPT_SWITCH, DPT_VALUE_TEMP};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut conn = connect(parse_url("udp://192.168.1.50:3671")?).await?;
 //! let ga = "1/0/1".parse()?;
 //!
 //! conn.group_write(ga, &[0x01]).await?;
-//! conn.group_write_dpt(ga, DPT_SWITCH, 1.0).await?;
+//! conn.group_write_value(ga, DPT_SWITCH, &true.into()).await?;
+//! conn.group_write_value(ga, DPT_VALUE_TEMP, &21.5.into()).await?;
 //! conn.group_read(ga).await?;
 //! # Ok(())
 //! # }
@@ -26,7 +27,7 @@
 
 use knx_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
 use knx_core::cemi::CemiFrame;
-use knx_core::dpt::{self, Dpt};
+use knx_core::dpt::{self, Dpt, DptValue};
 use knx_core::message::MessageCode;
 use knx_core::types::Priority;
 
@@ -49,55 +50,19 @@ pub trait GroupOps: KnxConnection {
         self.send(frame).await
     }
 
-    /// Write a DPT-encoded value to a group address.
+    /// Write a DPT-encoded [`DptValue`] to a group address.
     ///
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if encoding fails or the frame could not be sent.
-    async fn group_write_dpt(
+    async fn group_write_value(
         &self,
         ga: GroupAddress,
         dpt: Dpt,
-        value: f64,
+        value: &DptValue,
     ) -> Result<(), KnxIpError> {
         let encoded = dpt::encode(dpt, value).map_err(|e| KnxIpError::Protocol(e.to_string()))?;
         self.group_write(ga, &encoded).await
-    }
-
-    /// Write a string value to a group address (DPT 16/28).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`KnxIpError`] if encoding fails or the frame could not be sent.
-    async fn group_write_string(
-        &self,
-        ga: GroupAddress,
-        dpt: Dpt,
-        value: &str,
-    ) -> Result<(), KnxIpError> {
-        let encoded =
-            dpt::encode_string(dpt, value).map_err(|e| KnxIpError::Protocol(e.to_string()))?;
-        self.group_write(ga, &encoded).await
-    }
-
-    /// Write a boolean (DPT 1.001 Switch) to a group address.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`KnxIpError`] if the frame could not be sent.
-    async fn group_write_bool(&self, ga: GroupAddress, value: bool) -> Result<(), KnxIpError> {
-        self.group_write(ga, &[u8::from(value)]).await
-    }
-
-    /// Write a percentage (DPT 5.001 Scaling, 0–100%) to a group address.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`KnxIpError`] if the frame could not be sent.
-    async fn group_write_percent(&self, ga: GroupAddress, percent: u8) -> Result<(), KnxIpError> {
-        #[expect(clippy::cast_possible_truncation)] // result is 0..=255, fits in u8
-        let scaled = ((u16::from(percent.min(100)) * 255) / 100) as u8;
-        self.group_write(ga, &[scaled]).await
     }
 
     /// Send a group read request.
@@ -216,12 +181,12 @@ mod tests {
 
     #[test]
     fn dpt_encoding_in_write() {
-        let encoded = dpt::encode(DPT_SWITCH, 1.0).unwrap();
+        let encoded = dpt::encode(DPT_SWITCH, &DptValue::Bool(true)).unwrap();
         let frame = build_group_write(GroupAddress::from_raw(0x0802), &encoded);
         let payload = frame.payload();
         assert_eq!(payload[1], 0x81); // GroupValueWrite | 1
 
-        let encoded = dpt::encode(DPT_VALUE_TEMP, 21.5).unwrap();
+        let encoded = dpt::encode(DPT_VALUE_TEMP, &DptValue::Float(21.5)).unwrap();
         let frame = build_group_write(GroupAddress::from_raw(0x0801), &encoded);
         assert_eq!(frame.payload().len(), 4); // TPCI + APCI + 2 bytes DPT9
     }

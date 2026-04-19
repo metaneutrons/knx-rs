@@ -11,7 +11,7 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use knx_core::dpt::{self, Dpt, DptError};
+use knx_core::dpt::{self, Dpt, DptError, DptValue};
 
 /// Callback invoked when a group object is updated from the bus.
 pub type GroupObjectCallback = Box<dyn Fn(&GroupObject) + Send>;
@@ -166,22 +166,22 @@ impl GroupObject {
         }
     }
 
-    /// Read the value as a decoded `f64` using the configured DPT.
+    /// Read the value as a decoded [`DptValue`] using the configured DPT.
     ///
     /// # Errors
     ///
     /// Returns [`DptError`] if no DPT is configured or decoding fails.
-    pub fn value_as_f64(&self) -> Result<f64, DptError> {
+    pub fn value(&self) -> Result<DptValue, DptError> {
         let dpt = self.dpt.ok_or(DptError::OutOfRange)?;
         dpt::decode(dpt, &self.data)
     }
 
-    /// Write a value from an `f64` using the configured DPT, and mark as `WriteRequest`.
+    /// Write a [`DptValue`] using the configured DPT, and mark as `WriteRequest`.
     ///
     /// # Errors
     ///
     /// Returns [`DptError`] if no DPT is configured or encoding fails.
-    pub fn set_value_f64(&mut self, value: f64) -> Result<(), DptError> {
+    pub fn set_value(&mut self, value: &DptValue) -> Result<(), DptError> {
         let dpt = self.dpt.ok_or(DptError::OutOfRange)?;
         let encoded = dpt::encode(dpt, value)?;
         let len = encoded.len().min(self.data.len());
@@ -196,7 +196,7 @@ impl GroupObject {
     /// # Errors
     ///
     /// Returns [`DptError`] if no DPT is configured or encoding fails.
-    pub fn set_value_if_changed(&mut self, value: f64) -> Result<bool, DptError> {
+    pub fn set_value_if_changed(&mut self, value: &DptValue) -> Result<bool, DptError> {
         let dpt = self.dpt.ok_or(DptError::OutOfRange)?;
         let encoded = dpt::encode(dpt, value)?;
         let len = encoded.len().min(self.data.len());
@@ -277,7 +277,7 @@ impl GroupObjectStore {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use knx_core::dpt::{DPT_SWITCH, DPT_VALUE_TEMP};
+    use knx_core::dpt::{DPT_SWITCH, DPT_VALUE_TEMP, DptValue};
 
     #[test]
     fn new_group_object_is_uninitialized() {
@@ -369,20 +369,20 @@ mod tests {
     #[test]
     fn dpt_aware_value() {
         let mut go = GroupObject::with_dpt(1, DPT_VALUE_TEMP);
-        go.set_value_f64(21.5).unwrap();
+        go.set_value(&DptValue::Float(21.5)).unwrap();
         assert_eq!(go.comm_flag(), ComFlag::WriteRequest);
 
-        let val = go.value_as_f64().unwrap();
+        let val = go.value().unwrap().as_f64().unwrap();
         assert!((val - 21.5).abs() < 0.1, "got {val}");
     }
 
     #[test]
     fn set_value_if_changed_no_change() {
         let mut go = GroupObject::with_dpt(1, DPT_SWITCH);
-        go.set_value_f64(1.0).unwrap();
+        go.set_value(&DptValue::Bool(true)).unwrap();
         go.set_comm_flag(ComFlag::Ok);
 
-        let changed = go.set_value_if_changed(1.0).unwrap();
+        let changed = go.set_value_if_changed(&DptValue::Bool(true)).unwrap();
         assert!(!changed);
         assert_eq!(go.comm_flag(), ComFlag::Ok); // not changed to WriteRequest
     }
@@ -390,10 +390,10 @@ mod tests {
     #[test]
     fn set_value_if_changed_with_change() {
         let mut go = GroupObject::with_dpt(1, DPT_SWITCH);
-        go.set_value_f64(0.0).unwrap();
+        go.set_value(&DptValue::Bool(false)).unwrap();
         go.set_comm_flag(ComFlag::Ok);
 
-        let changed = go.set_value_if_changed(1.0).unwrap();
+        let changed = go.set_value_if_changed(&DptValue::Bool(true)).unwrap();
         assert!(changed);
         assert_eq!(go.comm_flag(), ComFlag::WriteRequest);
     }

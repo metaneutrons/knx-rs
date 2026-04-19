@@ -13,7 +13,7 @@
 
 use std::net::Ipv4Addr;
 
-use knx_core::dpt::{self, DPT_STRING_ASCII};
+use knx_core::dpt::DptValue;
 use knx_device::bau::Bau;
 use knx_device::group_object::ComFlag;
 use knx_ip::tunnel_server::{DeviceServer, ServerEvent};
@@ -25,7 +25,10 @@ fn log_updated_group_objects(bau: &mut Bau) {
         if let Some(go) = bau.group_objects.get(asap) {
             match asap {
                 1 => {
-                    if let Ok(temp) = go.value_as_f64() {
+                    if let Ok(temp) = go
+                        .value()
+                        .and_then(|v| v.as_f64().ok_or(knx_core::dpt::DptError::TypeMismatch))
+                    {
                         tracing::info!(
                             ga = "1/0/1",
                             value = format!("{temp:.1}°C"),
@@ -34,16 +37,19 @@ fn log_updated_group_objects(bau: &mut Bau) {
                     }
                 }
                 2 => {
-                    if let Ok(val) = go.value_as_f64() {
+                    if let Some(on) = go.value().ok().and_then(|v| v.as_bool()) {
                         tracing::info!(
                             ga = "1/0/2",
-                            state = if val != 0.0 { "ON" } else { "OFF" },
+                            state = if on { "ON" } else { "OFF" },
                             "Switch updated"
                         );
                     }
                 }
                 3 => {
-                    if let Ok(val) = go.value_as_f64() {
+                    if let Ok(val) = go
+                        .value()
+                        .and_then(|v| v.as_f64().ok_or(knx_core::dpt::DptError::TypeMismatch))
+                    {
                         tracing::info!(
                             ga = "1/0/3",
                             percent = format!("{val:.0}%"),
@@ -52,7 +58,7 @@ fn log_updated_group_objects(bau: &mut Bau) {
                     }
                 }
                 4 => {
-                    if let Ok(text) = dpt::decode_string(DPT_STRING_ASCII, go.value_ref()) {
+                    if let Some(text) = go.value().ok().and_then(|v| v.as_str().map(String::from)) {
                         tracing::info!(ga = "1/0/4", text, "Display text updated");
                     }
                 }
@@ -140,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let temp = 22.0 + 4.0 * libm::sin(tick as f64 * 0.2);
                 tick += 1;
                 if let Some(go) = bau.group_objects.get_mut(1) {
-                    let _ = go.set_value_f64(temp);
+                    let _ = go.set_value(&DptValue::Float(temp));
                 }
                 flush_outgoing(&mut bau, &server).await;
                 tracing::info!(temp = format!("{temp:.1}°C"), ga = "1/0/1", "Publishing temperature");
