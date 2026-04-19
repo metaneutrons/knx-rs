@@ -87,37 +87,60 @@ impl PropertyDataType {
 /// Property identifier. Values match the KNX specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
-#[allow(missing_docs)] // KNX spec names are self-documenting
 pub enum PropertyId {
-    // ── Object-type independent ───────────────────────────────
+    /// Object type identifier.
     ObjectType = 1,
+    /// Load state control.
     LoadStateControl = 5,
+    /// Run state control.
     RunStateControl = 6,
+    /// Table memory reference.
     TableReference = 7,
+    /// Service control.
     ServiceControl = 8,
+    /// Firmware revision.
     FirmwareRevision = 9,
+    /// Device serial number.
     SerialNumber = 11,
+    /// Manufacturer identifier.
     ManufacturerId = 12,
+    /// Application program version.
     ProgramVersion = 13,
+    /// Device control flags.
     DeviceControl = 14,
+    /// Order information.
     OrderInfo = 15,
+    /// PEI type.
     PeiType = 16,
+    /// Port configuration.
     PortConfiguration = 17,
+    /// Table data.
     Table = 23,
+    /// Interface object version.
     Version = 25,
+    /// Memory control block table.
     McbTable = 27,
+    /// Error code.
     ErrorCode = 28,
+    /// Object index.
     ObjectIndex = 29,
+    /// Download counter.
     DownloadCounter = 30,
-
-    // ── Device object ─────────────────────────────────────────
+    /// Routing hop count.
     RoutingCount = 51,
+    /// Programming mode flag.
     ProgMode = 54,
+    /// Maximum APDU length.
     MaxApduLength = 56,
+    /// Subnet address (high byte of individual address).
     SubnetAddr = 57,
+    /// Device address (low byte of individual address).
     DeviceAddr = 58,
+    /// Interface object list.
     IoList = 71,
+    /// Hardware type identifier.
     HardwareType = 78,
+    /// Device descriptor.
     DeviceDescriptor = 83,
 }
 

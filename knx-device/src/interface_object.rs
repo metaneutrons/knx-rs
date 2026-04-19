@@ -10,19 +10,30 @@ use crate::property::{DataProperty, Property, PropertyDataType, PropertyDescript
 /// KNX interface object type. See KNX 3/7/3 §2.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
-#[allow(missing_docs)] // KNX spec names are self-documenting
 pub enum ObjectType {
+    /// Device object (index 0).
     Device = 0,
+    /// Address table object.
     AddressTable = 1,
+    /// Association table object.
     AssociationTable = 2,
+    /// Application program object.
     ApplicationProgram = 3,
+    /// Interface program object.
     InterfaceProgram = 4,
+    /// Object association table.
     ObjectAssociationTable = 5,
+    /// Router object.
     Router = 6,
+    /// cEMI server object.
     CemiServer = 8,
+    /// Group object table object.
     GroupObjectTable = 9,
+    /// KNXnet/IP parameter object.
     IpParameter = 11,
+    /// Security interface object.
     Security = 17,
+    /// RF medium object.
     RfMedium = 19,
 }
 
