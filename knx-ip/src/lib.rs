@@ -7,7 +7,7 @@
 //!
 //! - [`TunnelConnection`] — unicast tunnel with retry, heartbeat, auto-reconnect
 //! - [`RouterConnection`] — multicast routing with rate limiting (50 pkt/s)
-//! - [`discover`] — gateway discovery on the local network
+//! - [`discovery`] — gateway discovery on the local network
 //! - [`Multiplexer`] / [`MultiplexHandle`] — fan out one connection to many handles
 //! - [`connect`] / [`parse_url`] — URL-based connection factory
 //!
