@@ -106,7 +106,7 @@ impl MultiplexHandle {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the send fails or the multiplexer is closed.
-    pub async fn send(&self, frame: CemiFrame) -> Result<(), KnxIpError> {
+    pub async fn send_frame(&self, frame: CemiFrame) -> Result<(), KnxIpError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(MuxCmd::Send(frame, tx))
@@ -131,5 +131,19 @@ impl MultiplexHandle {
                 Err(broadcast::error::RecvError::Closed) => return None,
             }
         }
+    }
+}
+
+impl KnxConnection for MultiplexHandle {
+    async fn send(&self, frame: CemiFrame) -> Result<(), KnxIpError> {
+        self.send_frame(frame).await
+    }
+
+    async fn recv(&mut self) -> Option<CemiFrame> {
+        self.recv().await
+    }
+
+    async fn close(&mut self) {
+        // MultiplexHandle closes when dropped
     }
 }

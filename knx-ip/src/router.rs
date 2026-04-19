@@ -88,7 +88,7 @@ impl RouterConnection {
 }
 
 impl KnxConnection for RouterConnection {
-    async fn send(&mut self, frame: CemiFrame) -> Result<(), KnxIpError> {
+    async fn send(&self, frame: CemiFrame) -> Result<(), KnxIpError> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx_cmd
             .send(RouterCmd::Send(frame, tx))

@@ -53,7 +53,7 @@ pub trait KnxConnection: Send {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the frame could not be sent.
-    async fn send(&mut self, frame: CemiFrame) -> Result<(), KnxIpError>;
+    async fn send(&self, frame: CemiFrame) -> Result<(), KnxIpError>;
 
     /// Receive the next CEMI frame from the KNX bus.
     ///
@@ -75,7 +75,7 @@ pub enum AnyConnection {
 }
 
 impl KnxConnection for AnyConnection {
-    async fn send(&mut self, frame: CemiFrame) -> Result<(), KnxIpError> {
+    async fn send(&self, frame: CemiFrame) -> Result<(), KnxIpError> {
         match self {
             Self::Tunnel(c) => c.send(frame).await,
             Self::Router(c) => c.send(frame).await,

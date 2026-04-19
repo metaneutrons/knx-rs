@@ -44,7 +44,7 @@ pub trait GroupOps: KnxConnection {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the frame could not be sent.
-    async fn group_write(&mut self, ga: GroupAddress, data: &[u8]) -> Result<(), KnxIpError> {
+    async fn group_write(&self, ga: GroupAddress, data: &[u8]) -> Result<(), KnxIpError> {
         let frame = build_group_write(ga, data);
         self.send(frame).await
     }
@@ -55,7 +55,7 @@ pub trait GroupOps: KnxConnection {
     ///
     /// Returns [`KnxIpError`] if encoding fails or the frame could not be sent.
     async fn group_write_dpt(
-        &mut self,
+        &self,
         ga: GroupAddress,
         dpt: Dpt,
         value: f64,
@@ -70,7 +70,7 @@ pub trait GroupOps: KnxConnection {
     ///
     /// Returns [`KnxIpError`] if encoding fails or the frame could not be sent.
     async fn group_write_string(
-        &mut self,
+        &self,
         ga: GroupAddress,
         dpt: Dpt,
         value: &str,
@@ -87,7 +87,7 @@ pub trait GroupOps: KnxConnection {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the frame could not be sent.
-    async fn group_read(&mut self, ga: GroupAddress) -> Result<(), KnxIpError> {
+    async fn group_read(&self, ga: GroupAddress) -> Result<(), KnxIpError> {
         let frame = build_group_read(ga);
         self.send(frame).await
     }
@@ -97,7 +97,7 @@ pub trait GroupOps: KnxConnection {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the frame could not be sent.
-    async fn group_respond(&mut self, ga: GroupAddress, data: &[u8]) -> Result<(), KnxIpError> {
+    async fn group_respond(&self, ga: GroupAddress, data: &[u8]) -> Result<(), KnxIpError> {
         let frame = build_group_response(ga, data);
         self.send(frame).await
     }

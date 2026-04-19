@@ -110,7 +110,7 @@ impl TunnelConnection {
 }
 
 impl KnxConnection for TunnelConnection {
-    async fn send(&mut self, frame: CemiFrame) -> Result<(), KnxIpError> {
+    async fn send(&self, frame: CemiFrame) -> Result<(), KnxIpError> {
         let (tx, rx) = oneshot::channel();
         self.tx_cmd
             .send(TunnelCmd::Send(frame, tx))
