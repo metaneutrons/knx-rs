@@ -26,7 +26,7 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use crate::address::{DestinationAddress, GroupAddress, IndividualAddress};
-use crate::message::MessageCode;
+use crate::message::{ApduType, MessageCode};
 use crate::tpdu::Tpdu;
 use crate::types::{
     AckType, AddressType, Confirm, FrameFormat, Priority, Repetition, SystemBroadcast,
@@ -372,6 +372,39 @@ impl CemiFrame {
         let off = self.ctrl_offset + 4;
         self.data[off] = bytes[0];
         self.data[off + 1] = bytes[1];
+    }
+
+    // ── Convenience extractors ─────────────────────────────────
+
+    /// Extract group write data if this is a `GroupValueWrite` or `GroupValueResponse`.
+    ///
+    /// Returns `(GroupAddress, data)` or `None` if this frame is not a
+    /// group-addressed data frame with a write/response APDU.
+    pub fn as_group_write(&self) -> Option<(GroupAddress, Vec<u8>)> {
+        if self.address_type() != AddressType::Group {
+            return None;
+        }
+        let tpdu = self.tpdu()?;
+        let apdu = tpdu.apdu()?;
+        match apdu.apdu_type {
+            ApduType::GroupValueWrite | ApduType::GroupValueResponse => {}
+            _ => return None,
+        }
+        let ga = GroupAddress::from_raw(self.destination_address_raw());
+        Some((ga, apdu.data.clone()))
+    }
+
+    /// Check if this is a `GroupValueRead` request and return the target group address.
+    pub fn as_group_read(&self) -> Option<GroupAddress> {
+        if self.address_type() != AddressType::Group {
+            return None;
+        }
+        let tpdu = self.tpdu()?;
+        let apdu = tpdu.apdu()?;
+        if apdu.apdu_type != ApduType::GroupValueRead {
+            return None;
+        }
+        Some(GroupAddress::from_raw(self.destination_address_raw()))
     }
 
     /// Calculate TP CRC over a buffer (XOR of all bytes, inverted).

@@ -80,6 +80,26 @@ pub trait GroupOps: KnxConnection {
         self.group_write(ga, &encoded).await
     }
 
+    /// Write a boolean (DPT 1.001 Switch) to a group address.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnxIpError`] if the frame could not be sent.
+    async fn group_write_bool(&self, ga: GroupAddress, value: bool) -> Result<(), KnxIpError> {
+        self.group_write(ga, &[u8::from(value)]).await
+    }
+
+    /// Write a percentage (DPT 5.001 Scaling, 0–100%) to a group address.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnxIpError`] if the frame could not be sent.
+    async fn group_write_percent(&self, ga: GroupAddress, percent: u8) -> Result<(), KnxIpError> {
+        #[expect(clippy::cast_possible_truncation)] // result is 0..=255, fits in u8
+        let scaled = ((u16::from(percent.min(100)) * 255) / 100) as u8;
+        self.group_write(ga, &[scaled]).await
+    }
+
     /// Send a group read request.
     ///
     /// The response (if any) will arrive as a normal received frame.
