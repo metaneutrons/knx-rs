@@ -6,20 +6,21 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::super::{Dpt, DptError};
+use super::super::{Dpt, DptError, DptValue};
 
-pub fn decode(dpt: Dpt, payload: &[u8]) -> Result<String, DptError> {
+pub fn decode(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
     match dpt.main {
-        16 => decode_dpt16(payload),
-        28 => decode_dpt28(payload),
+        16 => decode_dpt16(payload).map(DptValue::Text),
+        28 => decode_dpt28(payload).map(DptValue::Text),
         _ => Err(DptError::TypeMismatch),
     }
 }
 
-pub fn encode(dpt: Dpt, value: &str) -> Result<Vec<u8>, DptError> {
+pub fn encode(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let s = value.as_str().ok_or(DptError::TypeMismatch)?;
     match dpt.main {
-        16 => Ok(encode_dpt16(value)),
-        28 => Ok(encode_dpt28(value)),
+        16 => Ok(encode_dpt16(s)),
+        28 => Ok(encode_dpt28(s)),
         _ => Err(DptError::TypeMismatch),
     }
 }
@@ -31,7 +32,6 @@ fn decode_dpt16(payload: &[u8]) -> Result<String, DptError> {
         return Err(DptError::PayloadTooShort);
     }
     let end = payload[..14].iter().position(|&b| b == 0).unwrap_or(14);
-    // Latin-1 bytes are a subset of Unicode (U+0000..U+00FF)
     let s: String = payload[..end].iter().map(|&b| char::from(b)).collect();
     Ok(s)
 }
@@ -39,12 +39,7 @@ fn decode_dpt16(payload: &[u8]) -> Result<String, DptError> {
 fn encode_dpt16(value: &str) -> Vec<u8> {
     let mut buf = alloc::vec![0u8; 14];
     for (i, ch) in value.chars().take(14).enumerate() {
-        buf[i] = if ch as u32 <= 0xFF {
-            // Safe: Latin-1 range fits in u8
-            ch as u8
-        } else {
-            b'?'
-        };
+        buf[i] = if ch as u32 <= 0xFF { ch as u8 } else { b'?' };
     }
     buf
 }
@@ -61,12 +56,12 @@ fn decode_dpt28(payload: &[u8]) -> Result<String, DptError> {
         .unwrap_or(payload.len());
     core::str::from_utf8(&payload[..end])
         .map(String::from)
-        .map_err(|_| DptError::OutOfRange)
+        .map_err(|_| DptError::out_of_range("invalid UTF-8 in DPT 28 payload"))
 }
 
 fn encode_dpt28(value: &str) -> Vec<u8> {
     let mut buf = Vec::with_capacity(value.len() + 1);
     buf.extend_from_slice(value.as_bytes());
-    buf.push(0); // null terminator
+    buf.push(0);
     buf
 }

@@ -1,52 +1,74 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2025 Fabian Schmieder
 
-//! Numeric DPT encode/decode — all main groups that map to `f64`.
+//! Numeric DPT encode/decode — all main groups that map to typed [`DptValue`] variants.
 
 use alloc::vec::Vec;
 
-use super::super::{Dpt, DptError};
+use super::super::{Dpt, DptError, DptValue};
 
 /// Round `f64` to nearest integer (`no_std` compatible).
 fn round(v: f64) -> f64 {
     libm::round(v)
 }
 
-// ── Cast helpers (clamped, clippy-clean) ──────────────────────
-
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn to_u8(v: f64) -> u8 {
-    round(v).clamp(0.0, 255.0) as u8
+/// Convert a clamped `f64` to `u8`.
+///
+/// Clamps to `[0, 255]` before conversion.
+const fn f64_to_u8(v: f64) -> u8 {
+    // SAFETY: value is clamped to [0, 255], truncation and sign loss are impossible.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "value clamped to u8 range"
+    )]
+    {
+        v.clamp(0.0, 255.0) as u8
+    }
 }
 
-#[expect(clippy::cast_possible_truncation)]
-fn to_i8(v: f64) -> i8 {
-    round(v).clamp(-128.0, 127.0) as i8
+/// Convert an `f64` to `u32`, rounding to nearest.
+///
+/// Returns `Err(OutOfRange)` if the value is negative or exceeds `u32::MAX`.
+fn f64_to_u32(v: f64) -> Result<u32, DptError> {
+    let r = round(v);
+    if r < 0.0 || r > f64::from(u32::MAX) {
+        return Err(DptError::out_of_range("expected 0..=4294967295"));
+    }
+    // SAFETY: range validated above.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "range validated above"
+    )]
+    Ok(r as u32)
 }
 
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn to_u16(v: f64) -> u16 {
-    round(v).clamp(0.0, 65535.0) as u16
+/// Convert an `f64` to `i32`, rounding to nearest.
+///
+/// Returns `Err(OutOfRange)` if the value exceeds `i32` range.
+fn f64_to_i32(v: f64) -> Result<i32, DptError> {
+    let r = round(v);
+    if r < f64::from(i32::MIN) || r > f64::from(i32::MAX) {
+        return Err(DptError::out_of_range("expected -2147483648..=2147483647"));
+    }
+    // SAFETY: range validated above.
+    #[expect(clippy::cast_possible_truncation, reason = "range validated above")]
+    Ok(r as i32)
 }
 
-#[expect(clippy::cast_possible_truncation)]
-fn to_i16(v: f64) -> i16 {
-    round(v).clamp(-32768.0, 32767.0) as i16
-}
-
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn to_u32(v: f64) -> u32 {
-    round(v).clamp(0.0, f64::from(u32::MAX)) as u32
-}
-
-#[expect(clippy::cast_possible_truncation)]
-fn to_i32(v: f64) -> i32 {
-    round(v).clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
-}
-
-#[expect(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn to_i64(v: f64) -> i64 {
-    round(v).clamp(i64::MIN as f64, i64::MAX as f64) as i64
+/// Convert a range-checked `f64` to `i64`.
+///
+/// Precision loss is inherent: `f64` cannot represent all `i64` values.
+fn f64_to_i64(v: f64) -> i64 {
+    // SAFETY: round() returns a whole number; the cast is the best approximation.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "best approximation for f64→i64"
+    )]
+    {
+        round(v) as i64
+    }
 }
 
 const fn check_len(payload: &[u8], min: usize) -> Result<(), DptError> {
@@ -57,9 +79,91 @@ const fn check_len(payload: &[u8], min: usize) -> Result<(), DptError> {
     }
 }
 
+/// Truncate a `u32` to `u8`. Value must be ≤ 255 (masked or clamped by caller).
+const fn low_u8(v: u32) -> u8 {
+    (v & 0xFF) as u8
+}
+
+/// Truncate a `u32` to `u16`. Value must be ≤ 65535 (masked or clamped by caller).
+const fn low_u16(v: u32) -> u16 {
+    (v & 0xFFFF) as u16
+}
+
+/// Truncate an `i32` to `i8`. Value must be in `[-128, 127]` (clamped by caller).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "caller guarantees value fits in i8"
+)]
+const fn low_i8(v: i32) -> i8 {
+    v as i8
+}
+
+/// Truncate an `i32` to `i16`. Value must be in `[-32768, 32767]` (clamped by caller).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "caller guarantees value fits in i16"
+)]
+const fn low_i16(v: i32) -> i16 {
+    v as i16
+}
+
+/// Extract a `bool` from a `DptValue`, coercing numeric types.
+fn val_bool(value: &DptValue) -> Result<bool, DptError> {
+    match value {
+        DptValue::Bool(v) => Ok(*v),
+        DptValue::UInt(v) => Ok(*v != 0),
+        DptValue::Int(v) => Ok(*v != 0),
+        DptValue::Float(v) => Ok(*v != 0.0),
+        _ => Err(DptError::TypeMismatch),
+    }
+}
+
+/// Extract a `u32` from a `DptValue`, coercing numeric types.
+fn val_u32(value: &DptValue) -> Result<u32, DptError> {
+    match value {
+        DptValue::UInt(v) => Ok(*v),
+        DptValue::Bool(v) => Ok(u32::from(*v)),
+        DptValue::Int(v) => {
+            u32::try_from(*v).map_err(|_| DptError::out_of_range("negative value for unsigned DPT"))
+        }
+        DptValue::Float(v) => f64_to_u32(*v),
+        _ => Err(DptError::TypeMismatch),
+    }
+}
+
+/// Extract an `i32` from a `DptValue`, coercing numeric types.
+fn val_i32(value: &DptValue) -> Result<i32, DptError> {
+    match value {
+        DptValue::Int(v) => Ok(*v),
+        DptValue::UInt(v) => {
+            i32::try_from(*v).map_err(|_| DptError::out_of_range("unsigned value exceeds i32::MAX"))
+        }
+        DptValue::Bool(v) => Ok(i32::from(*v)),
+        DptValue::Float(v) => f64_to_i32(*v),
+        _ => Err(DptError::TypeMismatch),
+    }
+}
+
+/// Extract an `f64` from a `DptValue`, coercing numeric types.
+fn val_f64(value: &DptValue) -> Result<f64, DptError> {
+    value.as_f64().ok_or(DptError::TypeMismatch)
+}
+
+/// Extract an `i64` from a `DptValue`, coercing numeric types.
+fn val_i64(value: &DptValue) -> Result<i64, DptError> {
+    match value {
+        DptValue::Int64(v) => Ok(*v),
+        DptValue::Int(v) => Ok(i64::from(*v)),
+        DptValue::UInt(v) => Ok(i64::from(*v)),
+        DptValue::Bool(v) => Ok(i64::from(*v)),
+        DptValue::Float(v) => Ok(f64_to_i64(*v)),
+        _ => Err(DptError::TypeMismatch),
+    }
+}
+
 // ── Dispatch ──────────────────────────────────────────────────
 
-pub fn decode(dpt: Dpt, payload: &[u8]) -> Result<f64, DptError> {
+pub fn decode(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
     match dpt.main {
         1 => decode_dpt1(payload),
         2 => decode_dpt2(payload),
@@ -93,137 +197,157 @@ pub fn decode(dpt: Dpt, payload: &[u8]) -> Result<f64, DptError> {
     }
 }
 
-pub fn encode(dpt: Dpt, value: f64) -> Result<Vec<u8>, DptError> {
+pub fn encode(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
     match dpt.main {
-        1 => Ok(encode_dpt1(value)),
-        2 => Ok(encode_dpt2(value)),
-        3 => Ok(encode_dpt3(value)),
-        4 => Ok(encode_dpt4(value)),
-        5 => Ok(encode_dpt5(dpt, value)),
-        6 => Ok(encode_dpt6(value)),
-        7 => Ok(encode_dpt7(value)),
-        8 => Ok(encode_dpt8(value)),
+        1 => encode_dpt1(value),
+        2 => encode_dpt2(value),
+        3 => encode_dpt3(value),
+        4 => encode_dpt4(value),
+        5 => encode_dpt5(dpt, value),
+        6 => encode_dpt6(value),
+        7 => encode_dpt7(value),
+        8 => encode_dpt8(value),
         9 => encode_dpt9(value),
-        10 => Ok(encode_dpt10(value)),
-        11 => Ok(encode_dpt11(value)),
-        12 => Ok(encode_dpt12(value)),
-        13 | 27 => Ok(encode_dpt13(value)),
-        14 => Ok(encode_dpt14(value)),
-        15 => Ok(encode_dpt15(value)),
-        17 | 26 | 238 => Ok(encode_dpt17(value)),
-        18 => Ok(encode_dpt18(value)),
-        19 => Ok(encode_dpt19(value)),
-        29 => Ok(encode_dpt29(value)),
-        217 => Ok(encode_dpt217(value)),
-        219 => Ok(encode_dpt219(value)),
-        221 => Ok(encode_dpt221(value)),
-        225 => Ok(encode_dpt225(value)),
-        231 | 234 => Ok(encode_dpt_locale(dpt, value)),
-        232 => Ok(encode_dpt232(value)),
-        235 => Ok(encode_dpt235(value)),
-        239 => Ok(encode_dpt239(value)),
-        251 => Ok(encode_dpt251(value)),
+        10 => encode_dpt10(value),
+        11 => encode_dpt11(value),
+        12 => encode_dpt12(value),
+        13 | 27 => encode_dpt13(value),
+        14 => encode_dpt14(value),
+        15 => encode_dpt15(value),
+        17 | 26 | 238 => encode_dpt17(value),
+        18 => encode_dpt18(value),
+        19 => encode_dpt19(value),
+        29 => encode_dpt29(value),
+        217 => encode_dpt217(value),
+        219 => encode_dpt219(value),
+        221 => encode_dpt221(value),
+        225 => encode_dpt225(value),
+        231 | 234 => encode_dpt_locale(dpt, value),
+        232 => encode_dpt232(value),
+        235 => encode_dpt235(value),
+        239 => encode_dpt239(value),
+        251 => encode_dpt251(value),
         _ => Err(DptError::UnsupportedDpt(dpt)),
     }
 }
 
 // ── DPT 1: Boolean (1 bit) ───────────────────────────────────
 
-fn decode_dpt1(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt1(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
-    Ok(f64::from(payload[0] & 0x01))
+    Ok(DptValue::Bool(payload[0] & 0x01 != 0))
 }
 
-fn encode_dpt1(value: f64) -> Vec<u8> {
-    alloc::vec![u8::from(value != 0.0)]
+fn encode_dpt1(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    Ok(alloc::vec![u8::from(val_bool(value)?)])
 }
 
 // ── DPT 2: 1-bit controlled (2 bits) ─────────────────────────
 
-fn decode_dpt2(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt2(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
-    Ok(f64::from(payload[0] & 0x03))
+    Ok(DptValue::UInt(u32::from(payload[0] & 0x03)))
 }
 
-fn encode_dpt2(value: f64) -> Vec<u8> {
-    alloc::vec![to_u8(value) & 0x03]
+fn encode_dpt2(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let v = val_u32(value)?;
+    Ok(alloc::vec![low_u8(v & 0x03)])
 }
 
 // ── DPT 3: 3-bit controlled (4 bits) ─────────────────────────
 
-fn decode_dpt3(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt3(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
-    Ok(f64::from(payload[0] & 0x0F))
+    Ok(DptValue::UInt(u32::from(payload[0] & 0x0F)))
 }
 
-fn encode_dpt3(value: f64) -> Vec<u8> {
-    alloc::vec![to_u8(value) & 0x0F]
+fn encode_dpt3(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let v = val_u32(value)?;
+    Ok(alloc::vec![low_u8(v & 0x0F)])
 }
 
 // ── DPT 4: Character (1 byte) ────────────────────────────────
 
-fn decode_dpt4(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt4(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
-    Ok(f64::from(payload[0]))
+    Ok(DptValue::UInt(u32::from(payload[0])))
 }
 
-fn encode_dpt4(value: f64) -> Vec<u8> {
-    alloc::vec![to_u8(value)]
+fn encode_dpt4(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let v = val_u32(value)?;
+    Ok(alloc::vec![low_u8(v)])
 }
 
 // ── DPT 5: Unsigned 8-bit (1 byte) ───────────────────────────
 
-fn decode_dpt5(dpt: Dpt, payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt5(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
     let raw = f64::from(payload[0]);
-    Ok(match dpt.sub {
+    Ok(DptValue::Float(match dpt.sub {
         1 => raw * 100.0 / 255.0,
         3 => raw * 360.0 / 255.0,
-        _ => raw,
-    })
+        _ => return Ok(DptValue::UInt(u32::from(payload[0]))),
+    }))
 }
 
-fn encode_dpt5(dpt: Dpt, value: f64) -> Vec<u8> {
-    let raw = match dpt.sub {
-        1 => value * 255.0 / 100.0,
-        3 => value * 255.0 / 360.0,
-        _ => value,
-    };
-    alloc::vec![to_u8(raw)]
+fn encode_dpt5(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
+    match dpt.sub {
+        1 => {
+            let v = val_f64(value)?;
+            Ok(alloc::vec![f64_to_u8(round(v * 255.0 / 100.0))])
+        }
+        3 => {
+            let v = val_f64(value)?;
+            Ok(alloc::vec![f64_to_u8(round(v * 255.0 / 360.0))])
+        }
+        _ => {
+            let v = val_u32(value)?;
+            Ok(alloc::vec![low_u8(v.min(255))])
+        }
+    }
 }
 
 // ── DPT 6: Signed 8-bit (1 byte) ─────────────────────────────
 
-fn decode_dpt6(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt6(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
-    Ok(f64::from(i8::from_ne_bytes([payload[0]])))
+    Ok(DptValue::Int(i32::from(i8::from_ne_bytes([payload[0]]))))
 }
 
-#[expect(clippy::cast_sign_loss)]
-fn encode_dpt6(value: f64) -> Vec<u8> {
-    alloc::vec![to_i8(value) as u8]
+fn encode_dpt6(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let v = val_i32(value)?;
+    let clamped = v.clamp(-128, 127);
+    Ok(alloc::vec![low_i8(clamped).to_ne_bytes()[0]])
 }
 
 // ── DPT 7: Unsigned 16-bit (2 bytes) ─────────────────────────
 
-fn decode_dpt7(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt7(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 2)?;
-    Ok(f64::from(u16::from_be_bytes([payload[0], payload[1]])))
+    Ok(DptValue::UInt(u32::from(u16::from_be_bytes([
+        payload[0], payload[1],
+    ]))))
 }
 
-fn encode_dpt7(value: f64) -> Vec<u8> {
-    to_u16(value).to_be_bytes().to_vec()
+fn encode_dpt7(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let v = val_u32(value)?;
+    let clamped = low_u16(v.min(65535));
+    Ok(clamped.to_be_bytes().to_vec())
 }
 
 // ── DPT 8: Signed 16-bit (2 bytes) ───────────────────────────
 
-fn decode_dpt8(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt8(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 2)?;
-    Ok(f64::from(i16::from_be_bytes([payload[0], payload[1]])))
+    Ok(DptValue::Int(i32::from(i16::from_be_bytes([
+        payload[0], payload[1],
+    ]))))
 }
 
-fn encode_dpt8(value: f64) -> Vec<u8> {
-    to_i16(value).to_be_bytes().to_vec()
+fn encode_dpt8(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let v = val_i32(value)?;
+    let clamped = low_i16(v.clamp(-32768, 32767));
+    Ok(clamped.to_be_bytes().to_vec())
 }
 
 // ── DPT 9: 16-bit float (2 bytes, KNX F16) ───────────────────
@@ -231,7 +355,7 @@ fn encode_dpt8(value: f64) -> Vec<u8> {
 // Wire: `MEEEEMMM MMMMMMMM` — sign + 11-bit mantissa (two's complement), 4-bit exponent.
 // Value = 0.01 × mantissa × 2^exponent
 
-fn decode_dpt9(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt9(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 2)?;
     let raw = u16::from_be_bytes([payload[0], payload[1]]);
     let exponent = i32::from((raw >> 11) & 0x0F);
@@ -239,12 +363,20 @@ fn decode_dpt9(payload: &[u8]) -> Result<f64, DptError> {
         let m = i32::from(raw & 0x07FF);
         if raw & 0x8000 != 0 { m - 0x0800 } else { m }
     };
-    Ok(0.01 * f64::from(mantissa) * f64::from(1 << exponent))
+    Ok(DptValue::Float(
+        0.01 * f64::from(mantissa) * f64::from(1 << exponent),
+    ))
 }
 
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn encode_dpt9(value: f64) -> Result<Vec<u8>, DptError> {
-    let mut mantissa = round(value * 100.0) as i32;
+fn encode_dpt9(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let v = val_f64(value)?;
+    // round once, then range-check without re-rounding
+    let scaled = round(v * 100.0);
+    if scaled < f64::from(i32::MIN) || scaled > f64::from(i32::MAX) {
+        return Err(DptError::out_of_range("KNX F16 mantissa overflow"));
+    }
+    #[expect(clippy::cast_possible_truncation, reason = "range validated above")]
+    let mut mantissa = scaled as i32;
     let mut exponent: u16 = 0;
 
     while mantissa > 2047 {
@@ -256,113 +388,100 @@ fn encode_dpt9(value: f64) -> Result<Vec<u8>, DptError> {
         exponent += 1;
     }
     if exponent > 15 {
-        return Err(DptError::OutOfRange);
+        return Err(DptError::out_of_range("KNX F16 exponent overflow (>15)"));
     }
 
-    let m = (mantissa & 0x07FF) as u16;
+    let m = low_u16((mantissa & 0x07FF).unsigned_abs());
     let sign: u16 = if mantissa < 0 { 0x8000 } else { 0 };
     let raw = sign | (exponent << 11) | m;
     Ok(raw.to_be_bytes().to_vec())
 }
 
 // ── DPT 10: Time of day (3 bytes) ────────────────────────────
-//
-// Byte 0: [weekday:3][hours:5], Byte 1: [00][minutes:6], Byte 2: [00][seconds:6]
-// Decoded as seconds since midnight (weekday × 86400 not included in f64).
 
-fn decode_dpt10(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt10(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 3)?;
-    let hours = f64::from(payload[0] & 0x1F);
-    let minutes = f64::from(payload[1] & 0x3F);
-    let seconds = f64::from(payload[2] & 0x3F);
-    Ok(hours * 3600.0 + minutes * 60.0 + seconds)
+    Ok(DptValue::Bytes(payload[..3].to_vec()))
 }
 
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn encode_dpt10(value: f64) -> Vec<u8> {
-    let total_secs = round(value).clamp(0.0, 86399.0) as u32;
-    let hours = (total_secs / 3600) as u8;
-    let minutes = ((total_secs % 3600) / 60) as u8;
-    let seconds = (total_secs % 60) as u8;
-    alloc::vec![hours & 0x1F, minutes & 0x3F, seconds & 0x3F]
+fn encode_dpt10(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    match value {
+        DptValue::Bytes(b) if b.len() >= 3 => Ok(b[..3].to_vec()),
+        DptValue::UInt(secs) => {
+            let total = (*secs).min(86399);
+            let hours = low_u8(total / 3600);
+            let minutes = low_u8((total % 3600) / 60);
+            let seconds = low_u8(total % 60);
+            Ok(alloc::vec![hours & 0x1F, minutes & 0x3F, seconds & 0x3F])
+        }
+        _ => Err(DptError::TypeMismatch),
+    }
 }
 
 // ── DPT 11: Date (3 bytes) ───────────────────────────────────
-//
-// Byte 0: [000][day:5], Byte 1: [0000][month:4], Byte 2: [0][year:7]
-// Year: 0–99, where ≥90 → 1900+year, <90 → 2000+year.
-// Decoded as YYYYMMDD integer.
 
-fn decode_dpt11(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt11(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 3)?;
-    let day = f64::from(payload[0] & 0x1F);
-    let month = f64::from(payload[1] & 0x0F);
-    let year_raw = payload[2] & 0x7F;
-    let year = if year_raw >= 90 {
-        f64::from(1900 + u16::from(year_raw))
-    } else {
-        f64::from(2000 + u16::from(year_raw))
-    };
-    Ok(year * 10000.0 + month * 100.0 + day)
+    Ok(DptValue::Bytes(payload[..3].to_vec()))
 }
 
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn encode_dpt11(value: f64) -> Vec<u8> {
-    let v = round(value) as u32;
-    let year = v / 10000;
-    let month = ((v % 10000) / 100) as u8;
-    let day = (v % 100) as u8;
-    let year_byte = if year >= 2000 {
-        (year - 2000) as u8
-    } else {
-        (year - 1900) as u8
-    };
-    alloc::vec![day & 0x1F, month & 0x0F, year_byte & 0x7F]
+fn encode_dpt11(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    match value {
+        DptValue::Bytes(b) if b.len() >= 3 => Ok(b[..3].to_vec()),
+        _ => Err(DptError::TypeMismatch),
+    }
 }
 
 // ── DPT 12: Unsigned 32-bit (4 bytes) ────────────────────────
 
-fn decode_dpt12(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt12(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 4)?;
-    Ok(f64::from(u32::from_be_bytes([
+    Ok(DptValue::UInt(u32::from_be_bytes([
         payload[0], payload[1], payload[2], payload[3],
     ])))
 }
 
-fn encode_dpt12(value: f64) -> Vec<u8> {
-    to_u32(value).to_be_bytes().to_vec()
+fn encode_dpt12(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    Ok(val_u32(value)?.to_be_bytes().to_vec())
 }
 
 // ── DPT 13: Signed 32-bit (4 bytes) ──────────────────────────
 
-fn decode_dpt13(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt13(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 4)?;
-    Ok(f64::from(i32::from_be_bytes([
+    Ok(DptValue::Int(i32::from_be_bytes([
         payload[0], payload[1], payload[2], payload[3],
     ])))
 }
 
-fn encode_dpt13(value: f64) -> Vec<u8> {
-    to_i32(value).to_be_bytes().to_vec()
+fn encode_dpt13(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    Ok(val_i32(value)?.to_be_bytes().to_vec())
 }
 
 // ── DPT 14: IEEE 754 32-bit float (4 bytes) ──────────────────
 
-fn decode_dpt14(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt14(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 4)?;
-    Ok(f64::from(f32::from_be_bytes([
+    Ok(DptValue::Float(f64::from(f32::from_be_bytes([
         payload[0], payload[1], payload[2], payload[3],
-    ])))
+    ]))))
 }
 
-#[expect(clippy::cast_possible_truncation)]
-fn encode_dpt14(value: f64) -> Vec<u8> {
-    (value as f32).to_be_bytes().to_vec()
+fn encode_dpt14(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let v = val_f64(value)?;
+    // f64→f32 narrowing: values outside f32 range become ±inf, which is acceptable
+    // for IEEE 754 wire encoding.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "f64→f32 narrowing is intentional for IEEE 754 wire format"
+    )]
+    let f = v as f32;
+    Ok(f.to_be_bytes().to_vec())
 }
 
 // ── DPT 15: Access data (4 bytes, 6-digit BCD) ───────────────
 
-fn decode_dpt15(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt15(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 4)?;
     let mut digits: u32 = 0;
     let mut factor: u32 = 100_000;
@@ -375,15 +494,14 @@ fn decode_dpt15(payload: &[u8]) -> Result<f64, DptError> {
         digits += u32::from(nibble) * factor;
         factor /= 10;
     }
-    Ok(f64::from(digits))
+    Ok(DptValue::UInt(digits))
 }
 
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn encode_dpt15(value: f64) -> Vec<u8> {
-    let mut v = round(value).clamp(0.0, 999_999.0) as u32;
+fn encode_dpt15(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let mut v = val_u32(value)?.min(999_999);
     let mut buf = [0u8; 4];
     for i in (0..6).rev() {
-        let digit = (v % 10) as u8;
+        let digit = low_u8(v % 10);
         v /= 10;
         if i % 2 == 0 {
             buf[i / 2] |= digit << 4;
@@ -391,401 +509,392 @@ fn encode_dpt15(value: f64) -> Vec<u8> {
             buf[i / 2] |= digit;
         }
     }
-    buf.to_vec()
+    Ok(buf.to_vec())
 }
 
 // ── DPT 17: Scene number (1 byte, 0–63) ──────────────────────
 
-fn decode_dpt17(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt17(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
-    Ok(f64::from(payload[0] & 0x3F))
+    Ok(DptValue::UInt(u32::from(payload[0] & 0x3F)))
 }
 
-fn encode_dpt17(value: f64) -> Vec<u8> {
-    alloc::vec![to_u8(value) & 0x3F]
+fn encode_dpt17(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let v = val_u32(value)?;
+    Ok(alloc::vec![low_u8(v & 0x3F)])
 }
 
 // ── DPT 18: Scene control (1 byte) ───────────────────────────
-//
-// Bit 7: learn (1) / activate (0), Bits 5..0: scene number.
-// Encoded as: learn_flag * 128 + scene_number.
 
-fn decode_dpt18(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt18(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
-    Ok(f64::from(payload[0]))
+    Ok(DptValue::UInt(u32::from(payload[0])))
 }
 
-fn encode_dpt18(value: f64) -> Vec<u8> {
-    alloc::vec![to_u8(value)]
+fn encode_dpt18(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let v = val_u32(value)?;
+    Ok(alloc::vec![low_u8(v)])
 }
 
 // ── DPT 19: Date and time (8 bytes) ──────────────────────────
-//
-// Bytes: year(1) month(1) day(1) weekday+hour(1) min(1) sec(1) status(1) quality(1)
-// Year = value + 1900. Decoded as YYYYMMDDHHMMSS as f64.
 
-fn decode_dpt19(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt19(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 8)?;
-    let year = f64::from(u16::from(payload[0]) + 1900);
-    let month = f64::from(payload[1] & 0x0F);
-    let day = f64::from(payload[2] & 0x1F);
-    let hour = f64::from(payload[3] & 0x1F);
-    let min = f64::from(payload[4] & 0x3F);
-    let sec = f64::from(payload[5] & 0x3F);
-    // Encode as YYYYMMDDHHmmss
-    Ok(year * 1e10 + month * 1e8 + day * 1e6 + hour * 1e4 + min * 1e2 + sec)
+    Ok(DptValue::Bytes(payload[..8].to_vec()))
 }
 
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn encode_dpt19(value: f64) -> Vec<u8> {
-    let v = round(value) as u64;
-    let sec = (v % 100) as u8;
-    let min = ((v / 100) % 100) as u8;
-    let hour = ((v / 10000) % 100) as u8;
-    let day = ((v / 1_000_000) % 100) as u8;
-    let month = ((v / 100_000_000) % 100) as u8;
-    let year = ((v / 10_000_000_000) as u16).saturating_sub(1900) as u8;
-    alloc::vec![year, month, day, hour, min, sec, 0, 0]
+fn encode_dpt19(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    match value {
+        DptValue::Bytes(b) if b.len() >= 8 => Ok(b[..8].to_vec()),
+        _ => Err(DptError::TypeMismatch),
+    }
 }
 
 // ── DPT 29: Signed 64-bit (8 bytes) ──────────────────────────
 
-fn decode_dpt29(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt29(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 8)?;
-    let v = i64::from_be_bytes([
+    Ok(DptValue::Int64(i64::from_be_bytes([
         payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6],
         payload[7],
-    ]);
-    // Note: f64 can represent i64 values up to 2^53 exactly
-    #[expect(clippy::cast_precision_loss)]
-    Ok(v as f64)
+    ])))
 }
 
-fn encode_dpt29(value: f64) -> Vec<u8> {
-    to_i64(value).to_be_bytes().to_vec()
+fn encode_dpt29(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    Ok(val_i64(value)?.to_be_bytes().to_vec())
 }
 
 // ── DPT 232: RGB (3 bytes) ───────────────────────────────────
-//
-// Encoded as 0xRRGGBB in f64.
 
-fn decode_dpt232(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt232(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 3)?;
     let rgb = (u32::from(payload[0]) << 16) | (u32::from(payload[1]) << 8) | u32::from(payload[2]);
-    Ok(f64::from(rgb))
+    Ok(DptValue::UInt(rgb))
 }
 
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn encode_dpt232(value: f64) -> Vec<u8> {
-    let rgb = round(value).clamp(0.0, f64::from(0x00FF_FFFFu32)) as u32;
-    alloc::vec![
-        ((rgb >> 16) & 0xFF) as u8,
-        ((rgb >> 8) & 0xFF) as u8,
-        (rgb & 0xFF) as u8,
-    ]
+fn encode_dpt232(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let rgb = val_u32(value)?.min(0x00FF_FFFF);
+    Ok(alloc::vec![
+        low_u8((rgb >> 16) & 0xFF),
+        low_u8((rgb >> 8) & 0xFF),
+        low_u8(rgb & 0xFF),
+    ])
 }
 
 // ── DPT 251: RGBW (4 bytes) ──────────────────────────────────
-//
-// Encoded as 0xRRGGBBWW in f64.
 
-fn decode_dpt251(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt251(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 4)?;
-    let rgbw = (u32::from(payload[0]) << 24)
-        | (u32::from(payload[1]) << 16)
-        | (u32::from(payload[2]) << 8)
-        | u32::from(payload[3]);
-    Ok(f64::from(rgbw))
+    let rgbw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+    Ok(DptValue::UInt(rgbw))
 }
 
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn encode_dpt251(value: f64) -> Vec<u8> {
-    let rgbw = round(value).clamp(0.0, f64::from(u32::MAX)) as u32;
-    rgbw.to_be_bytes().to_vec()
+fn encode_dpt251(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    Ok(val_u32(value)?.to_be_bytes().to_vec())
 }
 
 // ── DPT 217: Version (2 bytes) ────────────────────────────────
-//
-// Byte 0: [magic:3][major:5], Byte 1: [minor:5][patch:6] — but actually:
-// magic(3) major(5) minor(5) patch(6) packed into 16 bits.
-// Decoded as major * 10000 + minor * 100 + patch.
 
-fn decode_dpt217(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt217(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 2)?;
-    let major = f64::from((payload[0] >> 3) & 0x1F);
-    let minor = f64::from(((u16::from(payload[0]) << 2) | (u16::from(payload[1]) >> 6)) & 0x1F);
-    let patch = f64::from(payload[1] & 0x3F);
-    Ok(major * 10000.0 + minor * 100.0 + patch)
+    Ok(DptValue::Bytes(payload[..2].to_vec()))
 }
 
-#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn encode_dpt217(value: f64) -> Vec<u8> {
-    let v = round(value) as u32;
-    let major = ((v / 10000) & 0x1F) as u8;
-    let minor = (((v / 100) % 100) & 0x1F) as u8;
-    let patch = ((v % 100) & 0x3F) as u8;
-    alloc::vec![(major << 3) | (minor >> 2), ((minor & 0x03) << 6) | patch]
+fn encode_dpt217(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    match value {
+        DptValue::Bytes(b) if b.len() >= 2 => Ok(b[..2].to_vec()),
+        _ => Err(DptError::TypeMismatch),
+    }
 }
 
 // ── DPT 219: Alarm info (6 bytes) ────────────────────────────
-//
-// Primary value (index 0): log number (byte 0).
 
-fn decode_dpt219(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt219(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 6)?;
-    Ok(f64::from(payload[0]))
+    Ok(DptValue::Bytes(payload[..6].to_vec()))
 }
 
-fn encode_dpt219(value: f64) -> Vec<u8> {
-    let mut buf = alloc::vec![0u8; 6];
-    buf[0] = to_u8(value);
-    buf
+fn encode_dpt219(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    match value {
+        DptValue::Bytes(b) if b.len() >= 6 => Ok(b[..6].to_vec()),
+        _ => Err(DptError::TypeMismatch),
+    }
 }
 
 // ── DPT 221: Serial number (6 bytes) ─────────────────────────
-//
-// Bytes 0-1: manufacturer code (u16), Bytes 2-5: serial (u32).
-// Primary value (index 0): manufacturer code.
 
-fn decode_dpt221(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt221(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 6)?;
-    Ok(f64::from(u16::from_be_bytes([payload[0], payload[1]])))
+    Ok(DptValue::Bytes(payload[..6].to_vec()))
 }
 
-fn encode_dpt221(value: f64) -> Vec<u8> {
-    let mut buf = alloc::vec![0u8; 6];
-    let mfr = to_u16(value).to_be_bytes();
-    buf[0] = mfr[0];
-    buf[1] = mfr[1];
-    buf
+fn encode_dpt221(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    match value {
+        DptValue::Bytes(b) if b.len() >= 6 => Ok(b[..6].to_vec()),
+        _ => Err(DptError::TypeMismatch),
+    }
 }
 
 // ── DPT 225: Scaling speed / step time (3 bytes) ─────────────
-//
-// Bytes 0-1: time period (u16), Byte 2: scaling (0-255 → 0-100%).
-// Primary value (index 0): time period.
 
-fn decode_dpt225(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt225(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 3)?;
-    Ok(f64::from(u16::from_be_bytes([payload[0], payload[1]])))
+    Ok(DptValue::Bytes(payload[..3].to_vec()))
 }
 
-fn encode_dpt225(value: f64) -> Vec<u8> {
-    let mut buf = alloc::vec![0u8; 3];
-    let period = to_u16(value).to_be_bytes();
-    buf[0] = period[0];
-    buf[1] = period[1];
-    buf
+fn encode_dpt225(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    match value {
+        DptValue::Bytes(b) if b.len() >= 3 => Ok(b[..3].to_vec()),
+        _ => Err(DptError::TypeMismatch),
+    }
 }
 
 // ── DPT 231/234: Locale / Language code (2 or 4 bytes) ───────
-//
-// Two ASCII characters. Decoded as u16 (char1 << 8 | char2).
 
-fn decode_dpt_locale(dpt: Dpt, payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt_locale(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
     let min_len = if dpt.main == 231 { 4 } else { 2 };
     check_len(payload, min_len)?;
-    Ok(f64::from(u16::from_be_bytes([payload[0], payload[1]])))
+    Ok(DptValue::Bytes(payload[..min_len].to_vec()))
 }
 
-fn encode_dpt_locale(dpt: Dpt, value: f64) -> Vec<u8> {
-    let code = to_u16(value).to_be_bytes();
-    if dpt.main == 231 {
-        alloc::vec![code[0], code[1], 0, 0]
-    } else {
-        code.to_vec()
+fn encode_dpt_locale(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
+    let min_len = if dpt.main == 231 { 4 } else { 2 };
+    match value {
+        DptValue::Bytes(b) if b.len() >= min_len => Ok(b[..min_len].to_vec()),
+        _ => Err(DptError::TypeMismatch),
     }
 }
 
 // ── DPT 235: Active energy (6 bytes) ─────────────────────────
-//
-// Bytes 0-3: energy (i32), Byte 4: tariff, Byte 5: flags.
-// Primary value (index 0): energy.
 
-fn decode_dpt235(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt235(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 6)?;
-    Ok(f64::from(i32::from_be_bytes([
-        payload[0], payload[1], payload[2], payload[3],
-    ])))
+    Ok(DptValue::Bytes(payload[..6].to_vec()))
 }
 
-fn encode_dpt235(value: f64) -> Vec<u8> {
-    let mut buf = alloc::vec![0u8; 6];
-    let energy = to_i32(value).to_be_bytes();
-    buf[..4].copy_from_slice(&energy);
-    buf
+fn encode_dpt235(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    match value {
+        DptValue::Bytes(b) if b.len() >= 6 => Ok(b[..6].to_vec()),
+        _ => Err(DptError::TypeMismatch),
+    }
 }
 
 // ── DPT 239: Flagged scaling (2 bytes) ───────────────────────
-//
-// Byte 0: scaling (0-255 → 0-100%), Byte 1: flags.
-// Primary value (index 0): scaling percentage.
 
-fn decode_dpt239(payload: &[u8]) -> Result<f64, DptError> {
+fn decode_dpt239(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 2)?;
-    Ok(f64::from(payload[0]) * 100.0 / 255.0)
+    Ok(DptValue::Bytes(payload[..2].to_vec()))
 }
 
-fn encode_dpt239(value: f64) -> Vec<u8> {
-    let scaled = to_u8(value * 255.0 / 100.0);
-    alloc::vec![scaled, 0]
+fn encode_dpt239(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    match value {
+        DptValue::Bytes(b) if b.len() >= 2 => Ok(b[..2].to_vec()),
+        _ => Err(DptError::TypeMismatch),
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::float_cmp,
-    clippy::cast_possible_truncation,
-    clippy::unreadable_literal
-)]
+#[allow(clippy::unwrap_used, clippy::float_cmp)]
 mod tests {
+    use alloc::vec;
+
     use super::super::super::*;
 
     #[test]
     fn dpt1_roundtrip() {
-        assert_eq!(encode(DPT_SWITCH, 1.0).unwrap(), &[1]);
-        assert_eq!(decode(DPT_SWITCH, &[1]).unwrap(), 1.0);
-        assert_eq!(encode(DPT_SWITCH, 0.0).unwrap(), &[0]);
-        assert_eq!(decode(DPT_SWITCH, &[0]).unwrap(), 0.0);
+        let bytes = encode(DPT_SWITCH, &DptValue::Bool(true)).unwrap();
+        assert_eq!(bytes, &[1]);
+        assert_eq!(decode(DPT_SWITCH, &[1]).unwrap(), DptValue::Bool(true));
+        assert_eq!(decode(DPT_SWITCH, &[0]).unwrap(), DptValue::Bool(false));
     }
 
     #[test]
     fn dpt4_char() {
-        assert_eq!(encode(DPT_CHAR_ASCII, 65.0).unwrap(), &[65]); // 'A'
-        assert_eq!(decode(DPT_CHAR_ASCII, &[65]).unwrap(), 65.0);
+        let bytes = encode(DPT_CHAR_ASCII, &DptValue::UInt(65)).unwrap();
+        assert_eq!(bytes, &[65]);
+        assert_eq!(decode(DPT_CHAR_ASCII, &[65]).unwrap(), DptValue::UInt(65));
     }
 
     #[test]
     fn dpt5_scaling() {
-        let bytes = encode(DPT_SCALING, 100.0).unwrap();
+        let bytes = encode(DPT_SCALING, &DptValue::Float(100.0)).unwrap();
         assert_eq!(bytes, &[255]);
-        assert!((decode(DPT_SCALING, &bytes).unwrap() - 100.0).abs() < 0.5);
+        let val = decode(DPT_SCALING, &bytes).unwrap();
+        let f = val.as_f64().unwrap();
+        assert!((f - 100.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn dpt5_raw() {
+        let bytes = encode(DPT_VALUE_1_UCOUNT, &DptValue::UInt(42)).unwrap();
+        assert_eq!(bytes, &[42]);
+        assert_eq!(
+            decode(DPT_VALUE_1_UCOUNT, &[42]).unwrap(),
+            DptValue::UInt(42)
+        );
+    }
+
+    #[test]
+    fn dpt6_signed() {
+        let bytes = encode(Dpt::new(6, 1), &DptValue::Int(-10)).unwrap();
+        assert_eq!(decode(Dpt::new(6, 1), &bytes).unwrap(), DptValue::Int(-10));
+    }
+
+    #[test]
+    fn dpt7_unsigned16() {
+        let bytes = encode(DPT_VALUE_2_UCOUNT, &DptValue::UInt(1000)).unwrap();
+        assert_eq!(
+            decode(DPT_VALUE_2_UCOUNT, &bytes).unwrap(),
+            DptValue::UInt(1000)
+        );
+    }
+
+    #[test]
+    fn dpt8_signed16() {
+        let bytes = encode(DPT_VALUE_2_COUNT, &DptValue::Int(-500)).unwrap();
+        assert_eq!(
+            decode(DPT_VALUE_2_COUNT, &bytes).unwrap(),
+            DptValue::Int(-500)
+        );
     }
 
     #[test]
     fn dpt9_temperature() {
-        let bytes = encode(DPT_VALUE_TEMP, 21.5).unwrap();
-        let val = decode(DPT_VALUE_TEMP, &bytes).unwrap();
+        let bytes = encode(DPT_VALUE_TEMP, &DptValue::Float(21.5)).unwrap();
+        let val = decode(DPT_VALUE_TEMP, &bytes).unwrap().as_f64().unwrap();
         assert!((val - 21.5).abs() < 0.1, "got {val}");
     }
 
     #[test]
     fn dpt9_negative() {
-        let bytes = encode(DPT_VALUE_TEMP, -10.0).unwrap();
-        let val = decode(DPT_VALUE_TEMP, &bytes).unwrap();
+        let bytes = encode(DPT_VALUE_TEMP, &DptValue::Float(-10.0)).unwrap();
+        let val = decode(DPT_VALUE_TEMP, &bytes).unwrap().as_f64().unwrap();
         assert!((val + 10.0).abs() < 0.1, "got {val}");
     }
 
     #[test]
-    fn dpt10_time() {
-        // 14:30:00 = 52200 seconds
-        let bytes = encode(DPT_TIMEOFDAY, 52200.0).unwrap();
+    fn dpt10_time_bytes() {
+        let bytes = encode(DPT_TIMEOFDAY, &DptValue::Bytes(vec![14, 30, 0])).unwrap();
         assert_eq!(bytes, &[14, 30, 0]);
-        assert_eq!(decode(DPT_TIMEOFDAY, &bytes).unwrap(), 52200.0);
+        let decoded = decode(DPT_TIMEOFDAY, &bytes).unwrap();
+        assert_eq!(decoded, DptValue::Bytes(vec![14, 30, 0]));
     }
 
     #[test]
-    fn dpt11_date() {
-        // 2025-04-18 = 20_250_418.0
-        let bytes = encode(DPT_DATE, 20_250_418.0).unwrap();
-        assert_eq!(bytes, &[18, 4, 25]); // day, month, year-2000
-        assert_eq!(decode(DPT_DATE, &bytes).unwrap(), 20_250_418.0);
+    fn dpt10_time_from_seconds() {
+        // 14:30:00 = 52200 seconds
+        let bytes = encode(DPT_TIMEOFDAY, &DptValue::UInt(52200)).unwrap();
+        assert_eq!(bytes, &[14, 30, 0]);
+    }
+
+    #[test]
+    fn dpt11_date_bytes() {
+        let bytes = encode(DPT_DATE, &DptValue::Bytes(vec![18, 4, 25])).unwrap();
+        assert_eq!(bytes, &[18, 4, 25]);
+    }
+
+    #[test]
+    fn dpt12_unsigned32() {
+        let bytes = encode(DPT_VALUE_4_UCOUNT, &DptValue::UInt(100_000)).unwrap();
+        assert_eq!(
+            decode(DPT_VALUE_4_UCOUNT, &bytes).unwrap(),
+            DptValue::UInt(100_000)
+        );
+    }
+
+    #[test]
+    fn dpt13_signed32() {
+        let bytes = encode(DPT_VALUE_4_COUNT, &DptValue::Int(-100_000)).unwrap();
+        assert_eq!(
+            decode(DPT_VALUE_4_COUNT, &bytes).unwrap(),
+            DptValue::Int(-100_000)
+        );
     }
 
     #[test]
     fn dpt14_float32() {
-        let bytes = encode(DPT_VALUE_POWER, 1234.5).unwrap();
-        let val = decode(DPT_VALUE_POWER, &bytes).unwrap();
+        let bytes = encode(DPT_VALUE_POWER, &DptValue::Float(1234.5)).unwrap();
+        let val = decode(DPT_VALUE_POWER, &bytes).unwrap().as_f64().unwrap();
         assert!((val - 1234.5).abs() < 0.1);
     }
 
     #[test]
     fn dpt15_access() {
-        let bytes = encode(DPT_ACCESS_DATA, 123_456.0).unwrap();
-        assert_eq!(decode(DPT_ACCESS_DATA, &bytes).unwrap(), 123_456.0);
+        let bytes = encode(DPT_ACCESS_DATA, &DptValue::UInt(123_456)).unwrap();
+        assert_eq!(
+            decode(DPT_ACCESS_DATA, &bytes).unwrap(),
+            DptValue::UInt(123_456)
+        );
     }
 
     #[test]
     fn dpt16_string() {
-        let bytes = encode_string(DPT_STRING_ASCII, "Hello").unwrap();
-        assert_eq!(bytes.len(), 14);
-        assert_eq!(decode_string(DPT_STRING_ASCII, &bytes).unwrap(), "Hello");
-    }
-
-    #[test]
-    fn dpt16_string_truncation() {
-        let long = "This is longer than fourteen chars";
-        let bytes = encode_string(DPT_STRING_ASCII, long).unwrap();
+        let bytes = encode(DPT_STRING_ASCII, &DptValue::Text("Hello".into())).unwrap();
         assert_eq!(bytes.len(), 14);
         assert_eq!(
-            decode_string(DPT_STRING_ASCII, &bytes).unwrap(),
-            "This is longer"
+            decode(DPT_STRING_ASCII, &bytes).unwrap(),
+            DptValue::Text("Hello".into())
         );
     }
 
     #[test]
     fn dpt17_scene() {
-        assert_eq!(encode(DPT_SCENE_NUMBER, 5.0).unwrap(), &[5]);
-        assert_eq!(decode(DPT_SCENE_NUMBER, &[5]).unwrap(), 5.0);
-        assert_eq!(decode(DPT_SCENE_NUMBER, &[0x7F]).unwrap(), 63.0); // masked to 6 bits
+        let bytes = encode(DPT_SCENE_NUMBER, &DptValue::UInt(5)).unwrap();
+        assert_eq!(bytes, &[5]);
+        assert_eq!(decode(DPT_SCENE_NUMBER, &[5]).unwrap(), DptValue::UInt(5));
+        assert_eq!(
+            decode(DPT_SCENE_NUMBER, &[0x7F]).unwrap(),
+            DptValue::UInt(63)
+        );
     }
 
     #[test]
     fn dpt18_scene_control() {
-        // Activate scene 5 = 0x05, Learn scene 5 = 0x85
-        assert_eq!(encode(DPT_SCENE_CONTROL, 5.0).unwrap(), &[5]);
-        assert_eq!(encode(DPT_SCENE_CONTROL, 133.0).unwrap(), &[133]); // 0x80 | 5
+        let bytes = encode(DPT_SCENE_CONTROL, &DptValue::UInt(5)).unwrap();
+        assert_eq!(bytes, &[5]);
+        let bytes = encode(DPT_SCENE_CONTROL, &DptValue::UInt(133)).unwrap();
+        assert_eq!(bytes, &[133]);
     }
 
     #[test]
     fn dpt29_signed64() {
-        let bytes = encode(DPT_ACTIVE_ENERGY_V64, -1_000_000.0).unwrap();
+        let bytes = encode(DPT_ACTIVE_ENERGY_V64, &DptValue::Int64(-1_000_000)).unwrap();
         assert_eq!(bytes.len(), 8);
-        assert_eq!(decode(DPT_ACTIVE_ENERGY_V64, &bytes).unwrap(), -1_000_000.0);
+        assert_eq!(
+            decode(DPT_ACTIVE_ENERGY_V64, &bytes).unwrap(),
+            DptValue::Int64(-1_000_000)
+        );
     }
 
     #[test]
     fn dpt232_rgb() {
-        // Red = 0xFF0000
-        let bytes = encode(DPT_COLOUR_RGB, f64::from(0x00FF_0000u32)).unwrap();
+        let bytes = encode(DPT_COLOUR_RGB, &DptValue::UInt(0x00FF_0000)).unwrap();
         assert_eq!(bytes, &[0xFF, 0x00, 0x00]);
         assert_eq!(
             decode(DPT_COLOUR_RGB, &bytes).unwrap(),
-            f64::from(0x00FF_0000u32)
+            DptValue::UInt(0x00FF_0000)
         );
     }
 
     #[test]
     fn dpt251_rgbw() {
-        let rgbw = f64::from(0xFF80_4020u32);
-        let bytes = encode(DPT_COLOUR_RGBW, rgbw).unwrap();
+        let bytes = encode(DPT_COLOUR_RGBW, &DptValue::UInt(0xFF80_4020)).unwrap();
         assert_eq!(bytes, &[0xFF, 0x80, 0x40, 0x20]);
-        assert_eq!(decode(DPT_COLOUR_RGBW, &bytes).unwrap(), rgbw);
+        assert_eq!(
+            decode(DPT_COLOUR_RGBW, &bytes).unwrap(),
+            DptValue::UInt(0xFF80_4020)
+        );
     }
 
     #[test]
     fn dpt28_unicode() {
-        let bytes = encode_string(Dpt::new(28, 1), "Héllo 🌍").unwrap();
-        assert_eq!(decode_string(Dpt::new(28, 1), &bytes).unwrap(), "Héllo 🌍");
-    }
-
-    #[test]
-    fn dptvalue_roundtrip_numeric() {
-        let val = DptValue::Numeric(21.5);
-        let bytes = encode_value(DPT_VALUE_TEMP, &val).unwrap();
-        let decoded = decode_value(DPT_VALUE_TEMP, &bytes).unwrap();
-        assert!((decoded.as_f64().unwrap() - 21.5).abs() < 0.1);
-    }
-
-    #[test]
-    fn dptvalue_roundtrip_string() {
-        let val = DptValue::Text("Test".into());
-        let bytes = encode_value(DPT_STRING_ASCII, &val).unwrap();
-        let decoded = decode_value(DPT_STRING_ASCII, &bytes).unwrap();
-        assert_eq!(decoded.as_str().unwrap(), "Test");
+        let bytes = encode(Dpt::new(28, 1), &DptValue::Text("Héllo 🌍".into())).unwrap();
+        assert_eq!(
+            decode(Dpt::new(28, 1), &bytes).unwrap(),
+            DptValue::Text("Héllo 🌍".into())
+        );
     }
 
     #[test]
@@ -797,85 +906,27 @@ mod tests {
     }
 
     #[test]
-    fn dpt26_scene_info() {
-        let dpt = Dpt::new(26, 1);
-        assert_eq!(encode(dpt, 5.0).unwrap(), &[5]);
-        assert_eq!(decode(dpt, &[0x45]).unwrap(), 5.0); // masked to 6 bits
+    fn type_mismatch() {
+        assert!(matches!(
+            encode(DPT_SWITCH, &DptValue::Text("hello".into())),
+            Err(DptError::TypeMismatch)
+        ));
+        assert!(matches!(
+            encode(DPT_STRING_ASCII, &DptValue::Bool(true)),
+            Err(DptError::TypeMismatch)
+        ));
     }
 
     #[test]
-    fn dpt217_version() {
-        let dpt = Dpt::new(217, 1);
-        // Version 5.3.12 = 50312
-        let bytes = encode(dpt, 50312.0).unwrap();
-        assert_eq!(bytes.len(), 2);
-        let val = decode(dpt, &bytes).unwrap();
-        assert_eq!(val, 50312.0);
+    fn coercion_bool_to_uint() {
+        let bytes = encode(DPT_VALUE_1_UCOUNT, &DptValue::Bool(true)).unwrap();
+        assert_eq!(bytes, &[1]);
     }
 
     #[test]
-    fn dpt219_alarm_info() {
-        let dpt = Dpt::new(219, 1);
-        let bytes = encode(dpt, 42.0).unwrap();
-        assert_eq!(bytes.len(), 6);
-        assert_eq!(decode(dpt, &bytes).unwrap(), 42.0);
-    }
-
-    #[test]
-    fn dpt221_serial_number() {
-        let dpt = Dpt::new(221, 1);
-        let bytes = encode(dpt, 1234.0).unwrap();
-        assert_eq!(bytes.len(), 6);
-        assert_eq!(decode(dpt, &bytes).unwrap(), 1234.0);
-    }
-
-    #[test]
-    fn dpt225_scaling_speed() {
-        let dpt = Dpt::new(225, 1);
-        let bytes = encode(dpt, 5000.0).unwrap();
-        assert_eq!(bytes.len(), 3);
-        assert_eq!(decode(dpt, &bytes).unwrap(), 5000.0);
-    }
-
-    #[test]
-    fn dpt231_locale() {
-        let dpt = Dpt::new(231, 1);
-        // "DE" = 0x4445
-        let bytes = encode(dpt, f64::from(0x4445u16)).unwrap();
-        assert_eq!(bytes.len(), 4);
-        assert_eq!(decode(dpt, &bytes).unwrap(), f64::from(0x4445u16));
-    }
-
-    #[test]
-    fn dpt234_language() {
-        let dpt = Dpt::new(234, 1);
-        let bytes = encode(dpt, f64::from(0x4445u16)).unwrap();
-        assert_eq!(bytes.len(), 2);
-        assert_eq!(decode(dpt, &bytes).unwrap(), f64::from(0x4445u16));
-    }
-
-    #[test]
-    fn dpt235_active_energy() {
-        let dpt = Dpt::new(235, 1);
-        let bytes = encode(dpt, -50000.0).unwrap();
-        assert_eq!(bytes.len(), 6);
-        assert_eq!(decode(dpt, &bytes).unwrap(), -50000.0);
-    }
-
-    #[test]
-    fn dpt238_scene_config() {
-        let dpt = Dpt::new(238, 1);
-        assert_eq!(encode(dpt, 10.0).unwrap(), &[10]);
-        assert_eq!(decode(dpt, &[10]).unwrap(), 10.0);
-    }
-
-    #[test]
-    fn dpt239_flagged_scaling() {
-        let dpt = Dpt::new(239, 1);
-        let bytes = encode(dpt, 50.0).unwrap();
-        assert_eq!(bytes.len(), 2);
-        let val = decode(dpt, &bytes).unwrap();
-        assert!((val - 50.0).abs() < 1.0, "got {val}");
+    fn coercion_float_to_uint() {
+        let bytes = encode(DPT_VALUE_1_UCOUNT, &DptValue::Float(42.7)).unwrap();
+        assert_eq!(bytes, &[43]); // rounded
     }
 
     #[test]
