@@ -47,7 +47,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p knx-core -p knx-ip -- --test-threads=1
+      - run: cargo test -p knx-core -p knx-ip -p knx-xml -- --test-threads=1
 
   test-features:
     name: Feature combinations

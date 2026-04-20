@@ -5,6 +5,7 @@ members = [
   "knx-ip",
   "knx-device",
   "knx-tp",
+  "knx-xml",
   "examples/knx-demo-device",
   "examples/knx-demo-client",
 ]

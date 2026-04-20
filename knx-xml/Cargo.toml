@@ -1,0 +1,44 @@
+[package]
+name = "knx-xml"
+description = "Cross-platform .knxprod generator and KNX XML tooling"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+repository = "https://github.com/metaneutrons/knx-rs"
+authors = ["Fabian Schmieder"]
+
+[dependencies]
+quick-xml = "0.39.2"
+sha2 = "0.11.0"
+thiserror = "2.0.18"
+zip = { version = "8.5.1", default-features = false, features = ["deflate"] }
+tempfile = "3.27.0"
+
+[dependencies.clap]
+version = "4.6.1"
+features = ["derive"]
+optional = true
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
+
+[[bin]]
+name = "knx-xml"
+required-features = ["cli"]
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+unused_qualifications = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"

@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2025 Fabian Schmieder
+
+//! Cross-platform .knxprod generator for KNX ETS product databases.
+//!
+//! Replaces the Windows-only ETS DLLs for generating .knxprod files.
+//! Takes a monolithic KNX product XML (as produced by `OpenKNXproducer`)
+//! and generates a signed .knxprod ZIP archive importable by ETS.
+//!
+//! # Pipeline
+//!
+//! 1. **Parse** — extract metadata (namespace, manufacturer ID, application ID)
+//! 2. **Split** — split monolithic XML into Catalog.xml, Hardware.xml, Application.xml
+//! 3. **Sign** — hash and sign XML files (not yet implemented)
+//! 4. **Package** — ZIP into .knxprod
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use std::path::Path;
+//! use knx_xml::generate_knxprod;
+//!
+//! generate_knxprod(
+//!     Path::new("NeoPixel.xml"),
+//!     Path::new("NeoPixel.knxprod"),
+//! ).expect("failed to generate knxprod");
+//! ```
+
+pub mod archive;
+pub mod error;
+pub mod parse;
+pub mod split;
+
+use std::path::Path;
+
+use error::KnxprodError;
+
+/// Generate a .knxprod file from a KNX product XML.
+///
+/// This is the main entry point. It parses the input XML, splits it into
+/// separate files, and packages them into a .knxprod ZIP archive.
+///
+/// # Errors
+///
+/// Returns [`KnxprodError`] if any step fails.
+pub fn generate_knxprod(input: &Path, output: &Path) -> Result<parse::KnxMetadata, KnxprodError> {
+    let xml = std::fs::read_to_string(input).map_err(|e| KnxprodError::io(input, e))?;
+    let metadata = parse::extract_metadata_from_str(&xml)?;
+
+    let temp_dir = tempfile::tempdir().map_err(|e| KnxprodError::io(input, e))?;
+
+    split::split_xml(&xml, &metadata, temp_dir.path())?;
+
+    // TODO: sign::sign_directory(temp_dir.path(), &metadata)?;
+
+    archive::create_knxprod(temp_dir.path(), output)?;
+
+    Ok(metadata)
+}
