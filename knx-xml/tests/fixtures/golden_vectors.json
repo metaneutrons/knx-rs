@@ -1,0 +1,26 @@
+{
+  "application_program_hash": [
+    {
+      "description": "Minimal ApplicationProgram with basic attributes",
+      "file": "minimal_app.xml",
+      "app_id": "M-0083_A-0001-01-0000",
+      "expected_hash_hex": "24ab92da12d47b99de1c6728334c7b12",
+      "expected_hash_b64": "JKuS2hLUe5neHGcoM0x7Eg==",
+      "expected_fingerprint": "2412",
+      "algorithm": "MD5 over registration-relevant attributes"
+    },
+    {
+      "description": "MDT Leakage Sensor (real product)",
+      "file": "leakage_app.xml",
+      "app_id": "M-0083_A-014F-10-DDAF",
+      "expected_hash_hex": "dd03e07cbe5cc31594a44bea21f566af",
+      "expected_hash_b64": "3QPgfL5cwxWUpEvqIfVmrw==",
+      "expected_fingerprint": "DDAF",
+      "algorithm": "MD5 over registration-relevant attributes",
+      "notes": "Hash is identical whether Hash attribute is present or not. ID is normalized to 0000 before hashing."
+    }
+  ],
+  "fingerprint_algorithm": "fingerprint = (hash[0] << 8) | hash[15]",
+  "file_hash_algorithm": "SHA-1 of entire file content, Base64 encoded",
+  "directory_signature": "RSA signature over SHA-1 digest of sorted file hashes"
+}

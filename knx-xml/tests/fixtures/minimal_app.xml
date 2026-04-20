@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20">
+  <ManufacturerData>
+    <Manufacturer RefId="M-0083">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="M-0083_A-0001-01-0000" ApplicationNumber="1" ApplicationVersion="1" ProgramType="ApplicationProgram" MaskVersion="MV-0705" Name="Test" LoadProcedureStyle="ProductProcedure" PeiType="0" DefaultLanguage="en-US" DynamicTableManagement="false" Linkable="false" MinEtsVersion="5.0">
+          <Static>
+            <Parameters />
+            <ParameterRefs />
+            <ComObjectTable />
+            <ComObjectRefs />
+            <AddressTable MaxEntries="255" />
+            <AssociationTable MaxEntries="255" />
+          </Static>
+          <Dynamic />
+        </ApplicationProgram>
+      </ApplicationPrograms>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>
