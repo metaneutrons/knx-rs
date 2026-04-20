@@ -1,6 +1,6 @@
 [package]
-name = "knx-xml"
-description = "Cross-platform .knxprod generator and KNX XML tooling"
+name = "knx-prod"
+description = "Cross-platform .knxprod generator for KNX ETS product databases"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
@@ -25,7 +25,7 @@ default = ["cli"]
 cli = ["dep:clap"]
 
 [[bin]]
-name = "knx-xml"
+name = "knx-prod"
 required-features = ["cli"]
 
 [lints.rust]

@@ -10,7 +10,7 @@ use clap::Parser;
 
 /// Cross-platform .knxprod generator for KNX ETS product databases.
 #[derive(Parser)]
-#[command(name = "knx-xml", version, about)]
+#[command(name = "knx-prod", version, about)]
 struct Cli {
     /// Input KNX product XML file.
     input: PathBuf,
@@ -31,7 +31,7 @@ fn main() {
     eprintln!("Input:  {}", cli.input.display());
     eprintln!("Output: {}", output.display());
 
-    match knx_xml::generate_knxprod(&cli.input, &output) {
+    match knx_prod::generate_knxprod(&cli.input, &output) {
         Ok(meta) => {
             eprintln!("Manufacturer: {}", meta.manufacturer_id);
             eprintln!("Application:  {}", meta.application_id);

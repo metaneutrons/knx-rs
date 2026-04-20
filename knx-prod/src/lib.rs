@@ -18,7 +18,7 @@
 //!
 //! ```rust,no_run
 //! use std::path::Path;
-//! use knx_xml::generate_knxprod;
+//! use knx_prod::generate_knxprod;
 //!
 //! generate_knxprod(
 //!     Path::new("NeoPixel.xml"),
