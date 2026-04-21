@@ -8,19 +8,48 @@ of all XML elements in the ApplicationProgram tree. The hash determines the fing
 
 ## Algorithm
 
-1. Parse the ApplicationProgram XML with XmlReader
-2. For each XML element encountered:
+1. Navigate to `<ApplicationPrograms>` in the XML
+2. Create a recursive `ChildElementHashGenerator` for its children
+3. For each child element:
    a. Look up the element name in `RegistrationRelevantApplicationProgramElements`
-   b. If found, extract the relevant attributes using their typed serializers
-   c. **Sort attributes alphabetically by their short name**
-   d. Write each attribute as: `BinaryWriter.Write(shortName) + BinaryWriter.Write(typedValue)`
-3. MD5 hash the entire byte stream → 16 bytes
-4. Fingerprint = `(hash[0] << 8) | hash[15]` → 4 hex chars (e.g. "DDAF")
-5. New Application ID = old ID with last 4 chars replaced by fingerprint
+   b. If found (registry element): serialize its attributes in **alphabetical order by XML attribute name**
+   c. If not found (non-registry container): recursively process its children
+4. All children at each level go into a **sorted collection** (SortedDictionary)
+5. Sort key: explicit sort attribute value (e.g. Id), or `Base64(MD5(bytes))` for elements without sort key
+6. Concatenate sorted children bytes → parent's byte stream
+7. MD5 hash the entire byte stream → 16 bytes
+8. Fingerprint = `(hash[0] << 8) | hash[15]` → 4 hex chars (e.g. "DDAF")
+
+### Attribute ordering
+
+Attributes within each registry element are sorted **alphabetically by their XML attribute name**
+(not by short name, not by constructor order). This is because the C# `ElementInfo` constructor
+calls `attributes.OrderBy(attr => attr.Name)` before storing them.
+
+### Element ordering
+
+- Elements marked `(ordered)` preserve their XML document order (use an integer counter as sort key)
+- All other elements are sorted by their sort attribute value, or by `Base64(MD5(bytes))` if no sort attribute
+- The sort uses .NET `SortedDictionary<object, byte[]>` with `Comparer<object>.Default`
+
+### Sort order (.NET string.CompareTo / InvariantCulture)
+
+The sort comparison matches .NET `string.CompareTo` which uses Unicode collation:
+
+**Primary level** (case-insensitive):
+```
+SPACE  _  -  ,  ;  :  !  ?  .  '  "  (  )  [  ]  {  }  @  *  /  \  &  #  %  `  ^  +  <  =  >  |  ~  $  0-9  a=A  b=B  ...  z=Z
+```
+
+Key differences from ASCII order: `/` < `+` < `=`, `_` < `-`, symbols < digits < letters.
+
+**Secondary level** (tiebreaker): lowercase before uppercase (`a` < `A`).
+
+**Accented characters**: sorted near their base letter (ä≈a, ö≈o, ü≈u, etc.).
 
 ## Serialization Format (verified by byte dump)
 
-Each attribute is serialized as a pair: **short name + typed value**, sorted alphabetically by short name.
+Each attribute is serialized as a pair: **short name + typed value**, in alphabetical order by XML attribute name.
 
 ### BinaryWriter encoding rules
 
@@ -52,9 +81,63 @@ length < 16384:  2 bytes [length & 0x7F | 0x80, length >> 7]
 ### ApplProgId normalization
 
 Application Program IDs are normalized before hashing:
-- The fingerprint suffix (last 4 hex chars after the last `-`) is **removed**
-- Example: `M-0083_A-0001-01-0000` → written as `M-0083_A-0001-01` (16 chars)
-- Example: `M-0083_A-014F-10-DDAF` → written as `M-0083_A-014F-10` (16 chars)
+- Strip the 4-char hex fingerprint after the 2nd dash in the `_A-` part
+- Preserve suffixes like `_MD-2`, `_O-1`, `-O000A`
+- Example: `M-0083_A-0001-01-0000` → `M-0083_A-0001-01`
+- Example: `M-0083_A-00B0-32-0DFC_MD-2_PC-1` → `M-0083_A-00B0-32_MD-2_PC-1`
+
+### InnerText elements (Script, RLTransformation, LRTransformation, Data, Mask, Offset)
+
+These elements serialize their text content rather than attributes:
+
+- **InnerTextString** (Script `S`, RLTransformation `R`, LRTransformation `L`): tag byte + `BinaryWriter.Write(text)`
+- **InnerTextBase64** (Data `D`, Mask `M`): tag byte + base64-decoded raw bytes
+- **InnerTextUInt32** (Offset `O`): despite the name, writes as `BinaryWriter.Write(string)` (not as uint32)
+
+### InnerText overshoot (C# bug, faithfully replicated)
+
+When an InnerText element is **empty** (e.g. `<Script />`), the C# `GetHashBytesOfCurrentNode`
+reads forward through the XML stream looking for any Text node — crossing element boundaries.
+This "overshoot" can read text from a completely different element deep in the tree.
+
+The overshoot causes **cascading stops**: each parent generator stops at the first EndElement
+it encounters (which belongs to the overshooting element's context), causing elements to
+"fall through" to higher levels of the tree.
+
+### Text content handling
+
+- **Line endings**: `\r\n` → `\n` and lone `\r` → `\n` (matching C# XmlReader normalization)
+- **XML entities**: `&lt;` → `<`, `&gt;` → `>`, `&amp;` → `&`, `&apos;` → `'`, `&quot;` → `"`
+- **CDATA sections**: `<![CDATA[...]]>` content is treated as text (no entity decoding needed)
+- **`IsNullOrEmpty` handling**: empty XML attribute values (`""`) are treated as missing (use default or null sentinel)
+- Text content may span multiple quick_xml events (Text + GeneralRef + Text) due to entity splitting
+
+### ParameterRefRef parent-conditional ordering
+
+`ParameterRefRef` is normally ordered (preserves document order). However, when the parent
+element is `LParameters` or `RParameters`, ordering is disabled and elements are sorted by
+`Base64(MD5(bytes))` instead. This matches the C# `ParameterRefRefElementInfo.OrderIsRelevant`
+method which returns `false` for these specific parents.
+
+### ParameterCalculation and ParameterValidation elements
+
+`ParameterCalculation` and `ParameterValidation` are registry elements (not just containers).
+
+`ParameterCalculation` attributes: `Id` (sort key), `Language`, `LRTransformationFunc` (default "1"),
+`LRTransformationParameters` (default "1"), `RLTransformationFunc` (default "1"),
+`RLTransformationParameters` (default "1"). Contains RLTransformation, LRTransformation,
+LParameters, RParameters children.
+
+`ParameterValidation` attributes: `Id` (sort key), `ValidationFunc`, `ValidationParameters` (default "0").
+Contains ParameterRefRef children with AliasName bindings.
+
+### Lowercase element variants
+
+Both `choose`/`Choose` and `when`/`When` are registered (lowercase variants appear in Dynamic sections).
+
+### LoadProcedure
+
+`LoadProcedure` is NOT ordered — its children are sorted by MD5-Base64 key, not document order.
 
 ## Typed Attribute Serializers
 
@@ -74,7 +157,8 @@ Application Program IDs are normalized before hashing:
 
 ## Registration Relevant Elements (ApplicationProgram)
 
-From `Knx.Ets.Xml.RegistrationRelevanceInformation.dll` (not obfuscated):
+All 89 elements from `Knx.Ets.Xml.RegistrationRelevanceInformation.dll` (plus lowercase
+`choose`/`when` variants).
 
 ```
 Manufacturer:
@@ -208,6 +292,7 @@ LdCtrlMapError: (ordered) LdCtrlFilter(Byte, "L", default="0"), OriginalError(UI
 LdCtrlProgressText: (ordered) AppliesTo(String, "AT", default="auto")
 LdCtrlDeclarePropDesc: (ordered) ObjIdx(Byte, "I"), ObjType(UInt16, "T"), Occurrence(Byte, "O", default="0"), PropId(Byte, "P"), PropType(String, "PT"), MaxElements(UInt16, "M"), ReadAccess(Byte, "R"), WriteAccess(Byte, "WA"), Writable(Bool, "W"), AppliesTo(String, "AT", default="auto")
 LdCtrlClearLCFilterTable: (ordered) AppliesTo(String, "AT", default="auto"), UseFunctionProp(Bool, "U", default="0")
+LdCtrlClearCachedObjectTypes: (ordered) AppliesTo(String, "A", default="auto")
 LdCtrlMerge: (ordered) MergeId(Byte, "M"), AppliesTo(String, "AT", default="auto")
 
 OnError: Cause(String, "C", sort), Ignore(Bool, "I", default="0")
@@ -229,7 +314,13 @@ Argument: Name(String, "N"), Allocates(Int64, "A"), Alignment(UInt16, "Ali", def
 
 ParameterBlock: (ordered) Id(ApplProgId, "I"), ParamRefId(ApplProgId, "R")
 ParameterSeparator: (ordered) Id(ApplProgId, "I")
-ParameterRefRef: RefId(ApplProgId, "R"), AliasName(String, "AN", default=null)
+ParameterRefRef: RefId(ApplProgId, "R"), AliasName(String, "AN", default=null)  [ordered except when parent is LParameters/RParameters]
+ParameterCalculation:
+  Id(ApplProgId, "I", sort), Language(String, "L"),
+  LRTransformationFunc(String, "LRF", default="1"), LRTransformationParameters(String, "LRP", default="1"),
+  RLTransformationFunc(String, "RLF", default="1"), RLTransformationParameters(String, "RLP", default="1")
+ParameterValidation:
+  Id(ApplProgId, "I", sort), ValidationFunc(String, "VF"), ValidationParameters(String, "VP", default="0")
 Choose: (ordered) ParamRefId(ApplProgId, "R")
 When: (ordered) test(String, "T"), default(Bool, "D", default="0")
 BinaryDataRef: (ordered) RefId(ApplProgId, "R")
@@ -244,27 +335,41 @@ NumericArg: RefId(ApplProgId, "R"), Value(Int64, "V"), AllocatorRefId(ApplProgId
 TextArg: RefId(ApplProgId, "R")
 ```
 
-## Element ordering
-
-- Elements marked `(ordered)` preserve their order in the XML (order-relevant for hash)
-- Elements NOT marked `(ordered)` are sorted by their sort attribute (first attribute with `sort` flag)
-- Child elements are recursively hashed and their bytes appended to the parent's stream
-
-## NOT Registration Relevant
+## Non-registration-relevant attributes
 
 These ApplicationProgram attributes are NOT included in the hash:
-- `Name`
-- `DefaultLanguage`
-- `MinEtsVersion`
-- `NonRegRelevantDataVersion`
-- `Hash` (the hash attribute itself)
+`Name`, `DefaultLanguage`, `MinEtsVersion`, `NonRegRelevantDataVersion`, `Hash` (the hash itself).
 
 ## Verified Golden Vectors
 
-| Input | Pre-MD5 bytes | MD5 Hash | Fingerprint |
-|-------|--------------|----------|-------------|
-| Minimal XML (1 AppProg, no params) | `minimal_prebytes.bin` (307 bytes) | `24ab92da12d47b99de1c6728334c7b12` | `2412` |
-| MDT Leakage Sensor | `leakage_prebytes.bin` (11297 bytes) | `dd03e07cbe5cc31594a44bea21f566af` | `DDAF` |
+28 files across 5 manufacturers/projects, all verified byte-exact against the C# reference tool.
+
+| Manufacturer | File | Bytes | Notable features |
+|---|---|---|---|
+| — | Minimal XML | 307 | Baseline: attrs, defaults, null sentinel |
+| MDT | Leakage Sensor | 11,297 | ComObjectRef, ParameterType |
+| MDT | AKK Switch Actuator 24ch | 1,024,714 | Large device |
+| MDT | BE Binary Input 32ch | 62,082 | Script overshoot, `\r\n`, `&lt;` entities, TypeFloat doubles, ParameterCalculation |
+| MDT | JAL Shutter Actuator 8ch | 1,357,252 | CDATA, non-ASCII sort keys (ä, ö), ParameterRefRef parent ordering |
+| Gira | Tastsensor (small) | — | Different manufacturer |
+| Gira | Busankoppler (medium) | — | |
+| Gira | Dimmaktor 4fach (large) | — | |
+| ABB | SBRU6/1 | 2,534,475 | Rename (ordered), different XML patterns |
+| ABB | SBCU6/1 | 2,694,266 | |
+| ABB | SBCU10/1 | 3,584,313 | |
+| ABB | SBSU6/1 | 2,534,475 | |
+| ABB | SBSU10/1 | 3,424,020 | |
+| Siemens | LK V01.24 | 9,689 | Small Siemens device |
+| Siemens | UP 204/2 | 4,361,496 | Large Siemens device |
+| Siemens | RDG200KN | 290,021 | |
+| Siemens | RDG260KN | 308,203 | |
+| Siemens | QAA2150KT | 8,173 | |
+| Siemens | QFA2250KT | 9,593 | |
+| Siemens | QPA2350KT | 13,758 | |
+| Siemens | OCT200 KNR | 1,622 | |
+| Siemens | OCT110 BR | 40,208 | ParameterValidation |
+| OpenKNX | SmartHomeBridge v2.1.1 | 18,288,216 | Largest test (62MB XML), open-source |
+| OpenKNX | LogicModule v3.5.2 | 16,328,070 | Open-source, 51MB XML |
 
 ## Byte dump analysis (minimal_prebytes.bin, 307 bytes)
 
@@ -305,11 +410,16 @@ These ApplicationProgram attributes are NOT included in the hash:
 
 ## Key Observations
 
-1. The Hash attribute is NOT included in the hash computation
-2. The Application ID is normalized: fingerprint suffix removed (last 5 chars `-XXXX`)
-3. Default values are used for missing attributes
-4. Attributes are **sorted alphabetically by short name** within each element
-5. Elements marked `(ordered)` preserve XML document order; others are sorted by their sort key
+1. The `Hash` attribute itself is NOT included in the hash computation
+2. Application IDs are normalized: fingerprint stripped from `_A-XXXX-YY-FFFF` part, suffixes preserved
+3. Default values are used for missing attributes; `$<null>$` is the null sentinel
+4. Attributes are sorted **alphabetically by XML attribute name** (not short name)
+5. Elements marked `(ordered)` preserve XML document order; others sorted by sort key or MD5-Base64
 6. The hash covers the ENTIRE ApplicationProgram tree recursively
-7. `$<null>$` is the null sentinel for missing string/ApplProgId attributes
-8. Bool attributes without a value and without a default appear to use `$<null>$` (see ISE)
+7. `IsNullOrEmpty` semantics: empty string `""` treated as missing
+8. Sort order matches .NET InvariantCulture: `/` < `+` < `=` < digits < letters (not ASCII order)
+9. Empty InnerText elements cause an overshoot scan that crosses element boundaries (C# bug)
+10. `ParameterRefRef` ordering is parent-conditional (unordered in LParameters/RParameters)
+11. Line endings normalized: `\r\n` → `\n`
+12. XML entities decoded in text content; CDATA sections preserved as-is
+13. `LoadProcedure` children are NOT ordered (sorted by MD5-Base64)

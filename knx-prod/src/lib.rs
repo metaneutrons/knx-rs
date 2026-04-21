@@ -28,7 +28,9 @@
 
 pub mod archive;
 pub mod error;
+pub mod hash;
 pub mod parse;
+pub mod sign;
 pub mod split;
 
 use std::path::Path;
@@ -49,11 +51,22 @@ pub fn generate_knxprod(input: &Path, output: &Path) -> Result<parse::KnxMetadat
 
     let temp_dir = tempfile::tempdir().map_err(|e| KnxprodError::io(input, e))?;
 
-    split::split_xml(&xml, &metadata, temp_dir.path())?;
+    let split_result = split::split_xml(&xml, &metadata, temp_dir.path())?;
 
-    // TODO: sign::sign_directory(temp_dir.path(), &metadata)?;
+    let signed_result = sign::sign_application(&split_result)?;
 
     archive::create_knxprod(temp_dir.path(), output)?;
 
-    Ok(metadata)
+    // Update metadata with the new application ID (with correct fingerprint).
+    let new_app_id = signed_result
+        .application
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&metadata.application_id)
+        .to_string();
+
+    Ok(parse::KnxMetadata {
+        application_id: new_app_id,
+        ..metadata
+    })
 }

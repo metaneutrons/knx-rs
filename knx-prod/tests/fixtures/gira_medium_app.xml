@@ -1,0 +1,2137 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" CreatedBy="ETS5" ToolVersion="5.5.575.15318" xmlns="http://knx.org/xml/project/13">
+  <ManufacturerData>
+    <Manufacturer RefId="M-0008">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="M-0008_A-0000-01-0CC2" Name="große Dummy-Applikation 900201" ApplicationNumber="0" ApplicationVersion="1" ProgramType="ApplicationProgram" MaskVersion="MV-0001" VisibleDescription="große Dummy-Applikation 900201" LoadProcedureStyle="DefaultProcedure" PeiType="0" HelpFile="8\info\gira.hlp" DefaultLanguage="de-DE" DynamicTableManagement="0" Linkable="1" PreEts4Style="1" NonRegRelevantDataVersion="0" Hash="DFL5B+7qdHy3PvVG45s3wg==" ConvertedFromPreEts4Data="1" Broken="0" IPConfig="Tool" AdditionalAddressesCount="0" DownloadInfoIncomplete="0" CreatedFromLegacySchemaVersion="0">
+          <Static>
+            <Code>
+              <AbsoluteSegment Id="M-0008_A-0000-01-0CC2_AS-0000" Address="0" Size="65536" UserMemory="0">
+                <Data>/wAAAAEAAAH+AAAAAP/gY+hzzv7+/i7//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////y0BAAIBAwIEAwUEBgUHBggHCQgKCQsKDAsNDA4NDw4QABEBEgITAxQEFQUWBhcHGAgZCRoKGwscDB0NHg4fACABIQIiAyMEJAUlBiYHJwgoCSkKKgsrDCwNLQ4P0NDfANDfAdDfAtDfA9DfBNDfBdDfBtDfB9DfCNDfCdDfCtDfC9DfDNDfDdDfDv+BAA==</Data>
+                <Mask>/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////w==</Mask>
+              </AbsoluteSegment>
+            </Code>
+            <ComObjectTable CodeSegment="M-0008_A-0000-01-0CC2_AS-0000" Offset="462">
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-0" FunctionText="1 Bit" Name="1 Bit (1)" Number="0" ObjectSize="1 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Bit (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-1" FunctionText="1 Bit" Name="1 Bit (2)" Number="1" ObjectSize="1 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Bit (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-10" FunctionText="2 Bit" Name="2 Bit (1)" Number="10" ObjectSize="2 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Bit (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-11" FunctionText="2 Bit" Name="2 Bit (2)" Number="11" ObjectSize="2 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Bit (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-12" FunctionText="2 Bit" Name="2 Bit (3)" Number="12" ObjectSize="2 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Bit (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-13" FunctionText="3 Bit" Name="3 Bit (1)" Number="13" ObjectSize="3 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="3 Bit (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-14" FunctionText="3 Bit" Name="3 Bit (2)" Number="14" ObjectSize="3 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="3 Bit (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-15" FunctionText="3 Bit" Name="3 Bit (3)" Number="15" ObjectSize="3 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="3 Bit (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-16" FunctionText="4 Bit" Name="4 Bit (1)" Number="16" ObjectSize="4 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="4 Bit (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-17" FunctionText="4 Bit" Name="4 Bit (2)" Number="17" ObjectSize="4 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="4 Bit (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-18" FunctionText="4 Bit" Name="4 Bit (3)" Number="18" ObjectSize="4 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="4 Bit (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-19" FunctionText="5 Bit" Name="5 Bit (1)" Number="19" ObjectSize="5 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="5 Bit (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-2" FunctionText="1 Bit" Name="1 Bit (3)" Number="2" ObjectSize="1 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Bit (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-20" FunctionText="5 Bit" Name="5 Bit (2)" Number="20" ObjectSize="5 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="5 Bit (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-21" FunctionText="5 Bit" Name="5 Bit (3)" Number="21" ObjectSize="5 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="5 Bit (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-22" FunctionText="6 Bit" Name="6 Bit (1)" Number="22" ObjectSize="6 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="6 Bit (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-23" FunctionText="6 Bit" Name="6 Bit (2)" Number="23" ObjectSize="6 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="6 Bit (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-24" FunctionText="6 Bit" Name="6 Bit (3)" Number="24" ObjectSize="6 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="6 Bit (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-25" FunctionText="7 Bit" Name="7 Bit (1)" Number="25" ObjectSize="7 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="7 Bit (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-26" FunctionText="7 Bit" Name="7 Bit (2)" Number="26" ObjectSize="7 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="7 Bit (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-27" FunctionText="7 Bit" Name="7 Bit (3)" Number="27" ObjectSize="7 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="7 Bit (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-28" FunctionText="1 Byte" Name="1 Byte (1)" Number="28" ObjectSize="1 Byte" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Byte (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-29" FunctionText="1 Byte" Name="1 Byte (2)" Number="29" ObjectSize="1 Byte" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Byte (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-3" FunctionText="1 Bit" Name="1 Bit (4)" Number="3" ObjectSize="1 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Bit (4)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-30" FunctionText="1 Byte" Name="1 Byte (3)" Number="30" ObjectSize="1 Byte" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Byte (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-31" FunctionText="1 Byte" Name="1 Byte (4)" Number="31" ObjectSize="1 Byte" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Byte (4)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-32" FunctionText="1 Byte" Name="1 Byte (5)" Number="32" ObjectSize="1 Byte" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Byte (5)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-33" FunctionText="1 Byte" Name="1 Byte (6)" Number="33" ObjectSize="1 Byte" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Byte (6)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-34" FunctionText="1 Byte" Name="1 Byte (7)" Number="34" ObjectSize="1 Byte" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Byte (7)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-35" FunctionText="1 Byte" Name="1 Byte (8)" Number="35" ObjectSize="1 Byte" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Byte (8)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-36" FunctionText="1 Byte" Name="1 Byte (9)" Number="36" ObjectSize="1 Byte" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Byte (9)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-37" FunctionText="1 Byte" Name="1 Byte (10)" Number="37" ObjectSize="1 Byte" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Byte (10)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-38" FunctionText="2 Byte" Name="2 Byte (1)" Number="38" ObjectSize="2 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Byte (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-39" FunctionText="2 Byte" Name="2 Byte (2)" Number="39" ObjectSize="2 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Byte (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-4" FunctionText="1 Bit" Name="1 Bit (5)" Number="4" ObjectSize="1 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Bit (5)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-40" FunctionText="2 Byte" Name="2 Byte (3)" Number="40" ObjectSize="2 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Byte (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-41" FunctionText="2 Byte" Name="2 Byte (4)" Number="41" ObjectSize="2 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Byte (4)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-42" FunctionText="2 Byte" Name="2 Byte (5)" Number="42" ObjectSize="2 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Byte (5)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-43" FunctionText="2 Byte" Name="2 Byte (6)" Number="43" ObjectSize="2 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Byte (6)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-44" FunctionText="2 Byte" Name="2 Byte (7)" Number="44" ObjectSize="2 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Byte (7)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-45" FunctionText="2 Byte" Name="2 Byte (8)" Number="45" ObjectSize="2 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Byte (8)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-46" FunctionText="2 Byte" Name="2 Byte (9)" Number="46" ObjectSize="2 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Byte (9)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-47" FunctionText="2 Byte" Name="2 Byte (10)" Number="47" ObjectSize="2 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="2 Byte (10)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-48" FunctionText="3 Byte" Name="3 Byte (1)" Number="48" ObjectSize="3 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="3 Byte (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-49" FunctionText="3 Byte" Name="3 Byte (2)" Number="49" ObjectSize="3 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="3 Byte (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-5" FunctionText="1 Bit" Name="1 Bit (6)" Number="5" ObjectSize="1 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Bit (6)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-50" FunctionText="3 Byte" Name="3 Byte (3)" Number="50" ObjectSize="3 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="3 Byte (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-51" FunctionText="4 Byte" Name="4 Byte (1)" Number="51" ObjectSize="4 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="4 Byte (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-52" FunctionText="4 Byte" Name="4 Byte (2)" Number="52" ObjectSize="4 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="4 Byte (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-53" FunctionText="4 Byte" Name="4 Byte (3)" Number="53" ObjectSize="4 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="4 Byte (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-54" FunctionText="6 Byte" Name="6 Byte (1)" Number="54" ObjectSize="6 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="6 Byte (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-55" FunctionText="6 Byte" Name="6 Byte (2)" Number="55" ObjectSize="6 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="6 Byte (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-56" FunctionText="6 Byte" Name="6 Byte (3)" Number="56" ObjectSize="6 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="6 Byte (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-57" FunctionText="8 Byte" Name="8 Byte (1)" Number="57" ObjectSize="8 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="8 Byte (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-58" FunctionText="8 Byte" Name="8 Byte (2)" Number="58" ObjectSize="8 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="8 Byte (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-59" FunctionText="8 Byte" Name="8 Byte (3)" Number="59" ObjectSize="8 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="8 Byte (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-6" FunctionText="1 Bit" Name="1 Bit (7)" Number="6" ObjectSize="1 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Bit (7)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-60" FunctionText="10 Byte" Name="10 Byte (1)" Number="60" ObjectSize="10 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="10 Byte (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-61" FunctionText="10 Byte" Name="10 Byte (2)" Number="61" ObjectSize="10 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="10 Byte (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-62" FunctionText="10 Byte" Name="10 Byte (3)" Number="62" ObjectSize="10 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="10 Byte (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-63" FunctionText="14 Byte" Name="14 Byte (1)" Number="63" ObjectSize="14 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="14 Byte (1)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-64" FunctionText="14 Byte" Name="14 Byte (2)" Number="64" ObjectSize="14 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="14 Byte (2)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-65" FunctionText="14 Byte" Name="14 Byte (3)" Number="65" ObjectSize="14 Bytes" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="14 Byte (3)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-7" FunctionText="1 Bit" Name="1 Bit (8)" Number="7" ObjectSize="1 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Bit (8)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-8" FunctionText="1 Bit" Name="1 Bit (9)" Number="8" ObjectSize="1 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Bit (9)" />
+              <ComObject Id="M-0008_A-0000-01-0CC2_O-9" FunctionText="1 Bit" Name="1 Bit (10)" Number="9" ObjectSize="1 Bit" Priority="Low" CommunicationFlag="Enabled" ReadFlag="Enabled" ReadOnInitFlag="Disabled" TransmitFlag="Enabled" UpdateFlag="Disabled" WriteFlag="Enabled" Text="1 Bit (10)" />
+            </ComObjectTable>
+            <ComObjectRefs>
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-3_R-3" RefId="M-0008_A-0000-01-0CC2_O-3" Tag="3" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-4_R-4" RefId="M-0008_A-0000-01-0CC2_O-4" Tag="4" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-5_R-5" RefId="M-0008_A-0000-01-0CC2_O-5" Tag="5" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-6_R-6" RefId="M-0008_A-0000-01-0CC2_O-6" Tag="6" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-7_R-7" RefId="M-0008_A-0000-01-0CC2_O-7" Tag="7" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-8_R-8" RefId="M-0008_A-0000-01-0CC2_O-8" Tag="8" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-9_R-9" RefId="M-0008_A-0000-01-0CC2_O-9" Tag="9" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-10_R-10" RefId="M-0008_A-0000-01-0CC2_O-10" Tag="10" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-11_R-11" RefId="M-0008_A-0000-01-0CC2_O-11" Tag="11" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-12_R-12" RefId="M-0008_A-0000-01-0CC2_O-12" Tag="12" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-13_R-13" RefId="M-0008_A-0000-01-0CC2_O-13" Tag="13" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-14_R-14" RefId="M-0008_A-0000-01-0CC2_O-14" Tag="14" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-15_R-15" RefId="M-0008_A-0000-01-0CC2_O-15" Tag="15" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-16_R-16" RefId="M-0008_A-0000-01-0CC2_O-16" Tag="16" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-17_R-17" RefId="M-0008_A-0000-01-0CC2_O-17" Tag="17" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-18_R-18" RefId="M-0008_A-0000-01-0CC2_O-18" Tag="18" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-19_R-19" RefId="M-0008_A-0000-01-0CC2_O-19" Tag="19" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-20_R-20" RefId="M-0008_A-0000-01-0CC2_O-20" Tag="20" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-21_R-21" RefId="M-0008_A-0000-01-0CC2_O-21" Tag="21" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-22_R-22" RefId="M-0008_A-0000-01-0CC2_O-22" Tag="22" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-23_R-23" RefId="M-0008_A-0000-01-0CC2_O-23" Tag="23" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-24_R-24" RefId="M-0008_A-0000-01-0CC2_O-24" Tag="24" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-25_R-25" RefId="M-0008_A-0000-01-0CC2_O-25" Tag="25" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-26_R-26" RefId="M-0008_A-0000-01-0CC2_O-26" Tag="26" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-27_R-27" RefId="M-0008_A-0000-01-0CC2_O-27" Tag="27" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-28_R-28" RefId="M-0008_A-0000-01-0CC2_O-28" Tag="28" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-29_R-29" RefId="M-0008_A-0000-01-0CC2_O-29" Tag="29" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-30_R-30" RefId="M-0008_A-0000-01-0CC2_O-30" Tag="30" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-31_R-31" RefId="M-0008_A-0000-01-0CC2_O-31" Tag="31" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-32_R-32" RefId="M-0008_A-0000-01-0CC2_O-32" Tag="32" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-33_R-33" RefId="M-0008_A-0000-01-0CC2_O-33" Tag="33" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-34_R-34" RefId="M-0008_A-0000-01-0CC2_O-34" Tag="34" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-35_R-35" RefId="M-0008_A-0000-01-0CC2_O-35" Tag="35" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-2_R-2" RefId="M-0008_A-0000-01-0CC2_O-2" Tag="2" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-1_R-1" RefId="M-0008_A-0000-01-0CC2_O-1" Tag="1" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-0_R-0" RefId="M-0008_A-0000-01-0CC2_O-0" Tag="0" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-36_R-36" RefId="M-0008_A-0000-01-0CC2_O-36" Tag="36" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-37_R-37" RefId="M-0008_A-0000-01-0CC2_O-37" Tag="37" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-38_R-38" RefId="M-0008_A-0000-01-0CC2_O-38" Tag="38" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-39_R-39" RefId="M-0008_A-0000-01-0CC2_O-39" Tag="39" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-40_R-40" RefId="M-0008_A-0000-01-0CC2_O-40" Tag="40" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-41_R-41" RefId="M-0008_A-0000-01-0CC2_O-41" Tag="41" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-42_R-42" RefId="M-0008_A-0000-01-0CC2_O-42" Tag="42" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-43_R-43" RefId="M-0008_A-0000-01-0CC2_O-43" Tag="43" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-44_R-44" RefId="M-0008_A-0000-01-0CC2_O-44" Tag="44" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-45_R-45" RefId="M-0008_A-0000-01-0CC2_O-45" Tag="45" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-46_R-46" RefId="M-0008_A-0000-01-0CC2_O-46" Tag="46" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-47_R-47" RefId="M-0008_A-0000-01-0CC2_O-47" Tag="47" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-48_R-48" RefId="M-0008_A-0000-01-0CC2_O-48" Tag="48" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-49_R-49" RefId="M-0008_A-0000-01-0CC2_O-49" Tag="49" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-50_R-50" RefId="M-0008_A-0000-01-0CC2_O-50" Tag="50" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-51_R-51" RefId="M-0008_A-0000-01-0CC2_O-51" Tag="51" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-52_R-52" RefId="M-0008_A-0000-01-0CC2_O-52" Tag="52" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-53_R-53" RefId="M-0008_A-0000-01-0CC2_O-53" Tag="53" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-54_R-54" RefId="M-0008_A-0000-01-0CC2_O-54" Tag="54" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-55_R-55" RefId="M-0008_A-0000-01-0CC2_O-55" Tag="55" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-56_R-56" RefId="M-0008_A-0000-01-0CC2_O-56" Tag="56" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-57_R-57" RefId="M-0008_A-0000-01-0CC2_O-57" Tag="57" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-58_R-58" RefId="M-0008_A-0000-01-0CC2_O-58" Tag="58" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-59_R-59" RefId="M-0008_A-0000-01-0CC2_O-59" Tag="59" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-60_R-60" RefId="M-0008_A-0000-01-0CC2_O-60" Tag="60" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-61_R-61" RefId="M-0008_A-0000-01-0CC2_O-61" Tag="61" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-62_R-62" RefId="M-0008_A-0000-01-0CC2_O-62" Tag="62" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-63_R-63" RefId="M-0008_A-0000-01-0CC2_O-63" Tag="63" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-64_R-64" RefId="M-0008_A-0000-01-0CC2_O-64" Tag="64" />
+              <ComObjectRef Id="M-0008_A-0000-01-0CC2_O-65_R-65" RefId="M-0008_A-0000-01-0CC2_O-65" Tag="65" />
+            </ComObjectRefs>
+            <AddressTable CodeSegment="M-0008_A-0000-01-0CC2_AS-0000" Offset="0" MaxEntries="1000" />
+            <AssociationTable CodeSegment="M-0008_A-0000-01-0CC2_AS-0000" Offset="371" MaxEntries="1000" />
+            <Extension RequiresExternalSoftware="0" />
+            <Options PreferPartialDownloadIfApplicationLoaded="0" EasyCtrlModeModeStyleEmptyGroupComTables="0" SetObjectTableLengthAlwaysToOne="0" TextParameterZeroTerminate="0" ParameterByteOrder="BigEndian" LegacyNoPartialDownload="0" LegacyNoMemoryVerifyMode="0" LegacyNoOptimisticWrite="0" LegacyDoNotReportPropertyWriteErrors="0" LegacyNoBackgroundDownload="0" LegacyDoNotCheckManufacturerId="0" LegacyAlwaysReloadAppIfCoVisibilityChanged="0" LegacyNeverReloadAppIfCoVisibilityChanged="0" LegacyDoNotSupportUndoDelete="0" LegacyAllowPartialDownloadIfAp2Mismatch="0" LegacyKeepObjectTableGaps="0" PartialDownloadOnlyVisibleParameters="0" LegacyProxyCommunicationObjects="0" DeviceInfoIgnoreRunState="0" DeviceInfoIgnoreLoadedState="0" DeviceCompareAllowCompatibleManufacturerId="0" LineCoupler0912NewProgrammingStyle="0" TextParameterEncodingSelector="UseTextParameterEncodingCodePage" DownloadInvisibleParameters="Background" />
+          </Static>
+          <Dynamic>
+            <Channel Name="Generic" Text="" Number="0" Id="M-0008_A-0000-01-0CC2_CH-0">
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-0_R-0" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-1_R-1" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-2_R-2" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-3_R-3" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-4_R-4" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-5_R-5" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-6_R-6" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-7_R-7" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-8_R-8" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-9_R-9" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-10_R-10" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-11_R-11" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-12_R-12" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-13_R-13" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-14_R-14" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-15_R-15" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-16_R-16" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-17_R-17" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-18_R-18" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-19_R-19" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-20_R-20" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-21_R-21" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-22_R-22" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-23_R-23" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-24_R-24" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-25_R-25" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-26_R-26" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-27_R-27" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-28_R-28" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-29_R-29" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-30_R-30" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-31_R-31" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-32_R-32" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-33_R-33" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-34_R-34" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-35_R-35" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-36_R-36" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-37_R-37" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-38_R-38" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-39_R-39" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-40_R-40" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-41_R-41" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-42_R-42" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-43_R-43" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-44_R-44" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-45_R-45" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-46_R-46" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-47_R-47" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-48_R-48" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-49_R-49" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-50_R-50" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-51_R-51" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-52_R-52" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-53_R-53" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-54_R-54" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-55_R-55" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-56_R-56" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-57_R-57" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-58_R-58" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-59_R-59" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-60_R-60" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-61_R-61" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-62_R-62" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-63_R-63" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-64_R-64" />
+              <ComObjectRefRef RefId="M-0008_A-0000-01-0CC2_O-65_R-65" />
+            </Channel>
+          </Dynamic>
+        </ApplicationProgram>
+      </ApplicationPrograms>
+      <Languages>
+        <Language Identifier="de-DE">
+          <TranslationUnit RefId="M-0008_A-0000-01-0CC2">
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2">
+              <Translation AttributeName="Name" Text="große Dummy-Applikation 900201" />
+              <Translation AttributeName="VisibleDescription" Text="große Dummy-Applikation 900201" />
+              <Translation AttributeName="HelpFile" Text="8\info\gira.hlp" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-0">
+              <Translation AttributeName="Text" Text="1 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-1">
+              <Translation AttributeName="Text" Text="1 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-10">
+              <Translation AttributeName="Text" Text="2 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="2 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-11">
+              <Translation AttributeName="Text" Text="2 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="2 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-12">
+              <Translation AttributeName="Text" Text="2 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="2 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-13">
+              <Translation AttributeName="Text" Text="3 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="3 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-14">
+              <Translation AttributeName="Text" Text="3 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="3 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-15">
+              <Translation AttributeName="Text" Text="3 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="3 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-16">
+              <Translation AttributeName="Text" Text="4 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="4 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-17">
+              <Translation AttributeName="Text" Text="4 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="4 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-18">
+              <Translation AttributeName="Text" Text="4 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="4 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-19">
+              <Translation AttributeName="Text" Text="5 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="5 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-2">
+              <Translation AttributeName="Text" Text="1 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-20">
+              <Translation AttributeName="Text" Text="5 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="5 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-21">
+              <Translation AttributeName="Text" Text="5 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="5 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-22">
+              <Translation AttributeName="Text" Text="6 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="6 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-23">
+              <Translation AttributeName="Text" Text="6 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="6 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-24">
+              <Translation AttributeName="Text" Text="6 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="6 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-25">
+              <Translation AttributeName="Text" Text="7 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="7 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-26">
+              <Translation AttributeName="Text" Text="7 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="7 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-27">
+              <Translation AttributeName="Text" Text="7 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="7 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-28">
+              <Translation AttributeName="Text" Text="1 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-29">
+              <Translation AttributeName="Text" Text="1 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-3">
+              <Translation AttributeName="Text" Text="1 Bit (4)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-30">
+              <Translation AttributeName="Text" Text="1 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-31">
+              <Translation AttributeName="Text" Text="1 Byte (4)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-32">
+              <Translation AttributeName="Text" Text="1 Byte (5)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-33">
+              <Translation AttributeName="Text" Text="1 Byte (6)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-34">
+              <Translation AttributeName="Text" Text="1 Byte (7)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-35">
+              <Translation AttributeName="Text" Text="1 Byte (8)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-36">
+              <Translation AttributeName="Text" Text="1 Byte (9)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-37">
+              <Translation AttributeName="Text" Text="1 Byte (10)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-38">
+              <Translation AttributeName="Text" Text="2 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-39">
+              <Translation AttributeName="Text" Text="2 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-4">
+              <Translation AttributeName="Text" Text="1 Bit (5)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-40">
+              <Translation AttributeName="Text" Text="2 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-41">
+              <Translation AttributeName="Text" Text="2 Byte (4)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-42">
+              <Translation AttributeName="Text" Text="2 Byte (5)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-43">
+              <Translation AttributeName="Text" Text="2 Byte (6)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-44">
+              <Translation AttributeName="Text" Text="2 Byte (7)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-45">
+              <Translation AttributeName="Text" Text="2 Byte (8)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-46">
+              <Translation AttributeName="Text" Text="2 Byte (9)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-47">
+              <Translation AttributeName="Text" Text="2 Byte (10)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-48">
+              <Translation AttributeName="Text" Text="3 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="3 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-49">
+              <Translation AttributeName="Text" Text="3 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="3 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-5">
+              <Translation AttributeName="Text" Text="1 Bit (6)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-50">
+              <Translation AttributeName="Text" Text="3 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="3 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-51">
+              <Translation AttributeName="Text" Text="4 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="4 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-52">
+              <Translation AttributeName="Text" Text="4 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="4 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-53">
+              <Translation AttributeName="Text" Text="4 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="4 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-54">
+              <Translation AttributeName="Text" Text="6 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="6 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-55">
+              <Translation AttributeName="Text" Text="6 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="6 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-56">
+              <Translation AttributeName="Text" Text="6 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="6 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-57">
+              <Translation AttributeName="Text" Text="8 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="8 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-58">
+              <Translation AttributeName="Text" Text="8 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="8 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-59">
+              <Translation AttributeName="Text" Text="8 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="8 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-6">
+              <Translation AttributeName="Text" Text="1 Bit (7)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-60">
+              <Translation AttributeName="Text" Text="10 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="10 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-61">
+              <Translation AttributeName="Text" Text="10 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="10 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-62">
+              <Translation AttributeName="Text" Text="10 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="10 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-63">
+              <Translation AttributeName="Text" Text="14 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="14 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-64">
+              <Translation AttributeName="Text" Text="14 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="14 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-65">
+              <Translation AttributeName="Text" Text="14 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="14 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-7">
+              <Translation AttributeName="Text" Text="1 Bit (8)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-8">
+              <Translation AttributeName="Text" Text="1 Bit (9)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-9">
+              <Translation AttributeName="Text" Text="1 Bit (10)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+          </TranslationUnit>
+        </Language>
+        <Language Identifier="en-US">
+          <TranslationUnit RefId="M-0008_A-0000-01-0CC2">
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2">
+              <Translation AttributeName="Name" Text="large dummy application 900201" />
+              <Translation AttributeName="VisibleDescription" Text="large dummy application 900201" />
+              <Translation AttributeName="HelpFile" Text="8\info\gira.hlp" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-0">
+              <Translation AttributeName="Text" Text="1 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-1">
+              <Translation AttributeName="Text" Text="1 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-10">
+              <Translation AttributeName="Text" Text="2 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-11">
+              <Translation AttributeName="Text" Text="2 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-12">
+              <Translation AttributeName="Text" Text="2 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-13">
+              <Translation AttributeName="Text" Text="3 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-14">
+              <Translation AttributeName="Text" Text="3 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-15">
+              <Translation AttributeName="Text" Text="3 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-16">
+              <Translation AttributeName="Text" Text="4 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-17">
+              <Translation AttributeName="Text" Text="4 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-18">
+              <Translation AttributeName="Text" Text="4 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-19">
+              <Translation AttributeName="Text" Text="5 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-2">
+              <Translation AttributeName="Text" Text="1 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-20">
+              <Translation AttributeName="Text" Text="5 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-21">
+              <Translation AttributeName="Text" Text="5 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-22">
+              <Translation AttributeName="Text" Text="6 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-23">
+              <Translation AttributeName="Text" Text="6 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-24">
+              <Translation AttributeName="Text" Text="6 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-25">
+              <Translation AttributeName="Text" Text="7 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-26">
+              <Translation AttributeName="Text" Text="7 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-27">
+              <Translation AttributeName="Text" Text="7 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-28">
+              <Translation AttributeName="Text" Text="1 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-29">
+              <Translation AttributeName="Text" Text="1 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-3">
+              <Translation AttributeName="Text" Text="1 bit (4)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-30">
+              <Translation AttributeName="Text" Text="1 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-31">
+              <Translation AttributeName="Text" Text="1 byte (4)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-32">
+              <Translation AttributeName="Text" Text="1 byte (5)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-33">
+              <Translation AttributeName="Text" Text="1 byte (6)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-34">
+              <Translation AttributeName="Text" Text="1 byte (7)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-35">
+              <Translation AttributeName="Text" Text="1 byte (8)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-36">
+              <Translation AttributeName="Text" Text="1 byte (9)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-37">
+              <Translation AttributeName="Text" Text="1 byte (10)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-38">
+              <Translation AttributeName="Text" Text="2 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-39">
+              <Translation AttributeName="Text" Text="2 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-4">
+              <Translation AttributeName="Text" Text="1 bit (5)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-40">
+              <Translation AttributeName="Text" Text="2 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-41">
+              <Translation AttributeName="Text" Text="2 byte (4)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-42">
+              <Translation AttributeName="Text" Text="2 byte (5)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-43">
+              <Translation AttributeName="Text" Text="2 byte (6)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-44">
+              <Translation AttributeName="Text" Text="2 byte (7)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-45">
+              <Translation AttributeName="Text" Text="2 byte (8)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-46">
+              <Translation AttributeName="Text" Text="2 byte (9)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-47">
+              <Translation AttributeName="Text" Text="2 byte (10)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-48">
+              <Translation AttributeName="Text" Text="3 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-49">
+              <Translation AttributeName="Text" Text="3 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-5">
+              <Translation AttributeName="Text" Text="1 bit (6)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-50">
+              <Translation AttributeName="Text" Text="3 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-51">
+              <Translation AttributeName="Text" Text="4 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-52">
+              <Translation AttributeName="Text" Text="4 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-53">
+              <Translation AttributeName="Text" Text="4 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-54">
+              <Translation AttributeName="Text" Text="6 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-55">
+              <Translation AttributeName="Text" Text="6 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-56">
+              <Translation AttributeName="Text" Text="6 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-57">
+              <Translation AttributeName="Text" Text="8 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-58">
+              <Translation AttributeName="Text" Text="8 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-59">
+              <Translation AttributeName="Text" Text="8 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-6">
+              <Translation AttributeName="Text" Text="1 bit (7)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-60">
+              <Translation AttributeName="Text" Text="10 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-61">
+              <Translation AttributeName="Text" Text="10 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-62">
+              <Translation AttributeName="Text" Text="10 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-63">
+              <Translation AttributeName="Text" Text="14 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-64">
+              <Translation AttributeName="Text" Text="14 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-65">
+              <Translation AttributeName="Text" Text="14 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-7">
+              <Translation AttributeName="Text" Text="1 bit (8)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-8">
+              <Translation AttributeName="Text" Text="1 bit (9)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-9">
+              <Translation AttributeName="Text" Text="1 bit (10)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+          </TranslationUnit>
+        </Language>
+        <Language Identifier="es-ES">
+          <TranslationUnit RefId="M-0008_A-0000-01-0CC2">
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2">
+              <Translation AttributeName="Name" Text="aplicación de dummy extensa 900201" />
+              <Translation AttributeName="VisibleDescription" Text="aplicación de dummy extensa 900201" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-0">
+              <Translation AttributeName="Text" Text="1 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-1">
+              <Translation AttributeName="Text" Text="1 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-10">
+              <Translation AttributeName="Text" Text="2 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-11">
+              <Translation AttributeName="Text" Text="2 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-12">
+              <Translation AttributeName="Text" Text="2 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-13">
+              <Translation AttributeName="Text" Text="3 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-14">
+              <Translation AttributeName="Text" Text="3 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-15">
+              <Translation AttributeName="Text" Text="3 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-16">
+              <Translation AttributeName="Text" Text="4 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-17">
+              <Translation AttributeName="Text" Text="4 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-18">
+              <Translation AttributeName="Text" Text="4 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-19">
+              <Translation AttributeName="Text" Text="5 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-2">
+              <Translation AttributeName="Text" Text="1 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-20">
+              <Translation AttributeName="Text" Text="5 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-21">
+              <Translation AttributeName="Text" Text="5 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-22">
+              <Translation AttributeName="Text" Text="6 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-23">
+              <Translation AttributeName="Text" Text="6 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-24">
+              <Translation AttributeName="Text" Text="6 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-25">
+              <Translation AttributeName="Text" Text="7 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-26">
+              <Translation AttributeName="Text" Text="7 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-27">
+              <Translation AttributeName="Text" Text="7 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-28">
+              <Translation AttributeName="Text" Text="1 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-29">
+              <Translation AttributeName="Text" Text="1 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-3">
+              <Translation AttributeName="Text" Text="1 bit (4)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-30">
+              <Translation AttributeName="Text" Text="1 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-31">
+              <Translation AttributeName="Text" Text="1 byte (4)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-32">
+              <Translation AttributeName="Text" Text="1 byte (5)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-33">
+              <Translation AttributeName="Text" Text="1 byte (6)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-34">
+              <Translation AttributeName="Text" Text="1 byte (7)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-35">
+              <Translation AttributeName="Text" Text="1 byte (8)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-36">
+              <Translation AttributeName="Text" Text="1 byte (9)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-37">
+              <Translation AttributeName="Text" Text="1 byte (10)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-38">
+              <Translation AttributeName="Text" Text="2 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-39">
+              <Translation AttributeName="Text" Text="2 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-4">
+              <Translation AttributeName="Text" Text="1 bit (5)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-40">
+              <Translation AttributeName="Text" Text="2 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-41">
+              <Translation AttributeName="Text" Text="2 byte (4)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-42">
+              <Translation AttributeName="Text" Text="2 byte (5)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-43">
+              <Translation AttributeName="Text" Text="2 byte (6)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-44">
+              <Translation AttributeName="Text" Text="2 byte (7)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-45">
+              <Translation AttributeName="Text" Text="2 byte (8)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-46">
+              <Translation AttributeName="Text" Text="2 byte (9)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-47">
+              <Translation AttributeName="Text" Text="2 byte (10)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-48">
+              <Translation AttributeName="Text" Text="3 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-49">
+              <Translation AttributeName="Text" Text="3 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-5">
+              <Translation AttributeName="Text" Text="1 bit (6)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-50">
+              <Translation AttributeName="Text" Text="3 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-51">
+              <Translation AttributeName="Text" Text="4 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-52">
+              <Translation AttributeName="Text" Text="4 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-53">
+              <Translation AttributeName="Text" Text="4 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-54">
+              <Translation AttributeName="Text" Text="6 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-55">
+              <Translation AttributeName="Text" Text="6 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-56">
+              <Translation AttributeName="Text" Text="6 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-57">
+              <Translation AttributeName="Text" Text="8 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-58">
+              <Translation AttributeName="Text" Text="8 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-59">
+              <Translation AttributeName="Text" Text="8 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-6">
+              <Translation AttributeName="Text" Text="1 bit (7)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-60">
+              <Translation AttributeName="Text" Text="10 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-61">
+              <Translation AttributeName="Text" Text="10 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-62">
+              <Translation AttributeName="Text" Text="10 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-63">
+              <Translation AttributeName="Text" Text="14 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-64">
+              <Translation AttributeName="Text" Text="14 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-65">
+              <Translation AttributeName="Text" Text="14 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-7">
+              <Translation AttributeName="Text" Text="1 bit (8)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-8">
+              <Translation AttributeName="Text" Text="1 bit (9)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-9">
+              <Translation AttributeName="Text" Text="1 bit (10)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+          </TranslationUnit>
+        </Language>
+        <Language Identifier="fr-FR">
+          <TranslationUnit RefId="M-0008_A-0000-01-0CC2">
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2">
+              <Translation AttributeName="Name" Text="grande application fantôme 900201" />
+              <Translation AttributeName="VisibleDescription" Text="grande application fantôme 900201" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-0">
+              <Translation AttributeName="Text" Text="1 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-1">
+              <Translation AttributeName="Text" Text="1 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-10">
+              <Translation AttributeName="Text" Text="2 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-11">
+              <Translation AttributeName="Text" Text="2 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-12">
+              <Translation AttributeName="Text" Text="2 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-13">
+              <Translation AttributeName="Text" Text="3 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-14">
+              <Translation AttributeName="Text" Text="3 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-15">
+              <Translation AttributeName="Text" Text="3 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-16">
+              <Translation AttributeName="Text" Text="4 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-17">
+              <Translation AttributeName="Text" Text="4 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-18">
+              <Translation AttributeName="Text" Text="4 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-19">
+              <Translation AttributeName="Text" Text="5 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-2">
+              <Translation AttributeName="Text" Text="1 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-20">
+              <Translation AttributeName="Text" Text="5 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-21">
+              <Translation AttributeName="Text" Text="5 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-22">
+              <Translation AttributeName="Text" Text="6 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-23">
+              <Translation AttributeName="Text" Text="6 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-24">
+              <Translation AttributeName="Text" Text="6 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-25">
+              <Translation AttributeName="Text" Text="7 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-26">
+              <Translation AttributeName="Text" Text="7 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-27">
+              <Translation AttributeName="Text" Text="7 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-28">
+              <Translation AttributeName="Text" Text="1 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-29">
+              <Translation AttributeName="Text" Text="1 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-3">
+              <Translation AttributeName="Text" Text="1 bit (4)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-30">
+              <Translation AttributeName="Text" Text="1 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-31">
+              <Translation AttributeName="Text" Text="1 byte (4)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-32">
+              <Translation AttributeName="Text" Text="1 byte (5)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-33">
+              <Translation AttributeName="Text" Text="1 byte (6)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-34">
+              <Translation AttributeName="Text" Text="1 byte (7)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-35">
+              <Translation AttributeName="Text" Text="1 byte (8)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-36">
+              <Translation AttributeName="Text" Text="1 byte (9)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-37">
+              <Translation AttributeName="Text" Text="1 byte (10)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-38">
+              <Translation AttributeName="Text" Text="2 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-39">
+              <Translation AttributeName="Text" Text="2 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-4">
+              <Translation AttributeName="Text" Text="1 bit (5)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-40">
+              <Translation AttributeName="Text" Text="2 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-41">
+              <Translation AttributeName="Text" Text="2 byte (4)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-42">
+              <Translation AttributeName="Text" Text="2 byte (5)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-43">
+              <Translation AttributeName="Text" Text="2 byte (6)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-44">
+              <Translation AttributeName="Text" Text="2 byte (7)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-45">
+              <Translation AttributeName="Text" Text="2 byte (8)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-46">
+              <Translation AttributeName="Text" Text="2 byte (9)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-47">
+              <Translation AttributeName="Text" Text="2 byte (10)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-48">
+              <Translation AttributeName="Text" Text="3 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-49">
+              <Translation AttributeName="Text" Text="3 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-5">
+              <Translation AttributeName="Text" Text="1 bit (6)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-50">
+              <Translation AttributeName="Text" Text="3 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-51">
+              <Translation AttributeName="Text" Text="4 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-52">
+              <Translation AttributeName="Text" Text="4 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-53">
+              <Translation AttributeName="Text" Text="4 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-54">
+              <Translation AttributeName="Text" Text="6 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-55">
+              <Translation AttributeName="Text" Text="6 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-56">
+              <Translation AttributeName="Text" Text="6 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-57">
+              <Translation AttributeName="Text" Text="8 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-58">
+              <Translation AttributeName="Text" Text="8 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-59">
+              <Translation AttributeName="Text" Text="8 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-6">
+              <Translation AttributeName="Text" Text="1 bit (7)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-60">
+              <Translation AttributeName="Text" Text="10 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-61">
+              <Translation AttributeName="Text" Text="10 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-62">
+              <Translation AttributeName="Text" Text="10 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-63">
+              <Translation AttributeName="Text" Text="14 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-64">
+              <Translation AttributeName="Text" Text="14 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-65">
+              <Translation AttributeName="Text" Text="14 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-7">
+              <Translation AttributeName="Text" Text="1 bit (8)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-8">
+              <Translation AttributeName="Text" Text="1 bit (9)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-9">
+              <Translation AttributeName="Text" Text="1 bit (10)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+          </TranslationUnit>
+        </Language>
+        <Language Identifier="nb-NO">
+          <TranslationUnit RefId="M-0008_A-0000-01-0CC2">
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2">
+              <Translation AttributeName="Name" Text="stor dummy applikasjon 900201" />
+              <Translation AttributeName="VisibleDescription" Text="stor dummy applikasjon 900201" />
+              <Translation AttributeName="HelpFile" Text="8\info\GIRA.HLP" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-0">
+              <Translation AttributeName="Text" Text="1 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-1">
+              <Translation AttributeName="Text" Text="1 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-10">
+              <Translation AttributeName="Text" Text="2 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="2 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-11">
+              <Translation AttributeName="Text" Text="2 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="2 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-12">
+              <Translation AttributeName="Text" Text="2 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="2 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-13">
+              <Translation AttributeName="Text" Text="3 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="3 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-14">
+              <Translation AttributeName="Text" Text="3 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="3 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-15">
+              <Translation AttributeName="Text" Text="3 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="3 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-16">
+              <Translation AttributeName="Text" Text="4 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="4 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-17">
+              <Translation AttributeName="Text" Text="4 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="4 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-18">
+              <Translation AttributeName="Text" Text="4 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="4 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-19">
+              <Translation AttributeName="Text" Text="5 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="5 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-2">
+              <Translation AttributeName="Text" Text="1 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-20">
+              <Translation AttributeName="Text" Text="5 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="5 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-21">
+              <Translation AttributeName="Text" Text="5 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="5 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-22">
+              <Translation AttributeName="Text" Text="6 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="6 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-23">
+              <Translation AttributeName="Text" Text="6 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="6 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-24">
+              <Translation AttributeName="Text" Text="6 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="6 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-25">
+              <Translation AttributeName="Text" Text="7 Bit (1)" />
+              <Translation AttributeName="FunctionText" Text="7 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-26">
+              <Translation AttributeName="Text" Text="7 Bit (2)" />
+              <Translation AttributeName="FunctionText" Text="7 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-27">
+              <Translation AttributeName="Text" Text="7 Bit (3)" />
+              <Translation AttributeName="FunctionText" Text="7 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-28">
+              <Translation AttributeName="Text" Text="1 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-29">
+              <Translation AttributeName="Text" Text="1 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-3">
+              <Translation AttributeName="Text" Text="1 Bit (4)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-30">
+              <Translation AttributeName="Text" Text="1 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-31">
+              <Translation AttributeName="Text" Text="1 Byte (4)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-32">
+              <Translation AttributeName="Text" Text="1 Byte (5)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-33">
+              <Translation AttributeName="Text" Text="1 Byte (6)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-34">
+              <Translation AttributeName="Text" Text="1 Byte (7)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-35">
+              <Translation AttributeName="Text" Text="1 Byte (8)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-36">
+              <Translation AttributeName="Text" Text="1 Byte (9)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-37">
+              <Translation AttributeName="Text" Text="1 Byte (10)" />
+              <Translation AttributeName="FunctionText" Text="1 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-38">
+              <Translation AttributeName="Text" Text="2 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-39">
+              <Translation AttributeName="Text" Text="2 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-4">
+              <Translation AttributeName="Text" Text="1 Bit (5)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-40">
+              <Translation AttributeName="Text" Text="2 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-41">
+              <Translation AttributeName="Text" Text="2 Byte (4)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-42">
+              <Translation AttributeName="Text" Text="2 Byte (5)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-43">
+              <Translation AttributeName="Text" Text="2 Byte (6)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-44">
+              <Translation AttributeName="Text" Text="2 Byte (7)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-45">
+              <Translation AttributeName="Text" Text="2 Byte (8)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-46">
+              <Translation AttributeName="Text" Text="2 Byte (9)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-47">
+              <Translation AttributeName="Text" Text="2 Byte (10)" />
+              <Translation AttributeName="FunctionText" Text="2 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-48">
+              <Translation AttributeName="Text" Text="3 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="3 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-49">
+              <Translation AttributeName="Text" Text="3 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="3 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-5">
+              <Translation AttributeName="Text" Text="1 Bit (6)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-50">
+              <Translation AttributeName="Text" Text="3 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="3 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-51">
+              <Translation AttributeName="Text" Text="4 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="4 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-52">
+              <Translation AttributeName="Text" Text="4 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="4 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-53">
+              <Translation AttributeName="Text" Text="4 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="4 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-54">
+              <Translation AttributeName="Text" Text="6 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="6 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-55">
+              <Translation AttributeName="Text" Text="6 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="6 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-56">
+              <Translation AttributeName="Text" Text="6 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="6 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-57">
+              <Translation AttributeName="Text" Text="8 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="8 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-58">
+              <Translation AttributeName="Text" Text="8 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="8 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-59">
+              <Translation AttributeName="Text" Text="8 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="8 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-6">
+              <Translation AttributeName="Text" Text="1 Bit (7)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-60">
+              <Translation AttributeName="Text" Text="10 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="10 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-61">
+              <Translation AttributeName="Text" Text="10 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="10 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-62">
+              <Translation AttributeName="Text" Text="10 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="10 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-63">
+              <Translation AttributeName="Text" Text="14 Byte (1)" />
+              <Translation AttributeName="FunctionText" Text="14 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-64">
+              <Translation AttributeName="Text" Text="14 Byte (2)" />
+              <Translation AttributeName="FunctionText" Text="14 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-65">
+              <Translation AttributeName="Text" Text="14 Byte (3)" />
+              <Translation AttributeName="FunctionText" Text="14 Byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-7">
+              <Translation AttributeName="Text" Text="1 Bit (8)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-8">
+              <Translation AttributeName="Text" Text="1 Bit (9)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-9">
+              <Translation AttributeName="Text" Text="1 Bit (10)" />
+              <Translation AttributeName="FunctionText" Text="1 Bit" />
+            </TranslationElement>
+          </TranslationUnit>
+        </Language>
+        <Language Identifier="nl-NL">
+          <TranslationUnit RefId="M-0008_A-0000-01-0CC2">
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2">
+              <Translation AttributeName="Name" Text="grote dummie applicatie 900201" />
+              <Translation AttributeName="HelpFile" Text="8\info\GIRA.HLP" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-0">
+              <Translation AttributeName="Text" Text="1 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-1">
+              <Translation AttributeName="Text" Text="1 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-10">
+              <Translation AttributeName="Text" Text="2 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-11">
+              <Translation AttributeName="Text" Text="2 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-12">
+              <Translation AttributeName="Text" Text="2 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-13">
+              <Translation AttributeName="Text" Text="3 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-14">
+              <Translation AttributeName="Text" Text="3 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-15">
+              <Translation AttributeName="Text" Text="3 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-16">
+              <Translation AttributeName="Text" Text="4 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-17">
+              <Translation AttributeName="Text" Text="4 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-18">
+              <Translation AttributeName="Text" Text="4 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-19">
+              <Translation AttributeName="Text" Text="5 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-2">
+              <Translation AttributeName="Text" Text="1 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-20">
+              <Translation AttributeName="Text" Text="5 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-21">
+              <Translation AttributeName="Text" Text="5 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-22">
+              <Translation AttributeName="Text" Text="6 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-23">
+              <Translation AttributeName="Text" Text="6 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-24">
+              <Translation AttributeName="Text" Text="6 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-25">
+              <Translation AttributeName="Text" Text="7 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-26">
+              <Translation AttributeName="Text" Text="7 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-27">
+              <Translation AttributeName="Text" Text="7 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-28">
+              <Translation AttributeName="Text" Text="1 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-29">
+              <Translation AttributeName="Text" Text="1 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-3">
+              <Translation AttributeName="Text" Text="1 bit (4)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-30">
+              <Translation AttributeName="Text" Text="1 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-31">
+              <Translation AttributeName="Text" Text="1 byte (4)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-32">
+              <Translation AttributeName="Text" Text="1 byte (5)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-33">
+              <Translation AttributeName="Text" Text="1 byte (6)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-34">
+              <Translation AttributeName="Text" Text="1 byte (7)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-35">
+              <Translation AttributeName="Text" Text="1 byte (8)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-36">
+              <Translation AttributeName="Text" Text="1 byte (9)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-37">
+              <Translation AttributeName="Text" Text="1 byte (10)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-38">
+              <Translation AttributeName="Text" Text="2 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-39">
+              <Translation AttributeName="Text" Text="2 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-4">
+              <Translation AttributeName="Text" Text="1 bit (5)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-40">
+              <Translation AttributeName="Text" Text="2 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-41">
+              <Translation AttributeName="Text" Text="2 byte (4)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-42">
+              <Translation AttributeName="Text" Text="2 byte (5)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-43">
+              <Translation AttributeName="Text" Text="2 byte (6)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-44">
+              <Translation AttributeName="Text" Text="2 byte (7)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-45">
+              <Translation AttributeName="Text" Text="2 byte (8)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-46">
+              <Translation AttributeName="Text" Text="2 byte (9)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-47">
+              <Translation AttributeName="Text" Text="2 byte (10)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-48">
+              <Translation AttributeName="Text" Text="3 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-49">
+              <Translation AttributeName="Text" Text="3 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-5">
+              <Translation AttributeName="Text" Text="1 bit (6)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-50">
+              <Translation AttributeName="Text" Text="3 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-51">
+              <Translation AttributeName="Text" Text="4 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-52">
+              <Translation AttributeName="Text" Text="4 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-53">
+              <Translation AttributeName="Text" Text="4 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-54">
+              <Translation AttributeName="Text" Text="6 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-55">
+              <Translation AttributeName="Text" Text="6 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-56">
+              <Translation AttributeName="Text" Text="6 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-57">
+              <Translation AttributeName="Text" Text="8 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-58">
+              <Translation AttributeName="Text" Text="8 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-59">
+              <Translation AttributeName="Text" Text="8 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-6">
+              <Translation AttributeName="Text" Text="1 bit (7)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-60">
+              <Translation AttributeName="Text" Text="10 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-61">
+              <Translation AttributeName="Text" Text="10 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-62">
+              <Translation AttributeName="Text" Text="10 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-63">
+              <Translation AttributeName="Text" Text="14 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-64">
+              <Translation AttributeName="Text" Text="14 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-65">
+              <Translation AttributeName="Text" Text="14 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-7">
+              <Translation AttributeName="Text" Text="1 bit (8)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-8">
+              <Translation AttributeName="Text" Text="1 bit (9)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-9">
+              <Translation AttributeName="Text" Text="1 bit (10)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+          </TranslationUnit>
+        </Language>
+        <Language Identifier="sv-SE">
+          <TranslationUnit RefId="M-0008_A-0000-01-0CC2">
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2">
+              <Translation AttributeName="Name" Text="Stor dummy applikation 900201" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-0">
+              <Translation AttributeName="Text" Text="1 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-1">
+              <Translation AttributeName="Text" Text="1 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-10">
+              <Translation AttributeName="Text" Text="2 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-11">
+              <Translation AttributeName="Text" Text="2 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-12">
+              <Translation AttributeName="Text" Text="2 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="2 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-13">
+              <Translation AttributeName="Text" Text="3 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-14">
+              <Translation AttributeName="Text" Text="3 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-15">
+              <Translation AttributeName="Text" Text="3 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="3 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-16">
+              <Translation AttributeName="Text" Text="4 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-17">
+              <Translation AttributeName="Text" Text="4 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-18">
+              <Translation AttributeName="Text" Text="4 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="4 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-19">
+              <Translation AttributeName="Text" Text="5 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-2">
+              <Translation AttributeName="Text" Text="1 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-20">
+              <Translation AttributeName="Text" Text="5 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-21">
+              <Translation AttributeName="Text" Text="5 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="5 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-22">
+              <Translation AttributeName="Text" Text="6 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-23">
+              <Translation AttributeName="Text" Text="6 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-24">
+              <Translation AttributeName="Text" Text="6 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="6 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-25">
+              <Translation AttributeName="Text" Text="7 bit (1)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-26">
+              <Translation AttributeName="Text" Text="7 bit (2)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-27">
+              <Translation AttributeName="Text" Text="7 bit (3)" />
+              <Translation AttributeName="FunctionText" Text="7 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-28">
+              <Translation AttributeName="Text" Text="1 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-29">
+              <Translation AttributeName="Text" Text="1 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-3">
+              <Translation AttributeName="Text" Text="1 bit (4)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-30">
+              <Translation AttributeName="Text" Text="1 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-31">
+              <Translation AttributeName="Text" Text="1 byte (4)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-32">
+              <Translation AttributeName="Text" Text="1 byte (5)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-33">
+              <Translation AttributeName="Text" Text="1 byte (6)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-34">
+              <Translation AttributeName="Text" Text="1 byte (7)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-35">
+              <Translation AttributeName="Text" Text="1 byte (8)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-36">
+              <Translation AttributeName="Text" Text="1 byte (9)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-37">
+              <Translation AttributeName="Text" Text="1 byte (10)" />
+              <Translation AttributeName="FunctionText" Text="1 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-38">
+              <Translation AttributeName="Text" Text="2 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-39">
+              <Translation AttributeName="Text" Text="2 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-4">
+              <Translation AttributeName="Text" Text="1 bit (5)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-40">
+              <Translation AttributeName="Text" Text="2 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-41">
+              <Translation AttributeName="Text" Text="2 byte (4)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-42">
+              <Translation AttributeName="Text" Text="2 byte (5)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-43">
+              <Translation AttributeName="Text" Text="2 byte (6)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-44">
+              <Translation AttributeName="Text" Text="2 byte (7)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-45">
+              <Translation AttributeName="Text" Text="2 byte (8)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-46">
+              <Translation AttributeName="Text" Text="2 byte (9)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-47">
+              <Translation AttributeName="Text" Text="2 byte (10)" />
+              <Translation AttributeName="FunctionText" Text="2 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-48">
+              <Translation AttributeName="Text" Text="3 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-49">
+              <Translation AttributeName="Text" Text="3 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-5">
+              <Translation AttributeName="Text" Text="1 bit (6)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-50">
+              <Translation AttributeName="Text" Text="3 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="3 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-51">
+              <Translation AttributeName="Text" Text="4 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-52">
+              <Translation AttributeName="Text" Text="4 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-53">
+              <Translation AttributeName="Text" Text="4 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="4 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-54">
+              <Translation AttributeName="Text" Text="6 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-55">
+              <Translation AttributeName="Text" Text="6 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-56">
+              <Translation AttributeName="Text" Text="6 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="6 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-57">
+              <Translation AttributeName="Text" Text="8 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-58">
+              <Translation AttributeName="Text" Text="8 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-59">
+              <Translation AttributeName="Text" Text="8 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="8 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-6">
+              <Translation AttributeName="Text" Text="1 bit (7)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-60">
+              <Translation AttributeName="Text" Text="10 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-61">
+              <Translation AttributeName="Text" Text="10 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-62">
+              <Translation AttributeName="Text" Text="10 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="10 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-63">
+              <Translation AttributeName="Text" Text="14 byte (1)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-64">
+              <Translation AttributeName="Text" Text="14 byte (2)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-65">
+              <Translation AttributeName="Text" Text="14 byte (3)" />
+              <Translation AttributeName="FunctionText" Text="14 byte" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-7">
+              <Translation AttributeName="Text" Text="1 bit (8)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-8">
+              <Translation AttributeName="Text" Text="1 bit (9)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+            <TranslationElement RefId="M-0008_A-0000-01-0CC2_O-9">
+              <Translation AttributeName="Text" Text="1 bit (10)" />
+              <Translation AttributeName="FunctionText" Text="1 bit" />
+            </TranslationElement>
+          </TranslationUnit>
+        </Language>
+      </Languages>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>
