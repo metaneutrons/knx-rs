@@ -53,7 +53,7 @@
   - File: `knx-ip/src/tunnel.rs:296-325`
   - Fix: Buffer non-ack frames and re-inject after ack received
 
-- [x] **TUN-2**: Server tunneling sends without retry/ack
+- [x] **TUN-2**: Server tunneling sends with proper ack-based retry (3x, 1s timeout). Stashed packets re-processed after ack wait.
   - File: `knx-ip/src/tunnel_server.rs:316-330`
   - Fix: Implement 3× retry with 1s timeout for server→client sends
 

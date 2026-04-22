@@ -160,10 +160,22 @@ async fn server_task(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(ServerCmd::SendFrame(cemi)) => {
-                        send_to_all(&socket, &multicast_target, &mut tunnels, &cemi).await;
+                        let stashed = send_to_all(&socket, &multicast_target, &mut tunnels, &cemi).await;
+                        for (data, src) in stashed {
+                            handle_packet(
+                                &data, src, &socket, &event_tx,
+                                &mut tunnels, &mut next_channel_id,
+                            ).await;
+                        }
                     }
                     Some(ServerCmd::SendToTunnel(ch, cemi)) => {
-                        send_to_tunnel_client(&socket, &mut tunnels, ch, &cemi).await;
+                        let stashed = send_to_tunnel_client(&socket, &mut tunnels, ch, &cemi).await;
+                        for (data, src) in stashed {
+                            handle_packet(
+                                &data, src, &socket, &event_tx,
+                                &mut tunnels, &mut next_channel_id,
+                            ).await;
+                        }
                     }
                     Some(ServerCmd::Stop) | None => break,
                 }
@@ -429,7 +441,7 @@ async fn send_to_all(
     multicast: &SocketAddr,
     tunnels: &mut [TunnelClient],
     cemi: &CemiFrame,
-) {
+) -> Vec<(Vec<u8>, SocketAddr)> {
     // Send as routing indication to multicast
     let routing = KnxIpFrame {
         service_type: ServiceType::RoutingIndication,
@@ -438,9 +450,11 @@ async fn send_to_all(
     let _ = socket.send_to(&routing.to_bytes(), multicast).await;
 
     // Send as tunneling indication to all tunnel clients
+    let mut stashed = Vec::new();
     for tunnel in tunnels.iter_mut() {
-        send_tunneling_to(socket, tunnel, cemi).await;
+        stashed.extend(send_tunneling_to(socket, tunnel, cemi).await);
     }
+    stashed
 }
 
 async fn send_to_tunnel_client(
@@ -448,17 +462,35 @@ async fn send_to_tunnel_client(
     tunnels: &mut [TunnelClient],
     channel_id: u8,
     cemi: &CemiFrame,
-) {
+) -> Vec<(Vec<u8>, SocketAddr)> {
     let tunnel = tunnels.iter_mut().find(|t| t.channel_id == channel_id);
     if let Some(tunnel) = tunnel {
-        send_tunneling_to(socket, tunnel, cemi).await;
+        send_tunneling_to(socket, tunnel, cemi).await
+    } else {
+        Vec::new()
     }
 }
 
-async fn send_tunneling_to(socket: &UdpSocket, tunnel: &mut TunnelClient, cemi: &CemiFrame) {
+/// KNXnet/IP tunneling ack timeout (1 second per spec).
+const TUNNELING_ACK_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(1);
+
+/// Maximum tunneling request retries.
+const TUNNELING_MAX_RETRIES: u8 = 3;
+
+/// Send a tunneling request to a client and wait for ack.
+///
+/// Returns any non-ack packets received during the ack wait so the caller
+/// can re-process them. This is necessary because the server shares a single
+/// UDP socket for all tunnels and routing.
+async fn send_tunneling_to(
+    socket: &UdpSocket,
+    tunnel: &mut TunnelClient,
+    cemi: &CemiFrame,
+) -> Vec<(Vec<u8>, SocketAddr)> {
+    let seq = tunnel.send_seq;
     let ch = ConnectionHeader {
         channel_id: tunnel.channel_id,
-        sequence_counter: tunnel.send_seq,
+        sequence_counter: seq,
         status: 0,
     };
 
@@ -471,30 +503,73 @@ async fn send_tunneling_to(socket: &UdpSocket, tunnel: &mut TunnelClient, cemi: 
         body,
     };
     let frame_bytes = frame.to_bytes();
+    let mut stashed: Vec<(Vec<u8>, SocketAddr)> = Vec::new();
 
-    // TUN-2: Retry up to 3 times with 100ms delay (simplified server-side retry).
-    // Full ack-based retry would require multiplexing recv across all tunnels.
-    for attempt in 0..3 {
-        match socket.send_to(&frame_bytes, tunnel.data_addr).await {
-            Ok(_) => {
-                tunnel.send_seq = tunnel.send_seq.wrapping_add(1);
-                return;
+    for attempt in 0..TUNNELING_MAX_RETRIES {
+        if let Err(e) = socket.send_to(&frame_bytes, tunnel.data_addr).await {
+            tracing::debug!(channel = tunnel.channel_id, attempt = attempt + 1, error = %e, "send failed");
+            continue;
+        }
+
+        // Wait for ack from this specific client
+        match wait_for_tunneling_ack(socket, tunnel.channel_id, seq, &mut stashed).await {
+            Ok(()) => {
+                tunnel.send_seq = seq.wrapping_add(1);
+                return stashed;
             }
-            Err(e) => {
+            Err(()) => {
                 tracing::debug!(
                     channel = tunnel.channel_id,
                     attempt = attempt + 1,
-                    error = %e,
-                    "server tunneling send failed"
+                    "ack timeout"
                 );
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
         }
     }
+
     tracing::warn!(
         channel = tunnel.channel_id,
-        "server tunneling send failed after 3 retries"
+        "no ack after {TUNNELING_MAX_RETRIES} retries"
     );
+    stashed
+}
+
+/// Wait for a `TunnelingAck` matching the given channel and sequence.
+/// Any other packets received are stashed for later re-processing.
+async fn wait_for_tunneling_ack(
+    socket: &UdpSocket,
+    channel_id: u8,
+    seq: u8,
+    stashed: &mut Vec<(Vec<u8>, SocketAddr)>,
+) -> Result<(), ()> {
+    let deadline = tokio::time::Instant::now() + TUNNELING_ACK_TIMEOUT;
+    let mut buf = [0u8; 1024];
+
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(());
+        }
+
+        let Ok(Ok((n, src))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await
+        else {
+            return Err(());
+        };
+
+        // Check if this is our ack
+        if let Ok(frame) = KnxIpFrame::parse(&buf[..n]) {
+            if frame.service_type == ServiceType::TunnelingAck {
+                if let Some(ack_ch) = ConnectionHeader::parse(&frame.body) {
+                    if ack_ch.channel_id == channel_id && ack_ch.sequence_counter == seq {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        // Not our ack — stash for re-processing
+        stashed.push((buf[..n].to_vec(), src));
+    }
 }
 
 fn cleanup_stale_tunnels(tunnels: &mut Vec<TunnelClient>) {
