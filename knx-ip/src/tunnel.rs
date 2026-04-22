@@ -245,7 +245,7 @@ async fn tunnel_task(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(TunnelCmd::Send(frame, reply)) => {
-                        let result = state.send_with_retry(&frame).await;
+                        let result = state.send_with_retry(&frame, &cemi_tx).await;
                         if result.is_err() && config.auto_reconnect {
                             let _ = reply.send(result);
                             if !try_reconnect(&config, &mut state, &mut heartbeat, &mut cmd_rx).await {
@@ -263,7 +263,7 @@ async fn tunnel_task(
             }
 
             _ = heartbeat.tick() => {
-                if let Err(e) = state.send_heartbeat().await {
+                if let Err(e) = state.send_heartbeat(&cemi_tx).await {
                     state.heartbeat_failures += 1;
                     tracing::warn!(
                         error = %e,
@@ -412,7 +412,12 @@ impl TunnelState {
     }
 
     /// Send a tunneling request with up to `MAX_RETRIES` attempts.
-    async fn send_with_retry(&mut self, cemi: &CemiFrame) -> Result<(), KnxIpError> {
+    /// Returns any frames received while waiting for ack (for re-processing).
+    async fn send_with_retry(
+        &mut self,
+        cemi: &CemiFrame,
+        cemi_tx: &mpsc::Sender<CemiFrame>,
+    ) -> Result<(), KnxIpError> {
         let ch = ConnectionHeader {
             channel_id: self.channel_id,
             sequence_counter: self.send_seq,
@@ -433,8 +438,12 @@ impl TunnelState {
             self.socket.send(&frame_bytes).await?;
 
             match self.wait_for_ack().await {
-                Ok(()) => {
+                Ok(buffered) => {
                     self.send_seq = self.send_seq.wrapping_add(1);
+                    // TUN-1: Re-process any frames received while waiting for ack
+                    for data in buffered {
+                        self.handle_incoming(&data, cemi_tx).await;
+                    }
                     return Ok(());
                 }
                 Err(KnxIpError::Timeout(_)) => {
@@ -448,8 +457,10 @@ impl TunnelState {
     }
 
     /// Wait for a tunneling ack matching our channel and sequence.
-    async fn wait_for_ack(&self) -> Result<(), KnxIpError> {
+    /// Returns any non-ack frames received while waiting (TUN-1: no frame loss).
+    async fn wait_for_ack(&self) -> Result<Vec<Vec<u8>>, KnxIpError> {
         let mut buf = [0u8; 256];
+        let mut buffered_frames = Vec::new();
         let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
 
         loop {
@@ -475,16 +486,20 @@ impl TunnelState {
                                     ch.status
                                 )));
                             }
-                            return Ok(());
+                            return Ok(buffered_frames);
                         }
                     }
                 }
-                // Not our ack — keep waiting
+                // Not our ack — buffer for later processing
+                buffered_frames.push(buf[..n].to_vec());
             }
         }
     }
 
-    async fn send_heartbeat(&self) -> Result<(), KnxIpError> {
+    async fn send_heartbeat(
+        &mut self,
+        cemi_tx: &mpsc::Sender<CemiFrame>,
+    ) -> Result<(), KnxIpError> {
         let hpai = build_hpai(self.local_addr);
         let mut body = Vec::with_capacity(10);
         body.push(self.channel_id);
@@ -497,28 +512,40 @@ impl TunnelState {
         };
         self.socket.send(&frame.to_bytes()).await?;
 
-        let mut buf = [0u8; 64];
-        let n = timeout(REQUEST_TIMEOUT, self.socket.recv(&mut buf))
-            .await
-            .map_err(|_| KnxIpError::Timeout("heartbeat response"))?
-            .map_err(KnxIpError::Io)?;
+        let mut buf = [0u8; 1024];
+        let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
 
-        let resp = KnxIpFrame::parse(&buf[..n])
-            .map_err(|e| KnxIpError::Protocol(format!("heartbeat response: {e}")))?;
-
-        if resp.service_type == ServiceType::ConnectionStateResponse
-            && resp.body.len() >= 2
-            && resp.body[0] == self.channel_id
-        {
-            let status = resp.body[1];
-            if status != 0 {
-                return Err(KnxIpError::Protocol(format!(
-                    "heartbeat rejected: {status:#04x}"
-                )));
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(KnxIpError::Timeout("heartbeat response"));
             }
-        }
 
-        Ok(())
+            let n = timeout(remaining, self.socket.recv(&mut buf))
+                .await
+                .map_err(|_| KnxIpError::Timeout("heartbeat response"))?
+                .map_err(KnxIpError::Io)?;
+
+            let Ok(resp) = KnxIpFrame::parse(&buf[..n]) else {
+                continue;
+            };
+
+            if resp.service_type == ServiceType::ConnectionStateResponse
+                && resp.body.len() >= 2
+                && resp.body[0] == self.channel_id
+            {
+                let status = resp.body[1];
+                if status != 0 {
+                    return Err(KnxIpError::Protocol(format!(
+                        "heartbeat rejected: {status:#04x}"
+                    )));
+                }
+                return Ok(());
+            }
+
+            // Not our heartbeat response — process as incoming frame
+            self.handle_incoming(&buf[..n], cemi_tx).await;
+        }
     }
 
     async fn send_disconnect(&self) -> Result<(), KnxIpError> {

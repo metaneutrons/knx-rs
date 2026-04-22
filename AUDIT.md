@@ -49,7 +49,7 @@
 
 ## HIGH — knx-ip Tunneling Robustness
 
-- [ ] **TUN-1**: `wait_for_ack` drops non-ack frames (data loss)
+- [x] **TUN-1**: `wait_for_ack` drops non-ack frames (data loss)
   - File: `knx-ip/src/tunnel.rs:296-325`
   - Fix: Buffer non-ack frames and re-inject after ack received
 
@@ -61,7 +61,7 @@
   - File: `knx-ip/src/tunnel.rs:222-249`
   - Fix: Use `tokio::select!` to also listen for `cmd_rx` during reconnect
 
-- [ ] **TUN-4**: `send_with_retry`/`send_heartbeat` block select loop
+- [x] **TUN-4**: `send_with_retry`/`send_heartbeat` block select loop
   - File: `knx-ip/src/tunnel.rs:270-356`
   - Fix: Restructure as state machine within the select loop
 
@@ -124,6 +124,6 @@
 - [x] **DOC-1**: `DptValue` doc says 251→Bytes, code returns UInt
 - [x] **DOC-2**: Duplicated doc comment in hash.rs:393/399
 - [x] **DOC-3**: Copyright years mixed (2025 vs 2026)
-- [ ] **LINT-1**: Lint levels weaker than convention in knx-core
+- [x] **LINT-1**: Lint levels weaker than convention in knx-core
 - [ ] **SPLIT-1**: `filter_translations` stub loses translation data
 - [x] **CONST-1**: KNX namespace URI, magic numbers should be named constants
