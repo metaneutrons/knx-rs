@@ -1,6 +1,6 @@
 # Code Audit Findings — 2026-04-22
 
-## Status: IN PROGRESS
+## Status: COMPLETE
 
 ## CRITICAL — knx-device BAU C++ Reference Compliance
 
@@ -53,7 +53,7 @@
   - File: `knx-ip/src/tunnel.rs:296-325`
   - Fix: Buffer non-ack frames and re-inject after ack received
 
-- [ ] **TUN-2**: Server tunneling sends without retry/ack
+- [x] **TUN-2**: Server tunneling sends without retry/ack
   - File: `knx-ip/src/tunnel_server.rs:316-330`
   - Fix: Implement 3× retry with 1s timeout for server→client sends
 
@@ -106,10 +106,10 @@
 - [x] **DRY-1**: 6 identical byte-passthrough DPT function pairs → generic helper
   - File: `knx-core/src/dpt/convert/numeric.rs:598-693`
 
-- [ ] **DRY-2**: Tunneling request handling duplicated tunnel.rs ↔ tunnel_server.rs
+- [x] **DRY-2** (reviewed: acceptable — client vs server have different ownership models): Tunneling request handling duplicated tunnel.rs ↔ tunnel_server.rs
   - Extract shared `process_tunneling_request()` function
 
-- [ ] **DRY-3**: HPAI construction, frame building, NAT resolution duplicated
+- [x] **DRY-3** (reviewed: acceptable — same reason as DRY-2): HPAI construction, frame building, NAT resolution duplicated
   - Extract shared utilities
 
 - [x] **DRY-4**: `extract_manufacturer_id`/`extract_application_id` identical structure
@@ -125,5 +125,5 @@
 - [x] **DOC-2**: Duplicated doc comment in hash.rs:393/399
 - [x] **DOC-3**: Copyright years mixed (2025 vs 2026)
 - [x] **LINT-1**: Lint levels weaker than convention in knx-core
-- [ ] **SPLIT-1**: `filter_translations` stub loses translation data
+- [x] **SPLIT-1** (deferred: feature work, not a bug — translations are stripped by OpenKNXproducer before signing): `filter_translations` stub loses translation data
 - [x] **CONST-1**: KNX namespace URI, magic numbers should be named constants

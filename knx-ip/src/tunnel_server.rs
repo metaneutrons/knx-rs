@@ -461,7 +461,6 @@ async fn send_tunneling_to(socket: &UdpSocket, tunnel: &mut TunnelClient, cemi: 
         sequence_counter: tunnel.send_seq,
         status: 0,
     };
-    tunnel.send_seq = tunnel.send_seq.wrapping_add(1);
 
     let mut body = Vec::with_capacity(ConnectionHeader::LEN as usize + cemi.total_length());
     body.extend_from_slice(&ch.to_bytes());
@@ -471,7 +470,31 @@ async fn send_tunneling_to(socket: &UdpSocket, tunnel: &mut TunnelClient, cemi: 
         service_type: ServiceType::TunnelingRequest,
         body,
     };
-    let _ = socket.send_to(&frame.to_bytes(), tunnel.data_addr).await;
+    let frame_bytes = frame.to_bytes();
+
+    // TUN-2: Retry up to 3 times with 100ms delay (simplified server-side retry).
+    // Full ack-based retry would require multiplexing recv across all tunnels.
+    for attempt in 0..3 {
+        match socket.send_to(&frame_bytes, tunnel.data_addr).await {
+            Ok(_) => {
+                tunnel.send_seq = tunnel.send_seq.wrapping_add(1);
+                return;
+            }
+            Err(e) => {
+                tracing::debug!(
+                    channel = tunnel.channel_id,
+                    attempt = attempt + 1,
+                    error = %e,
+                    "server tunneling send failed"
+                );
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+        }
+    }
+    tracing::warn!(
+        channel = tunnel.channel_id,
+        "server tunneling send failed after 3 retries"
+    );
 }
 
 fn cleanup_stale_tunnels(tunnels: &mut Vec<TunnelClient>) {
