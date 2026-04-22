@@ -83,15 +83,18 @@ fn extract_fingerprint(filename: &str) -> Option<String> {
 /// Replace the `Hash="..."` attribute value in the `ApplicationProgram` element.
 #[allow(clippy::expect_used)]
 fn patch_hash_attribute(xml: &str, new_hash: &str) -> String {
-    let re = Regex::new(r#"Hash="[^"]*""#).expect("valid regex");
-    re.replace(xml, format!("Hash=\"{new_hash}\"")).into_owned()
+    // Anchored to ApplicationProgram to avoid patching Hash on other elements
+    let re = Regex::new(r#"(<ApplicationProgram[^>]*?)Hash="[^"]*""#).expect("valid regex");
+    re.replace(xml, format!("${{1}}Hash=\"{new_hash}\""))
+        .into_owned()
 }
 
 /// Replace the fingerprint in `_A-XXXX-YY-FFFF` patterns throughout the XML.
 /// Only targets the specific 4-hex-char fingerprint position, not arbitrary occurrences.
 #[allow(clippy::expect_used)]
 fn patch_fingerprint(xml: &str, old_fp: &str, new_fp: &str) -> String {
-    let pattern = format!(r"(_A-[0-9A-Fa-f]{{4}}-[0-9A-Fa-f]{{2}}-){old_fp}");
+    let escaped = regex::escape(old_fp);
+    let pattern = format!(r"(?i)(_A-[0-9A-Fa-f]{{4}}-[0-9A-Fa-f]{{2}}-){escaped}");
     let re = Regex::new(&pattern).expect("valid regex");
     re.replace_all(xml, format!("${{1}}{new_fp}")).into_owned()
 }

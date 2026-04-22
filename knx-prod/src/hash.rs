@@ -896,7 +896,6 @@ impl PartialOrd for SortKey {
 }
 
 /// Compare strings matching .NET `string.CompareTo` for ASCII.
-/// Compare strings matching .NET `string.CompareTo` for ASCII.
 ///
 /// .NET uses multi-level Unicode collation:
 /// 1. Primary: base letter (case-insensitive), with symbols < digits < letters

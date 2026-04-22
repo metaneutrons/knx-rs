@@ -79,25 +79,25 @@
 
 ## HIGH — knx-core DPT
 
-- [ ] **DPT-1**: `data_length()` wrong for DPT 221 (6), 231 (4), 239 (2)
+- [x] **DPT-1**: `data_length()` wrong for DPT 221 (6), 231 (4), 239 (2)
   - File: `knx-core/src/dpt/mod.rs:53-63`
   - Fix: Add to correct match arms
 
 ## MEDIUM — knx-prod Sign Module
 
-- [ ] **SIGN-1**: `patch_hash_attribute` may patch wrong element
+- [x] **SIGN-1**: `patch_hash_attribute` may patch wrong element
   - File: `knx-prod/src/sign.rs:87-90`
   - Fix: Anchor regex to `<ApplicationProgram`
 
-- [ ] **SIGN-2**: Case-sensitive fingerprint matching
+- [x] **SIGN-2**: Case-sensitive fingerprint matching
   - File: `knx-prod/src/sign.rs:95-98`
   - Fix: Use case-insensitive regex flag
 
-- [ ] **SIGN-3**: Dynamic regex from unescaped `old_fp`
+- [x] **SIGN-3**: Dynamic regex from unescaped `old_fp`
   - File: `knx-prod/src/sign.rs:97`
   - Fix: Use `regex::escape(old_fp)`
 
-- [ ] **SIGN-4**: Unused `sha2` dependency
+- [x] **SIGN-4**: Unused `sha2` dependency
   - File: `knx-prod/Cargo.toml:14`
   - Fix: Remove
 
@@ -121,8 +121,8 @@
 
 ## LOW — Polish
 
-- [ ] **DOC-1**: `DptValue` doc says 251→Bytes, code returns UInt
-- [ ] **DOC-2**: Duplicated doc comment in hash.rs:393/399
+- [x] **DOC-1**: `DptValue` doc says 251→Bytes, code returns UInt
+- [x] **DOC-2**: Duplicated doc comment in hash.rs:393/399
 - [ ] **DOC-3**: Copyright years mixed (2025 vs 2026)
 - [ ] **LINT-1**: Lint levels weaker than convention in knx-core
 - [ ] **SPLIT-1**: `filter_translations` stub loses translation data
