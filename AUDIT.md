@@ -116,14 +116,14 @@
   - File: `knx-prod/src/parse.rs:63-130`
   - Extract generic `extract_attribute(xml, element, attr)` helper
 
-- [ ] **DRY-5**: Start/Empty handling in `read_children`
+- [x] **DRY-5**: Start/Empty handling in `read_children`
   - File: `knx-prod/src/hash.rs:476-500`
 
 ## LOW — Polish
 
 - [x] **DOC-1**: `DptValue` doc says 251→Bytes, code returns UInt
 - [x] **DOC-2**: Duplicated doc comment in hash.rs:393/399
-- [ ] **DOC-3**: Copyright years mixed (2025 vs 2026)
+- [x] **DOC-3**: Copyright years mixed (2025 vs 2026)
 - [ ] **LINT-1**: Lint levels weaker than convention in knx-core
 - [ ] **SPLIT-1**: `filter_translations` stub loses translation data
-- [ ] **CONST-1**: KNX namespace URI, magic numbers should be named constants
+- [x] **CONST-1**: KNX namespace URI, magic numbers should be named constants

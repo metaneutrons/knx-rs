@@ -792,39 +792,24 @@ fn read_children(
     // Track nesting depth so we only stop at our own EndElement, not at
     // deeply nested ones exposed by InnerText overshoot.
     loop {
-        match reader.read_event()? {
-            Event::Start(ref e) => {
-                let qn = e.name();
-                let name = std::str::from_utf8(local_name(qn.as_ref())).unwrap_or("");
-                let result = process_element(reader, name, e, false, registry, parent_name)?;
-                if let Some(key) = result.order_key {
-                    let sk = if result.order_is_relevant {
-                        let k = SortKey::Ordered(order_counter);
-                        order_counter += 1;
-                        k
-                    } else {
-                        SortKey::Sorted(key)
-                    };
-                    sorted.push((sk, result.bytes));
-                }
-            }
-            Event::Empty(ref e) => {
-                let qn = e.name();
-                let name = std::str::from_utf8(local_name(qn.as_ref())).unwrap_or("");
-                let result = process_element(reader, name, e, true, registry, parent_name)?;
-                if let Some(key) = result.order_key {
-                    let sk = if result.order_is_relevant {
-                        let k = SortKey::Ordered(order_counter);
-                        order_counter += 1;
-                        k
-                    } else {
-                        SortKey::Sorted(key)
-                    };
-                    sorted.push((sk, result.bytes));
-                }
-            }
+        let (e_ref, is_empty) = match reader.read_event()? {
+            Event::Start(ref e) => (e.to_owned(), false),
+            Event::Empty(ref e) => (e.to_owned(), true),
             Event::End(_) | Event::Eof => break,
-            _ => {}
+            _ => continue,
+        };
+        let qn = e_ref.name();
+        let name = std::str::from_utf8(local_name(qn.as_ref())).unwrap_or("");
+        let result = process_element(reader, name, &e_ref, is_empty, registry, parent_name)?;
+        if let Some(key) = result.order_key {
+            let sk = if result.order_is_relevant {
+                let k = SortKey::Ordered(order_counter);
+                order_counter += 1;
+                k
+            } else {
+                SortKey::Sorted(key)
+            };
+            sorted.push((sk, result.bytes));
         }
     }
 
