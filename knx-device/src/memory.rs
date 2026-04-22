@@ -49,17 +49,18 @@ impl MemoryBackend for RamBackend {
 }
 
 /// Header size: `manufacturer_id`(2) + `hardware_type`(6) + `api_version`(2).
-const HEADER_SIZE: usize = 10;
+const HEADER_SIZE: usize = 12;
 
 /// Device memory manager — serializes/deserializes device state.
 ///
 /// Format matches C++ `knx-openknx`:
-/// `[manufacturer_id:2be][hardware_type:6][api_version:2be][data...]`
+/// `[manufacturer_id:2be][hardware_type:6][api_version:2be][firmware_version:2be][data...]`
 pub struct DeviceMemory<B: MemoryBackend> {
     backend: B,
     manufacturer_id: u16,
     hardware_type: [u8; 6],
     api_version: u16,
+    firmware_version: u16,
 }
 
 impl<B: MemoryBackend> DeviceMemory<B> {
@@ -69,12 +70,14 @@ impl<B: MemoryBackend> DeviceMemory<B> {
         manufacturer_id: u16,
         hardware_type: [u8; 6],
         api_version: u16,
+        firmware_version: u16,
     ) -> Self {
         Self {
             backend,
             manufacturer_id,
             hardware_type,
             api_version,
+            firmware_version,
         }
     }
 
@@ -84,6 +87,7 @@ impl<B: MemoryBackend> DeviceMemory<B> {
         buf.extend_from_slice(&self.manufacturer_id.to_be_bytes());
         buf.extend_from_slice(&self.hardware_type);
         buf.extend_from_slice(&self.api_version.to_be_bytes());
+        buf.extend_from_slice(&self.firmware_version.to_be_bytes());
         buf.extend_from_slice(data);
         self.backend.write_all(&buf);
         self.backend.commit();
@@ -112,6 +116,11 @@ impl<B: MemoryBackend> DeviceMemory<B> {
             return None;
         }
 
+        let stored_fw = u16::from_be_bytes([buf[10], buf[11]]);
+        if stored_fw != self.firmware_version {
+            return None;
+        }
+
         Some(buf[HEADER_SIZE..].to_vec())
     }
 
@@ -133,7 +142,7 @@ mod tests {
     use super::*;
 
     fn test_mem() -> DeviceMemory<RamBackend> {
-        DeviceMemory::new(RamBackend::new(), 0x00FA, [0x01; 6], 2)
+        DeviceMemory::new(RamBackend::new(), 0x00FA, [0x01; 6], 2, 1)
     }
 
     #[test]
@@ -155,7 +164,7 @@ mod tests {
         mem.save(b"data");
         let raw = mem.backend().read_all();
 
-        let mut mem2 = DeviceMemory::new(RamBackend::new(), 0x00FB, [0x01; 6], 2);
+        let mut mem2 = DeviceMemory::new(RamBackend::new(), 0x00FB, [0x01; 6], 2, 1);
         mem2.backend.write_all(&raw);
         assert!(mem2.load().is_none());
     }
@@ -166,7 +175,7 @@ mod tests {
         mem.save(b"data");
         let raw = mem.backend().read_all();
 
-        let mut mem2 = DeviceMemory::new(RamBackend::new(), 0x00FA, [0x02; 6], 2);
+        let mut mem2 = DeviceMemory::new(RamBackend::new(), 0x00FA, [0x02; 6], 2, 1);
         mem2.backend.write_all(&raw);
         assert!(mem2.load().is_none());
     }
@@ -177,7 +186,7 @@ mod tests {
         mem.save(b"data");
         let raw = mem.backend().read_all();
 
-        let mut mem2 = DeviceMemory::new(RamBackend::new(), 0x00FA, [0x01; 6], 3);
+        let mut mem2 = DeviceMemory::new(RamBackend::new(), 0x00FA, [0x01; 6], 3, 1);
         mem2.backend.write_all(&raw);
         assert!(mem2.load().is_none());
     }

@@ -21,6 +21,14 @@ pub enum AppIndication {
         /// The value data.
         data: Vec<u8>,
     },
+    /// Group value response received from the bus.
+    /// Differs from write: checks `update_enable` (A-flag) instead of `write_enable` (S-flag).
+    GroupValueResponse {
+        /// ASAP (group object number).
+        asap: u16,
+        /// The value data.
+        data: Vec<u8>,
+    },
     /// Group value read request received.
     GroupValueRead {
         /// ASAP.
@@ -92,12 +100,14 @@ pub enum AppIndication {
 /// Returns `None` for unsupported or malformed APDUs.
 pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndication> {
     match apdu_type {
-        ApduType::GroupValueWrite | ApduType::GroupValueResponse => {
-            Some(AppIndication::GroupValueWrite {
-                asap: 0,
-                data: data.to_vec(),
-            })
-        }
+        ApduType::GroupValueWrite => Some(AppIndication::GroupValueWrite {
+            asap: 0,
+            data: data.to_vec(),
+        }),
+        ApduType::GroupValueResponse => Some(AppIndication::GroupValueResponse {
+            asap: 0,
+            data: data.to_vec(),
+        }),
         ApduType::GroupValueRead => Some(AppIndication::GroupValueRead { asap: 0 }),
         ApduType::PropertyValueRead if data.len() >= 3 => Some(AppIndication::PropertyValueRead {
             object_index: data[0],

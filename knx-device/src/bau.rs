@@ -140,6 +140,9 @@ impl Bau {
             AppIndication::GroupValueWrite { data, .. } => {
                 self.handle_group_value_write(frame, &data);
             }
+            AppIndication::GroupValueResponse { data, .. } => {
+                self.handle_group_value_response(frame, &data);
+            }
             AppIndication::GroupValueRead { .. } => {
                 self.handle_group_value_read(frame);
             }
@@ -269,6 +272,25 @@ impl Bau {
             // Check communication and write flags (C++ ref: groupValueWriteIndication)
             if let Some(desc) = self.group_object_table.get_descriptor(asap) {
                 if !desc.communication_enable() || !desc.write_enable() {
+                    continue;
+                }
+            }
+            if let Some(go) = self.group_objects.get_mut(asap) {
+                go.value_from_bus(data);
+            }
+        }
+    }
+
+    /// Handle `GroupValueResponse` — checks `update_enable` (A-flag) instead of `write_enable`.
+    /// C++ ref: `groupValueReadAppLayerConfirm` checks `responseUpdateEnable()`.
+    fn handle_group_value_response(&mut self, frame: &CemiFrame, data: &[u8]) {
+        let ga_raw = frame.destination_address_raw();
+        let Some(tsap) = self.address_table.get_tsap(ga_raw) else {
+            return;
+        };
+        for asap in self.association_table.asaps_for_tsap(tsap) {
+            if let Some(desc) = self.group_object_table.get_descriptor(asap) {
+                if !desc.communication_enable() || !desc.update_enable() {
                     continue;
                 }
             }

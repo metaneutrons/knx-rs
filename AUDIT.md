@@ -14,7 +14,7 @@
   - C++ ref: `bau_systemB.cpp:propertyValueWriteIndication` always sends read-back
   - Fix: Add `queue_property_response` call after successful write
 
-- [ ] **BAU-3**: `GroupValueResponse` treated as `GroupValueWrite`
+- [x] **BAU-3**: `GroupValueResponse` treated as `GroupValueWrite`
   - File: `knx-device/src/application_layer.rs:100-103`
   - C++ ref: Response checks `responseUpdateEnable` (A-flag), not `writeEnable` (S-flag)
   - Fix: Add `GroupValueResponse` variant to `AppIndication`, handle separately in BAU
@@ -43,7 +43,7 @@
 
 ## CRITICAL — knx-device Memory Format
 
-- [ ] **MEM-1**: Persistence header 10 bytes, C++ uses 12 (missing firmwareVersion)
+- [x] **MEM-1**: Persistence header 10 bytes, C++ uses 12 (missing firmwareVersion)
   - File: `knx-device/src/memory.rs:67`
   - Fix: Add firmwareVersion field to header
 
