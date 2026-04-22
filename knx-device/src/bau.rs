@@ -243,6 +243,11 @@ impl Bau {
         self.memory_area = data;
     }
 
+    /// Get the memory area (for persistence after ETS programming).
+    pub fn memory_area(&self) -> &[u8] {
+        &self.memory_area
+    }
+
     /// Load tables from the memory area at the given offsets.
     pub fn load_tables_from_memory(
         &mut self,
