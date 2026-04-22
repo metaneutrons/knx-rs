@@ -11,6 +11,7 @@
 //! - Auto-reconnect with exponential backoff (optional)
 
 use std::net::SocketAddr;
+use std::pin::Pin;
 
 use knx_core::cemi::CemiFrame;
 use knx_core::knxip::{ConnectionHeader, HostProtocol, Hpai, KnxIpFrame, ServiceType};
@@ -232,7 +233,7 @@ async fn tunnel_task(
                     Ok(n) => n,
                     Err(e) => {
                         tracing::warn!(error = %e, "tunnel recv error");
-                        if !try_reconnect(&config, &mut state, &mut heartbeat).await {
+                        if !try_reconnect(&config, &mut state, &mut heartbeat, &mut cmd_rx).await {
                             break;
                         }
                         continue;
@@ -247,7 +248,7 @@ async fn tunnel_task(
                         let result = state.send_with_retry(&frame).await;
                         if result.is_err() && config.auto_reconnect {
                             let _ = reply.send(result);
-                            if !try_reconnect(&config, &mut state, &mut heartbeat).await {
+                            if !try_reconnect(&config, &mut state, &mut heartbeat, &mut cmd_rx).await {
                                 break;
                             }
                             continue;
@@ -271,7 +272,7 @@ async fn tunnel_task(
                     );
                     if state.heartbeat_failures >= MAX_HEARTBEAT_FAILURES {
                         tracing::error!("max heartbeat failures reached, disconnecting");
-                        if !try_reconnect(&config, &mut state, &mut heartbeat).await {
+                        if !try_reconnect(&config, &mut state, &mut heartbeat, &mut cmd_rx).await {
                             break;
                         }
                     }
@@ -288,7 +289,8 @@ async fn tunnel_task(
 async fn try_reconnect(
     config: &TunnelConfig,
     state: &mut TunnelState,
-    heartbeat: &mut std::pin::Pin<&mut tokio::time::Interval>,
+    heartbeat: &mut Pin<&mut tokio::time::Interval>,
+    cmd_rx: &mut mpsc::Receiver<TunnelCmd>,
 ) -> bool {
     if !config.auto_reconnect {
         return false;
@@ -298,7 +300,17 @@ async fn try_reconnect(
     let mut delay = RECONNECT_DELAY_INITIAL;
 
     loop {
-        tokio::time::sleep(delay).await;
+        // TUN-3: Check for close command during reconnect delay
+        tokio::select! {
+            () = tokio::time::sleep(delay) => {}
+            cmd = cmd_rx.recv() => {
+                if matches!(cmd, Some(TunnelCmd::Close) | None) {
+                    tracing::info!("reconnect cancelled by close");
+                    return false;
+                }
+                // Ignore other commands during reconnect
+            }
+        }
 
         match establish(&config.remote).await {
             Ok((socket, channel_id, local_addr)) => {

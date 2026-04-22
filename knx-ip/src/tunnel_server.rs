@@ -261,8 +261,21 @@ async fn handle_connect(
         return;
     }
 
-    let channel_id = *next_channel_id;
-    *next_channel_id = next_channel_id.wrapping_add(1);
+    // TUN-7: Find an unused channel ID (skip IDs already in use)
+    let mut channel_id = *next_channel_id;
+    let mut attempts = 0u16;
+    while tunnels.iter().any(|t| t.channel_id == channel_id) {
+        channel_id = channel_id.wrapping_add(1);
+        if channel_id == 0 {
+            channel_id = 1;
+        }
+        attempts += 1;
+        if attempts > 255 {
+            // All channel IDs exhausted — reject connection
+            return;
+        }
+    }
+    *next_channel_id = channel_id.wrapping_add(1);
     if *next_channel_id == 0 {
         *next_channel_id = 1;
     }

@@ -57,7 +57,7 @@
   - File: `knx-ip/src/tunnel_server.rs:316-330`
   - Fix: Implement 3× retry with 1s timeout for server→client sends
 
-- [ ] **TUN-3**: `try_reconnect` infinite loop blocks `close()`
+- [x] **TUN-3**: `try_reconnect` infinite loop blocks `close()`
   - File: `knx-ip/src/tunnel.rs:222-249`
   - Fix: Use `tokio::select!` to also listen for `cmd_rx` during reconnect
 
@@ -73,7 +73,7 @@
   - File: `knx-ip/src/tunnel_server.rs:241`
   - Fix: Assign and return individual address in CRD
 
-- [ ] **TUN-7**: Channel ID collision on wrap-around
+- [x] **TUN-7**: Channel ID collision on wrap-around
   - File: `knx-ip/src/tunnel_server.rs:231-235`
   - Fix: Check existing tunnels before assigning ID
 
