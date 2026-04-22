@@ -4,12 +4,12 @@
 
 ## CRITICAL — knx-device BAU C++ Reference Compliance
 
-- [ ] **BAU-1**: Missing `communicationEnable`/`writeEnable`/`readEnable` flag checks on GroupValue Write/Read
+- [x] **BAU-1**: Missing `communicationEnable`/`writeEnable`/`readEnable` flag checks on GroupValue Write/Read
   - File: `knx-device/src/bau.rs:189-210`
   - C++ ref: `bau_systemB_device.cpp:groupValueWriteIndication` checks flags before processing
   - Fix: Consult `GroupObjectTable` descriptors for flag checks
 
-- [ ] **BAU-2**: Property Write does not send read-back response
+- [x] **BAU-2**: Property Write does not send read-back response
   - File: `knx-device/src/bau.rs:225-236`
   - C++ ref: `bau_systemB.cpp:propertyValueWriteIndication` always sends read-back
   - Fix: Add `queue_property_response` call after successful write
@@ -19,17 +19,17 @@
   - C++ ref: Response checks `responseUpdateEnable` (A-flag), not `writeEnable` (S-flag)
   - Fix: Add `GroupValueResponse` variant to `AppIndication`, handle separately in BAU
 
-- [ ] **BAU-4**: Property Read with `startIndex=0` does not return element count
+- [x] **BAU-4**: Property Read with `startIndex=0` does not return element count
   - File: `knx-device/src/bau.rs:213-222`
   - C++ ref: `startIndex==0` returns current element count as uint16
   - Fix: Add special case for startIndex=0
 
-- [ ] **BAU-5**: Failed property/memory reads send no error response
+- [x] **BAU-5**: Failed property/memory reads send no error response
   - File: `knx-device/src/bau.rs:213-244`
   - C++ ref: Always sends response (count=0 on error)
   - Fix: Send error responses
 
-- [ ] **BAU-6**: Unsupported DeviceDescriptorRead types silently dropped
+- [x] **BAU-6**: Unsupported DeviceDescriptorRead types silently dropped
   - File: `knx-device/src/bau.rs:143`
   - Fix: Respond with descriptorType=0x3F
 
@@ -37,7 +37,7 @@
   - File: `knx-device/src/bau.rs:248-340`
   - Fix: Move encoding to `application_layer.rs`, add outgoing encode functions
 
-- [ ] **BAU-8**: `outbox` is Vec with O(n) remove(0)
+- [x] **BAU-8**: `outbox` is Vec with O(n) remove(0)
   - File: `knx-device/src/bau.rs:175`
   - Fix: Change to `VecDeque`
 

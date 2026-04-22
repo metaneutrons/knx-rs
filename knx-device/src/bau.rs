@@ -5,6 +5,7 @@
 //!
 //! Ties together all device components and processes incoming CEMI frames.
 
+use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -21,7 +22,7 @@ use crate::device_object;
 use crate::group_object::{ComFlag, GroupObjectStore};
 use crate::group_object_table::GroupObjectTable;
 use crate::interface_object::InterfaceObject;
-use crate::property::PropertyId;
+use crate::property::{Property, PropertyId};
 use crate::transport_layer::TransportLayer;
 
 /// Mask version for IP devices (System B).
@@ -44,7 +45,7 @@ pub struct Bau {
     /// Memory area for MemoryRead/Write (table data loaded by ETS).
     memory_area: Vec<u8>,
     /// Outgoing frame queue.
-    outbox: Vec<CemiFrame>,
+    outbox: VecDeque<CemiFrame>,
 }
 
 impl Bau {
@@ -61,7 +62,7 @@ impl Bau {
             group_objects: GroupObjectStore::new(group_object_count, default_go_size),
             transport: TransportLayer::new(),
             memory_area: Vec::new(),
-            outbox: Vec::new(),
+            outbox: VecDeque::new(),
         }
     }
 
@@ -165,10 +166,21 @@ impl Bau {
                 start_index,
                 data,
             } => {
-                self.handle_property_write(object_index, property_id, count, start_index, &data);
+                self.handle_property_write(
+                    source,
+                    object_index,
+                    property_id,
+                    count,
+                    start_index,
+                    &data,
+                );
             }
             AppIndication::DeviceDescriptorRead { descriptor_type: 0 } => {
                 self.queue_device_descriptor_response(source);
+            }
+            AppIndication::DeviceDescriptorRead { .. } => {
+                // Unsupported descriptor type — respond with type 0x3F (C++ ref behavior)
+                self.queue_device_descriptor_unsupported(source);
             }
             AppIndication::MemoryRead { count, address } => {
                 self.handle_memory_read(source, count, address);
@@ -220,11 +232,7 @@ impl Bau {
 
     /// Take the next outgoing CEMI frame.
     pub fn next_outgoing_frame(&mut self) -> Option<CemiFrame> {
-        if self.outbox.is_empty() {
-            None
-        } else {
-            Some(self.outbox.remove(0))
-        }
+        self.outbox.pop_front()
     }
 
     /// Set the memory area (for MemoryRead/Write from ETS).
@@ -258,6 +266,12 @@ impl Bau {
             return;
         };
         for asap in self.association_table.asaps_for_tsap(tsap) {
+            // Check communication and write flags (C++ ref: groupValueWriteIndication)
+            if let Some(desc) = self.group_object_table.get_descriptor(asap) {
+                if !desc.communication_enable() || !desc.write_enable() {
+                    continue;
+                }
+            }
             if let Some(go) = self.group_objects.get_mut(asap) {
                 go.value_from_bus(data);
             }
@@ -270,6 +284,12 @@ impl Bau {
             return;
         };
         for asap in self.association_table.asaps_for_tsap(tsap) {
+            // Check communication and read flags (C++ ref: groupValueReadIndication)
+            if let Some(desc) = self.group_object_table.get_descriptor(asap) {
+                if !desc.communication_enable() || !desc.read_enable() {
+                    continue;
+                }
+            }
             if let Some(go) = self.group_objects.get(asap) {
                 if go.initialized() {
                     let data = go.value_ref().to_vec();
@@ -289,27 +309,46 @@ impl Bau {
         start_index: u16,
     ) {
         let Ok(pid) = PropertyId::try_from(property_id) else {
+            // Unknown property — send error response (count=0)
+            self.queue_property_response(source, object_index, property_id, 0, start_index, &[]);
             return;
         };
         let Some(obj) = self.objects.get(object_index as usize) else {
+            // Unknown object — send error response (count=0)
+            self.queue_property_response(source, object_index, property_id, 0, start_index, &[]);
             return;
         };
-        let mut data = Vec::new();
-        let read_count = obj.read_property(pid, start_index, count, &mut data);
-        if read_count > 0 {
+
+        // BAU-4: startIndex=0 returns current element count (C++ ref convention)
+        if start_index == 0 {
+            let elem_count = obj.property(pid).map_or(0u16, Property::max_elements);
             self.queue_property_response(
                 source,
                 object_index,
                 property_id,
-                read_count,
-                start_index,
-                &data,
+                1,
+                0,
+                &elem_count.to_be_bytes(),
             );
+            return;
         }
+
+        let mut data = Vec::new();
+        let read_count = obj.read_property(pid, start_index, count, &mut data);
+        // Always send response — count=0 signals error (C++ ref behavior)
+        self.queue_property_response(
+            source,
+            object_index,
+            property_id,
+            read_count,
+            start_index,
+            &data,
+        );
     }
 
     fn handle_property_write(
         &mut self,
+        source: u16,
         object_index: u8,
         property_id: u8,
         count: u8,
@@ -322,15 +361,20 @@ impl Bau {
         if let Some(obj) = self.objects.get_mut(object_index as usize) {
             obj.write_property(pid, start_index, count, data);
         }
+        // C++ ref: always send read-back response after write (ETS expects confirmation)
+        self.handle_property_read(source, object_index, property_id, count, start_index);
     }
 
     fn handle_memory_read(&mut self, source: u16, count: u8, address: u16) {
         let addr = address as usize;
         let len = count as usize;
-        if addr + len <= self.memory_area.len() {
-            let data = self.memory_area[addr..addr + len].to_vec();
-            self.queue_memory_response(source, address, &data);
-        }
+        // Always send response — empty data on out-of-bounds (C++ ref behavior)
+        let data = if addr + len <= self.memory_area.len() {
+            self.memory_area[addr..addr + len].to_vec()
+        } else {
+            Vec::new()
+        };
+        self.queue_memory_response(source, address, &data);
     }
 
     fn handle_memory_write(&mut self, address: u16, data: &[u8]) {
@@ -355,7 +399,7 @@ impl Bau {
             payload.push(0x80);
             payload.extend_from_slice(data);
         }
-        self.outbox.push(CemiFrame::new_l_data(
+        self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
             src,
             dst,
@@ -367,7 +411,7 @@ impl Bau {
     fn queue_group_value_read(&mut self, ga: u16) {
         let src = self.individual_address();
         let dst = DestinationAddress::Group(GroupAddress::from_raw(ga));
-        self.outbox.push(CemiFrame::new_l_data(
+        self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
             src,
             dst,
@@ -387,7 +431,7 @@ impl Bau {
             payload.push(0x40);
             payload.extend_from_slice(data);
         }
-        self.outbox.push(CemiFrame::new_l_data(
+        self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
             src,
             dst,
@@ -399,7 +443,7 @@ impl Bau {
     fn queue_individual_address_response(&mut self) {
         let src = self.individual_address();
         let dst = DestinationAddress::Group(GroupAddress::from_raw(0));
-        self.outbox.push(CemiFrame::new_l_data(
+        self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
             src,
             dst,
@@ -412,12 +456,25 @@ impl Bau {
         let src = self.individual_address();
         let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
         let mask = MASK_VERSION_IP.to_be_bytes();
-        self.outbox.push(CemiFrame::new_l_data(
+        self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
             src,
             dst,
             Priority::System,
             &[0x03, 0x40, mask[0], mask[1]],
+        ));
+    }
+
+    /// Respond to unsupported `DeviceDescriptorRead` with type 0x3F (C++ ref behavior).
+    fn queue_device_descriptor_unsupported(&mut self, destination: u16) {
+        let src = self.individual_address();
+        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
+        self.outbox.push_back(CemiFrame::new_l_data(
+            MessageCode::LDataReq,
+            src,
+            dst,
+            Priority::System,
+            &[0x03, 0x7F], // DeviceDescriptorResponse with type=0x3F
         ));
     }
 
@@ -440,7 +497,7 @@ impl Bau {
         let count_start = (u16::from(count) << 12) | (start_index & 0x0FFF);
         payload.extend_from_slice(&count_start.to_be_bytes());
         payload.extend_from_slice(data);
-        self.outbox.push(CemiFrame::new_l_data(
+        self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
             src,
             dst,
@@ -459,7 +516,7 @@ impl Bau {
         payload.push(count_byte);
         payload.extend_from_slice(&address.to_be_bytes());
         payload.extend_from_slice(data);
-        self.outbox.push(CemiFrame::new_l_data(
+        self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
             src,
             dst,
@@ -610,8 +667,10 @@ mod tests {
     #[test]
     fn property_write_via_bau() {
         let mut bau = test_bau();
-        bau.handle_property_write(0, 54, 1, 1, &[0x01]); // PID_PROG_MODE
+        bau.handle_property_write(0x1101, 0, 54, 1, 1, &[0x01]); // PID_PROG_MODE
         assert!(device_object::prog_mode(bau.device()));
+        // BAU-2: write should produce a read-back response
+        assert!(bau.next_outgoing_frame().is_some());
     }
 
     #[test]
