@@ -65,11 +65,11 @@
   - File: `knx-ip/src/tunnel.rs:270-356`
   - Fix: Restructure as state machine within the select loop
 
-- [ ] **TUN-5**: No `RoutingBusy` handling
+- [x] **TUN-5**: No `RoutingBusy` handling
   - File: `knx-ip/src/router.rs:188-199`
   - Fix: Parse RoutingBusy, pause sending for specified wait time
 
-- [ ] **TUN-6**: Connect response missing individual address
+- [x] **TUN-6**: Connect response missing individual address
   - File: `knx-ip/src/tunnel_server.rs:241`
   - Fix: Assign and return individual address in CRD
 

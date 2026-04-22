@@ -142,6 +142,16 @@ impl RateLimiter {
                 .map(|&oldest| (oldest + Duration::from_secs(1)) - now)
         }
     }
+
+    /// Force a pause on the next send (used by `RoutingBusy` handling).
+    fn pause(&mut self, duration: Duration) {
+        // Fill the window with future timestamps to block sends for `duration`
+        let future = Instant::now() + duration;
+        self.timestamps.clear();
+        for _ in 0..self.max_per_sec {
+            self.timestamps.push_back(future);
+        }
+    }
 }
 
 // ── Background task ───────────────────────────────────────────
@@ -165,7 +175,7 @@ async fn router_task(
                         break;
                     }
                 };
-                handle_routing_indication(&buf[..n], &cemi_tx).await;
+                handle_routing_indication(&buf[..n], &cemi_tx, &mut rate_limiter).await;
             }
 
             cmd = cmd_rx.recv() => {
@@ -210,7 +220,11 @@ async fn rate_limited_send(
     Ok(())
 }
 
-async fn handle_routing_indication(data: &[u8], cemi_tx: &mpsc::Sender<CemiFrame>) {
+async fn handle_routing_indication(
+    data: &[u8],
+    cemi_tx: &mpsc::Sender<CemiFrame>,
+    rate_limiter: &mut RateLimiter,
+) {
     let frame = match KnxIpFrame::parse(data) {
         Ok(f) => f,
         Err(e) => {
@@ -219,12 +233,24 @@ async fn handle_routing_indication(data: &[u8], cemi_tx: &mpsc::Sender<CemiFrame
         }
     };
 
-    if frame.service_type != ServiceType::RoutingIndication {
-        return;
-    }
-
-    if let Ok(cemi) = CemiFrame::parse(&frame.body) {
-        let _ = cemi_tx.send(cemi).await;
+    match frame.service_type {
+        ServiceType::RoutingIndication => {
+            if let Ok(cemi) = CemiFrame::parse(&frame.body) {
+                let _ = cemi_tx.send(cemi).await;
+            }
+        }
+        ServiceType::RoutingBusy => {
+            // KNX 3.2.6 §4.4: pause sending for the specified wait time
+            let wait_ms = if frame.body.len() >= 6 {
+                u16::from_be_bytes([frame.body[4], frame.body[5]])
+            } else {
+                50 // default 50ms per spec
+            };
+            tracing::debug!(wait_ms, "received RoutingBusy, pausing sends");
+            // Drain the rate limiter to force a pause on next send
+            rate_limiter.pause(Duration::from_millis(u64::from(wait_ms)));
+        }
+        _ => {}
     }
 }
 

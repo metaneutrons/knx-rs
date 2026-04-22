@@ -256,7 +256,7 @@ async fn handle_connect(
 
     if tunnels.len() >= MAX_TUNNELS {
         // No more connections available
-        let resp = build_connect_response(0, 0x24); // E_NO_MORE_CONNECTIONS
+        let resp = build_connect_response(0, 0x24, 0); // E_NO_MORE_CONNECTIONS
         let _ = socket.send_to(&resp, ctrl_addr).await;
         return;
     }
@@ -292,11 +292,11 @@ async fn handle_connect(
 
     tracing::info!(channel_id, %ctrl_addr, config = is_config, "tunnel client connected");
 
-    let resp = build_connect_response(channel_id, 0x00); // E_NO_ERROR
+    let resp = build_connect_response(channel_id, 0x00, 0xFF00 | u16::from(channel_id)); // E_NO_ERROR
     let _ = socket.send_to(&resp, ctrl_addr).await;
 }
 
-fn build_connect_response(channel_id: u8, status: u8) -> Vec<u8> {
+fn build_connect_response(channel_id: u8, status: u8, individual_addr: u16) -> Vec<u8> {
     let hpai = Hpai {
         protocol: HostProtocol::Ipv4Udp,
         ip: [0, 0, 0, 0],
@@ -306,8 +306,9 @@ fn build_connect_response(channel_id: u8, status: u8) -> Vec<u8> {
     body.push(channel_id);
     body.push(status);
     body.extend_from_slice(&hpai.to_bytes());
-    // CRD: connection response data block
-    body.extend_from_slice(&[0x04, 0x04, 0x00, 0x00]); // tunnel, link layer, individual address
+    // CRD: connection response data block (tunnel, link layer, individual address)
+    let addr = individual_addr.to_be_bytes();
+    body.extend_from_slice(&[0x04, 0x04, addr[0], addr[1]]);
 
     let frame = KnxIpFrame {
         service_type: ServiceType::ConnectResponse,

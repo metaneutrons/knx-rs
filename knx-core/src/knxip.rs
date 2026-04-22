@@ -67,6 +67,8 @@ pub enum ServiceType {
     RoutingIndication = 0x0530,
     /// Routing lost message.
     RoutingLostMessage = 0x0531,
+    /// Routing busy.
+    RoutingBusy = 0x0532,
 }
 
 impl ServiceType {
@@ -91,6 +93,7 @@ impl ServiceType {
             0x0421 => Self::TunnelingAck,
             0x0530 => Self::RoutingIndication,
             0x0531 => Self::RoutingLostMessage,
+            0x0532 => Self::RoutingBusy,
             _ => return None,
         })
     }
