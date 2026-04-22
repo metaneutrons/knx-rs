@@ -411,93 +411,34 @@ impl Bau {
     // ── Frame builders ────────────────────────────────────────
 
     fn queue_group_value_write(&mut self, ga: u16, data: &[u8]) {
-        let src = self.individual_address();
-        let dst = DestinationAddress::Group(GroupAddress::from_raw(ga));
-        let mut payload = Vec::with_capacity(2 + data.len());
-        payload.push(0x00);
-        if data.len() == 1 && data[0] <= 0x3F {
-            payload.push(0x80 | (data[0] & 0x3F));
-        } else {
-            payload.push(0x80);
-            payload.extend_from_slice(data);
-        }
-        self.outbox.push_back(CemiFrame::new_l_data(
-            MessageCode::LDataReq,
-            src,
-            dst,
-            Priority::Low,
-            &payload,
-        ));
+        let payload = application_layer::encode_group_value_write(data);
+        self.queue_group_frame(ga, Priority::Low, &payload);
     }
 
     fn queue_group_value_read(&mut self, ga: u16) {
-        let src = self.individual_address();
-        let dst = DestinationAddress::Group(GroupAddress::from_raw(ga));
-        self.outbox.push_back(CemiFrame::new_l_data(
-            MessageCode::LDataReq,
-            src,
-            dst,
-            Priority::Low,
-            &[0x00, 0x00],
-        ));
+        let payload = application_layer::encode_group_value_read();
+        self.queue_group_frame(ga, Priority::Low, &payload);
     }
 
     fn queue_group_value_response(&mut self, ga: u16, data: &[u8]) {
-        let src = self.individual_address();
-        let dst = DestinationAddress::Group(GroupAddress::from_raw(ga));
-        let mut payload = Vec::with_capacity(2 + data.len());
-        payload.push(0x00);
-        if data.len() == 1 && data[0] <= 0x3F {
-            payload.push(0x40 | (data[0] & 0x3F));
-        } else {
-            payload.push(0x40);
-            payload.extend_from_slice(data);
-        }
-        self.outbox.push_back(CemiFrame::new_l_data(
-            MessageCode::LDataReq,
-            src,
-            dst,
-            Priority::Low,
-            &payload,
-        ));
+        let payload = application_layer::encode_group_value_response(data);
+        self.queue_group_frame(ga, Priority::Low, &payload);
     }
 
     fn queue_individual_address_response(&mut self) {
-        let src = self.individual_address();
-        let dst = DestinationAddress::Group(GroupAddress::from_raw(0));
-        self.outbox.push_back(CemiFrame::new_l_data(
-            MessageCode::LDataReq,
-            src,
-            dst,
-            Priority::System,
-            &[0x01, 0x40],
-        ));
+        let payload = application_layer::encode_individual_address_response();
+        self.queue_group_frame(0, Priority::System, &payload);
     }
 
     fn queue_device_descriptor_response(&mut self, destination: u16) {
-        let src = self.individual_address();
-        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
-        let mask = MASK_VERSION_IP.to_be_bytes();
-        self.outbox.push_back(CemiFrame::new_l_data(
-            MessageCode::LDataReq,
-            src,
-            dst,
-            Priority::System,
-            &[0x03, 0x40, mask[0], mask[1]],
-        ));
+        let payload = application_layer::encode_device_descriptor_response(MASK_VERSION_IP);
+        self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
     /// Respond to unsupported `DeviceDescriptorRead` with type 0x3F (C++ ref behavior).
     fn queue_device_descriptor_unsupported(&mut self, destination: u16) {
-        let src = self.individual_address();
-        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
-        self.outbox.push_back(CemiFrame::new_l_data(
-            MessageCode::LDataReq,
-            src,
-            dst,
-            Priority::System,
-            &[0x03, 0x7F], // DeviceDescriptorResponse with type=0x3F
-        ));
+        let payload = application_layer::encode_device_descriptor_unsupported();
+        self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
     fn queue_property_response(
@@ -509,41 +450,44 @@ impl Bau {
         start_index: u16,
         data: &[u8],
     ) {
-        let src = self.individual_address();
-        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
-        let mut payload = Vec::with_capacity(6 + data.len());
-        payload.push(0x03);
-        payload.push(0xD6); // PropertyValueResponse
-        payload.push(object_index);
-        payload.push(property_id);
-        let count_start = (u16::from(count) << 12) | (start_index & 0x0FFF);
-        payload.extend_from_slice(&count_start.to_be_bytes());
-        payload.extend_from_slice(data);
-        self.outbox.push_back(CemiFrame::new_l_data(
-            MessageCode::LDataReq,
-            src,
-            dst,
-            Priority::System,
-            &payload,
-        ));
+        let payload = application_layer::encode_property_response(
+            object_index,
+            property_id,
+            count,
+            start_index,
+            data,
+        );
+        self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
     fn queue_memory_response(&mut self, destination: u16, address: u16, data: &[u8]) {
+        let payload = application_layer::encode_memory_response(address, data);
+        self.queue_individual_frame(destination, Priority::System, &payload);
+    }
+
+    // ── Shared frame helpers ──────────────────────────────────
+
+    fn queue_group_frame(&mut self, ga: u16, priority: Priority, payload: &[u8]) {
         let src = self.individual_address();
-        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
-        let mut payload = Vec::with_capacity(5 + data.len());
-        payload.push(0x02);
-        #[expect(clippy::cast_possible_truncation)]
-        let count_byte = 0x40 | (data.len() as u8 & 0x0F); // MemoryResponse
-        payload.push(count_byte);
-        payload.extend_from_slice(&address.to_be_bytes());
-        payload.extend_from_slice(data);
+        let dst = DestinationAddress::Group(GroupAddress::from_raw(ga));
         self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
             src,
             dst,
-            Priority::System,
-            &payload,
+            priority,
+            payload,
+        ));
+    }
+
+    fn queue_individual_frame(&mut self, destination: u16, priority: Priority, payload: &[u8]) {
+        let src = self.individual_address();
+        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
+        self.outbox.push_back(CemiFrame::new_l_data(
+            MessageCode::LDataReq,
+            src,
+            dst,
+            priority,
+            payload,
         ));
     }
 }

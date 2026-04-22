@@ -184,14 +184,11 @@ pub fn decode(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
         18 => decode_dpt18(payload),
         19 => decode_dpt19(payload),
         29 => decode_dpt29(payload),
-        217 => decode_dpt217(payload),
-        219 => decode_dpt219(payload),
-        221 => decode_dpt221(payload),
-        225 => decode_dpt225(payload),
+        217 | 239 => decode_bytes(payload, 2),
+        219 | 221 | 235 => decode_bytes(payload, 6),
+        225 => decode_bytes(payload, 3),
         231 | 234 => decode_dpt_locale(dpt, payload),
         232 => decode_dpt232(payload),
-        235 => decode_dpt235(payload),
-        239 => decode_dpt239(payload),
         251 => decode_dpt251(payload),
         _ => Err(DptError::UnsupportedDpt(dpt)),
     }
@@ -218,14 +215,11 @@ pub fn encode(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
         18 => encode_dpt18(value),
         19 => encode_dpt19(value),
         29 => encode_dpt29(value),
-        217 => encode_dpt217(value),
-        219 => encode_dpt219(value),
-        221 => encode_dpt221(value),
-        225 => encode_dpt225(value),
+        217 | 239 => encode_bytes(value, 2),
+        219 | 221 | 235 => encode_bytes(value, 6),
+        225 => encode_bytes(value, 3),
         231 | 234 => encode_dpt_locale(dpt, value),
         232 => encode_dpt232(value),
-        235 => encode_dpt235(value),
-        239 => encode_dpt239(value),
         251 => encode_dpt251(value),
         _ => Err(DptError::UnsupportedDpt(dpt)),
     }
@@ -595,56 +589,16 @@ fn encode_dpt251(value: &DptValue) -> Result<Vec<u8>, DptError> {
 
 // ── DPT 217: Version (2 bytes) ────────────────────────────────
 
-fn decode_dpt217(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 2)?;
-    Ok(DptValue::Bytes(payload[..2].to_vec()))
+// ── Byte-passthrough DPTs (generic) ──────────────────────────
+
+fn decode_bytes(payload: &[u8], len: usize) -> Result<DptValue, DptError> {
+    check_len(payload, len)?;
+    Ok(DptValue::Bytes(payload[..len].to_vec()))
 }
 
-fn encode_dpt217(value: &DptValue) -> Result<Vec<u8>, DptError> {
+fn encode_bytes(value: &DptValue, len: usize) -> Result<Vec<u8>, DptError> {
     match value {
-        DptValue::Bytes(b) if b.len() >= 2 => Ok(b[..2].to_vec()),
-        _ => Err(DptError::TypeMismatch),
-    }
-}
-
-// ── DPT 219: Alarm info (6 bytes) ────────────────────────────
-
-fn decode_dpt219(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 6)?;
-    Ok(DptValue::Bytes(payload[..6].to_vec()))
-}
-
-fn encode_dpt219(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    match value {
-        DptValue::Bytes(b) if b.len() >= 6 => Ok(b[..6].to_vec()),
-        _ => Err(DptError::TypeMismatch),
-    }
-}
-
-// ── DPT 221: Serial number (6 bytes) ─────────────────────────
-
-fn decode_dpt221(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 6)?;
-    Ok(DptValue::Bytes(payload[..6].to_vec()))
-}
-
-fn encode_dpt221(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    match value {
-        DptValue::Bytes(b) if b.len() >= 6 => Ok(b[..6].to_vec()),
-        _ => Err(DptError::TypeMismatch),
-    }
-}
-
-// ── DPT 225: Scaling speed / step time (3 bytes) ─────────────
-
-fn decode_dpt225(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 3)?;
-    Ok(DptValue::Bytes(payload[..3].to_vec()))
-}
-
-fn encode_dpt225(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    match value {
-        DptValue::Bytes(b) if b.len() >= 3 => Ok(b[..3].to_vec()),
+        DptValue::Bytes(b) if b.len() >= len => Ok(b[..len].to_vec()),
         _ => Err(DptError::TypeMismatch),
     }
 }
@@ -653,44 +607,12 @@ fn encode_dpt225(value: &DptValue) -> Result<Vec<u8>, DptError> {
 
 fn decode_dpt_locale(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
     let min_len = if dpt.main == 231 { 4 } else { 2 };
-    check_len(payload, min_len)?;
-    Ok(DptValue::Bytes(payload[..min_len].to_vec()))
+    decode_bytes(payload, min_len)
 }
 
 fn encode_dpt_locale(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
     let min_len = if dpt.main == 231 { 4 } else { 2 };
-    match value {
-        DptValue::Bytes(b) if b.len() >= min_len => Ok(b[..min_len].to_vec()),
-        _ => Err(DptError::TypeMismatch),
-    }
-}
-
-// ── DPT 235: Active energy (6 bytes) ─────────────────────────
-
-fn decode_dpt235(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 6)?;
-    Ok(DptValue::Bytes(payload[..6].to_vec()))
-}
-
-fn encode_dpt235(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    match value {
-        DptValue::Bytes(b) if b.len() >= 6 => Ok(b[..6].to_vec()),
-        _ => Err(DptError::TypeMismatch),
-    }
-}
-
-// ── DPT 239: Flagged scaling (2 bytes) ───────────────────────
-
-fn decode_dpt239(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 2)?;
-    Ok(DptValue::Bytes(payload[..2].to_vec()))
-}
-
-fn encode_dpt239(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    match value {
-        DptValue::Bytes(b) if b.len() >= 2 => Ok(b[..2].to_vec()),
-        _ => Err(DptError::TypeMismatch),
-    }
+    encode_bytes(value, min_len)
 }
 
 // ── Tests ─────────────────────────────────────────────────────

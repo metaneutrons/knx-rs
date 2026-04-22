@@ -64,41 +64,28 @@ fn extract_ns_version(xml: &str) -> Result<u32, KnxprodError> {
 }
 
 fn extract_manufacturer_id(xml: &str) -> Result<String, KnxprodError> {
-    let mut reader = Reader::from_str(xml);
-    let mut buf = Vec::new();
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e) | Event::Empty(ref e))
-                if e.local_name().as_ref() == b"Manufacturer" =>
-            {
-                for attr in e.attributes().flatten() {
-                    if attr.key.as_ref() == b"RefId" {
-                        return Ok(String::from_utf8_lossy(&attr.value).into_owned());
-                    }
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(e) => return Err(KnxprodError::Xml(e)),
-            _ => {}
-        }
-        buf.clear();
-    }
-
-    Err(KnxprodError::MissingElement("Manufacturer/@RefId"))
+    extract_xml_attribute(xml, b"Manufacturer", b"RefId", "Manufacturer/@RefId")
 }
 
 fn extract_application_id(xml: &str) -> Result<String, KnxprodError> {
+    extract_xml_attribute(xml, b"ApplicationProgram", b"Id", "ApplicationProgram/@Id")
+}
+
+/// Extract an attribute value from the first matching XML element.
+fn extract_xml_attribute(
+    xml: &str,
+    element: &[u8],
+    attr_name: &[u8],
+    error_context: &'static str,
+) -> Result<String, KnxprodError> {
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e) | Event::Empty(ref e))
-                if e.local_name().as_ref() == b"ApplicationProgram" =>
-            {
+            Ok(Event::Start(ref e) | Event::Empty(ref e)) if e.local_name().as_ref() == element => {
                 for attr in e.attributes().flatten() {
-                    if attr.key.as_ref() == b"Id" {
+                    if attr.key.as_ref() == attr_name {
                         return Ok(String::from_utf8_lossy(&attr.value).into_owned());
                     }
                 }
@@ -110,7 +97,7 @@ fn extract_application_id(xml: &str) -> Result<String, KnxprodError> {
         buf.clear();
     }
 
-    Err(KnxprodError::MissingElement("ApplicationProgram/@Id"))
+    Err(KnxprodError::MissingElement(error_context))
 }
 
 #[cfg(test)]

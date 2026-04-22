@@ -33,7 +33,7 @@
   - File: `knx-device/src/bau.rs:143`
   - Fix: Respond with descriptorType=0x3F
 
-- [ ] **BAU-7**: APDU encoding in BAU instead of Application Layer
+- [x] **BAU-7**: APDU encoding in BAU instead of Application Layer
   - File: `knx-device/src/bau.rs:248-340`
   - Fix: Move encoding to `application_layer.rs`, add outgoing encode functions
 
@@ -103,7 +103,7 @@
 
 ## DRY Refactoring
 
-- [ ] **DRY-1**: 6 identical byte-passthrough DPT function pairs → generic helper
+- [x] **DRY-1**: 6 identical byte-passthrough DPT function pairs → generic helper
   - File: `knx-core/src/dpt/convert/numeric.rs:598-693`
 
 - [ ] **DRY-2**: Tunneling request handling duplicated tunnel.rs ↔ tunnel_server.rs
@@ -112,7 +112,7 @@
 - [ ] **DRY-3**: HPAI construction, frame building, NAT resolution duplicated
   - Extract shared utilities
 
-- [ ] **DRY-4**: `extract_manufacturer_id`/`extract_application_id` identical structure
+- [x] **DRY-4**: `extract_manufacturer_id`/`extract_application_id` identical structure
   - File: `knx-prod/src/parse.rs:63-130`
   - Extract generic `extract_attribute(xml, element, attr)` helper
 

@@ -11,6 +11,88 @@ use alloc::vec::Vec;
 
 use knx_core::message::ApduType;
 
+// ── APDU encoding (outgoing) ─────────────────────────────────
+
+/// Encode a `GroupValueWrite` APDU payload.
+pub fn encode_group_value_write(data: &[u8]) -> Vec<u8> {
+    encode_group_value(0x00, 0x80, data)
+}
+
+/// Encode a `GroupValueResponse` APDU payload.
+pub fn encode_group_value_response(data: &[u8]) -> Vec<u8> {
+    encode_group_value(0x00, 0x40, data)
+}
+
+/// Encode a `GroupValueRead` APDU payload.
+pub fn encode_group_value_read() -> Vec<u8> {
+    alloc::vec![0x00, 0x00]
+}
+
+/// Encode an `IndividualAddressResponse` APDU payload.
+pub fn encode_individual_address_response() -> Vec<u8> {
+    alloc::vec![0x01, 0x40]
+}
+
+/// Encode a `DeviceDescriptorResponse` APDU payload for descriptor type 0.
+pub fn encode_device_descriptor_response(mask_version: u16) -> Vec<u8> {
+    let m = mask_version.to_be_bytes();
+    alloc::vec![0x03, 0x40, m[0], m[1]]
+}
+
+/// Encode a `DeviceDescriptorResponse` for unsupported descriptor types (type 0x3F).
+pub fn encode_device_descriptor_unsupported() -> Vec<u8> {
+    alloc::vec![0x03, 0x7F]
+}
+
+/// Encode a `PropertyValueResponse` APDU payload.
+pub fn encode_property_response(
+    object_index: u8,
+    property_id: u8,
+    count: u8,
+    start_index: u16,
+    data: &[u8],
+) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(6 + data.len());
+    payload.push(0x03);
+    payload.push(0xD6); // PropertyValueResponse
+    payload.push(object_index);
+    payload.push(property_id);
+    let count_start = (u16::from(count) << 12) | (start_index & 0x0FFF);
+    payload.extend_from_slice(&count_start.to_be_bytes());
+    payload.extend_from_slice(data);
+    payload
+}
+
+/// Encode a `MemoryResponse` APDU payload.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "data.len() is always <= 15"
+)]
+pub fn encode_memory_response(address: u16, data: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(5 + data.len());
+    payload.push(0x02);
+    payload.push(0x40 | (data.len() as u8 & 0x0F));
+    payload.extend_from_slice(&address.to_be_bytes());
+    payload.extend_from_slice(data);
+    payload
+}
+
+/// Shared helper for group value write/response encoding.
+/// Applies the short-value optimization (≤6 bits packed into APCI byte).
+fn encode_group_value(tpci: u8, apci: u8, data: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(2 + data.len());
+    payload.push(tpci);
+    if data.len() == 1 && data[0] <= 0x3F {
+        payload.push(apci | (data[0] & 0x3F));
+    } else {
+        payload.push(apci);
+        payload.extend_from_slice(data);
+    }
+    payload
+}
+
+// ── APDU parsing (incoming) ──────────────────────────────────
+
 /// An incoming application-layer indication to be processed by the BAU.
 #[derive(Debug, Clone)]
 pub enum AppIndication {
