@@ -585,4 +585,632 @@ mod tests {
         assert_eq!(result[2], 0x00);
         assert_eq!(&result[3..6], &[0xAB, 0xCD, 0xEF]);
     }
+
+    // ── Additional encode tests ──────────────────────────────
+
+    #[test]
+    fn encode_individual_address_response_bytes() {
+        let [hi, lo] = expected_apci(ApduType::IndividualAddressResponse);
+        let result = encode_individual_address_response();
+        assert_eq!(result, &[hi, lo]);
+    }
+
+    #[test]
+    fn encode_key_response_level() {
+        let [hi, lo] = expected_apci(ApduType::KeyResponse);
+        let result = encode_key_response(0x02);
+        assert_eq!(result, &[hi, lo, 0x02]);
+    }
+
+    #[test]
+    fn encode_property_description_response_all_bytes() {
+        let [hi, lo] = expected_apci(ApduType::PropertyDescriptionResponse);
+        let result =
+            encode_property_description_response(0x01, 0x0B, 0x03, true, 0x11, 0x0100, 0x37);
+        assert_eq!(result.len(), 9);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(result[2], 0x01); // object_index
+        assert_eq!(result[3], 0x0B); // property_id
+        assert_eq!(result[4], 0x03); // property_index
+        assert_eq!(result[5], 0x80 | 0x11); // write_enable | pdt
+        assert_eq!(result[6], 0x01); // max_elements high
+        assert_eq!(result[7], 0x00); // max_elements low
+        assert_eq!(result[8], 0x37); // access
+    }
+
+    #[test]
+    fn encode_individual_address_serial_number_response_bytes() {
+        let [hi, lo] = expected_apci(ApduType::IndividualAddressSerialNumberResponse);
+        let serial = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
+        let result = encode_individual_address_serial_number_response(serial, 0xABCD);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(&result[2..8], &serial);
+        assert_eq!(&result[8..10], &[0xAB, 0xCD]);
+    }
+
+    #[test]
+    fn encode_system_network_parameter_response_bytes() {
+        let [hi, lo] = expected_apci(ApduType::SystemNetworkParameterResponse);
+        let result =
+            encode_system_network_parameter_response(0x0001, 0x000C, &[0xAA], &[0xBB, 0xCC]);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(&result[2..4], &[0x00, 0x01]); // object_type
+        assert_eq!(&result[4..6], &[0x00, 0xC0]); // pid << 4
+        assert_eq!(result[6], 0xAA); // test_info
+        assert_eq!(&result[7..], &[0xBB, 0xCC]); // test_result
+    }
+
+    #[test]
+    fn encode_adc_response_bytes() {
+        let [hi, lo] = expected_apci(ApduType::AdcResponse);
+        let result = encode_adc_response(0x05, 0x08, 0x1234);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo | 0x05); // channel in low bits
+        assert_eq!(result[2], 0x08); // count
+        assert_eq!(&result[3..5], &[0x12, 0x34]); // value
+    }
+
+    #[test]
+    fn encode_function_property_state_response_bytes() {
+        let [hi, lo] = expected_apci(ApduType::FunctionPropertyStateResponse);
+        let result = encode_function_property_state_response(0x02, 0x0A, &[0xDE, 0xAD]);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(result[2], 0x02); // object_index
+        assert_eq!(result[3], 0x0A); // property_id
+        assert_eq!(&result[4..], &[0xDE, 0xAD]); // data
+    }
+
+    #[test]
+    fn encode_property_value_ext_response_bytes() {
+        let [hi, lo] = expected_apci(ApduType::PropertyValueExtResponse);
+        let result = encode_property_value_ext_response(0x0001, 0x001, 0x00B, 1, 0x0001, &[0xFF]);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        // ext header: object_type(2) + oi_hi(1) + oi_lo|pid_hi(1) + pid_lo(1) + count(1) + start_index(2)
+        assert_eq!(&result[2..4], &[0x00, 0x01]); // object_type
+        assert_eq!(result[4], 0x00); // oi >> 4
+        assert_eq!(result[5], 0x10); // (oi & 0x0F) << 4 | (pid >> 8)
+        assert_eq!(result[6], 0x0B); // pid low
+        assert_eq!(result[7], 0x01); // count
+        assert_eq!(&result[8..10], &[0x00, 0x01]); // start_index
+        assert_eq!(result[10], 0xFF); // data
+    }
+
+    #[test]
+    fn encode_device_descriptor_unsupported_bytes() {
+        let [hi, _] = expected_apci(ApduType::DeviceDescriptorResponse);
+        let result = encode_device_descriptor_unsupported();
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], 0x3F);
+    }
+
+    #[test]
+    fn encode_raw_apdu_passthrough() {
+        let apdu = knx_core::apdu::Apdu {
+            apdu_type: ApduType::GroupValueWrite,
+            data: alloc::vec![0xAA, 0xBB],
+        };
+        let [hi, lo] = expected_apci(ApduType::GroupValueWrite);
+        let result = encode_raw_apdu(&apdu);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(&result[2..], &[0xAA, 0xBB]);
+    }
+
+    // ── Roundtrip tests ──────────────────────────────────────
+
+    #[test]
+    fn roundtrip_group_value_write() {
+        let encoded = encode_group_value_write(&[0xAA, 0xBB]);
+        // parse_raw_apdu strips byte 0, passes &data[1..] to parse_indication
+        // parse_group_value_write keeps the APCI low byte + trailing data
+        let parsed = parse_raw_apdu(&encoded).unwrap();
+        if let AppIndication::GroupValueWrite { data, .. } = parsed {
+            // data[0] is APCI low byte (0x80), then payload
+            assert_eq!(&data[1..], &[0xAA, 0xBB]);
+        } else {
+            panic!("expected GroupValueWrite");
+        }
+    }
+
+    #[test]
+    fn roundtrip_memory_response() {
+        let encoded = encode_memory_response(0x0100, &[0xDE, 0xAD]);
+        let [hi, lo] = expected_apci(ApduType::MemoryResponse);
+        assert_eq!(encoded[0], hi);
+        assert_eq!(encoded[1], lo | 0x02); // count = 2
+        assert_eq!(&encoded[2..4], &[0x01, 0x00]); // address
+        assert_eq!(&encoded[4..], &[0xDE, 0xAD]); // data
+    }
+
+    #[test]
+    fn roundtrip_device_descriptor_response() {
+        let encoded = encode_device_descriptor_response(0x07B0);
+        let [hi, lo] = expected_apci(ApduType::DeviceDescriptorResponse);
+        assert_eq!(encoded, &[hi, lo, 0x07, 0xB0]);
+    }
+
+    #[test]
+    fn roundtrip_memory_ext_read_response() {
+        let encoded = encode_memory_ext_read_response(0x00, 0x00_12_34_56, &[0xAA, 0xBB]);
+        let [hi, lo] = expected_apci(ApduType::MemoryExtReadResponse);
+        assert_eq!(encoded[0], hi);
+        assert_eq!(encoded[1], lo);
+        assert_eq!(encoded[2], 0x00); // return_code
+        assert_eq!(&encoded[3..6], &[0x12, 0x34, 0x56]); // 24-bit address
+        assert_eq!(&encoded[6..], &[0xAA, 0xBB]); // data
+    }
+
+    #[test]
+    fn roundtrip_property_value_response() {
+        let encoded = encode_property_response(0x00, 0x36, 1, 1, &[0xAA]);
+        let [hi, lo] = expected_apci(ApduType::PropertyValueResponse);
+        assert_eq!(encoded[0], hi);
+        assert_eq!(encoded[1], lo);
+        assert_eq!(encoded[2], 0x00); // object_index
+        assert_eq!(encoded[3], 0x36); // property_id
+        assert_eq!(&encoded[4..6], &[0x10, 0x01]); // count=1, start_index=1
+        assert_eq!(encoded[6], 0xAA); // data
+    }
+
+    // ── Additional parse tests ───────────────────────────────
+
+    #[test]
+    fn parse_restart_master_reset() {
+        let ind = parse_indication(ApduType::RestartMasterReset, &[0x00, 0x01, 0x02]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::RestartMasterReset {
+                erase_code: 0x01,
+                channel: 0x02,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_restart_master_reset_truncated() {
+        let err = parse_indication(ApduType::RestartMasterReset, &[0x00, 0x01]).unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 3,
+                got: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_property_description_read() {
+        let ind =
+            parse_indication(ApduType::PropertyDescriptionRead, &[0x01, 0x36, 0x03]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::PropertyDescriptionRead {
+                object_index: 0x01,
+                property_id: 0x36,
+                property_index: 0x03,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_property_description_read_truncated() {
+        let err = parse_indication(ApduType::PropertyDescriptionRead, &[0x01, 0x36]).unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 3,
+                got: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_memory_ext_read() {
+        let ind = parse_indication(ApduType::MemoryExtRead, &[0x04, 0x12, 0x34, 0x56]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::MemoryExtRead {
+                count: 0x04,
+                address: 0x00_12_34_56,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_memory_ext_read_truncated() {
+        let err = parse_indication(ApduType::MemoryExtRead, &[0x04, 0x12, 0x34]).unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 4,
+                got: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_memory_ext_write() {
+        let ind =
+            parse_indication(ApduType::MemoryExtWrite, &[0x02, 0xAB, 0xCD, 0xEF, 0xDE, 0xAD])
+                .unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::MemoryExtWrite {
+                count: 0x02,
+                address: 0x00_AB_CD_EF,
+                ..
+            }
+        ));
+        if let AppIndication::MemoryExtWrite { data, .. } = ind {
+            assert_eq!(data, &[0xDE, 0xAD]);
+        }
+    }
+
+    #[test]
+    fn parse_memory_ext_write_truncated() {
+        let err = parse_indication(ApduType::MemoryExtWrite, &[0x02, 0xAB, 0xCD]).unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 4,
+                got: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_individual_address_serial_number_read() {
+        let ind = parse_indication(
+            ApduType::IndividualAddressSerialNumberRead,
+            &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+        )
+        .unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::IndividualAddressSerialNumberRead {
+                serial: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_individual_address_serial_number_read_truncated() {
+        let err = parse_indication(
+            ApduType::IndividualAddressSerialNumberRead,
+            &[0x01, 0x02, 0x03],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 6,
+                got: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_individual_address_serial_number_write() {
+        let ind = parse_indication(
+            ApduType::IndividualAddressSerialNumberWrite,
+            &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x11, 0x05],
+        )
+        .unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::IndividualAddressSerialNumberWrite {
+                serial: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06],
+                address: 0x1105,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_individual_address_serial_number_write_truncated() {
+        let err = parse_indication(
+            ApduType::IndividualAddressSerialNumberWrite,
+            &[0x01, 0x02, 0x03, 0x04, 0x05],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 8,
+                got: 5
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_key_write() {
+        let ind =
+            parse_indication(ApduType::KeyWrite, &[0x03, 0x00, 0x00, 0x00, 0xFF]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::KeyWrite {
+                level: 0x03,
+                key: 0x0000_00FF,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_key_write_truncated() {
+        let err = parse_indication(ApduType::KeyWrite, &[0x03, 0x00, 0x00]).unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 5,
+                got: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_function_property_command() {
+        let ind = parse_indication(
+            ApduType::FunctionPropertyCommand,
+            &[0x01, 0x02, 0xAA, 0xBB],
+        )
+        .unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::FunctionPropertyCommand {
+                object_index: 0x01,
+                property_id: 0x02,
+                ..
+            }
+        ));
+        if let AppIndication::FunctionPropertyCommand { data, .. } = ind {
+            assert_eq!(data, &[0xAA, 0xBB]);
+        }
+    }
+
+    #[test]
+    fn parse_function_property_command_truncated() {
+        let err = parse_indication(ApduType::FunctionPropertyCommand, &[0x01]).unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 2,
+                got: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_function_property_state() {
+        let ind =
+            parse_indication(ApduType::FunctionPropertyState, &[0x03, 0x04, 0xCC]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::FunctionPropertyState {
+                object_index: 0x03,
+                property_id: 0x04,
+                ..
+            }
+        ));
+        if let AppIndication::FunctionPropertyState { data, .. } = ind {
+            assert_eq!(data, &[0xCC]);
+        }
+    }
+
+    #[test]
+    fn parse_function_property_state_truncated() {
+        let err = parse_indication(ApduType::FunctionPropertyState, &[0x03]).unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 2,
+                got: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_system_network_parameter_read() {
+        let ind = parse_indication(
+            ApduType::SystemNetworkParameterRead,
+            &[0x00, 0x07, 0x01, 0x10],
+        )
+        .unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::SystemNetworkParameterRead {
+                object_type: 0x0007,
+                property_id: 0x0011,
+                ..
+            }
+        ));
+        if let AppIndication::SystemNetworkParameterRead { test_info, .. } = ind {
+            assert_eq!(test_info, &[0x10]);
+        }
+    }
+
+    #[test]
+    fn parse_system_network_parameter_read_truncated() {
+        let err = parse_indication(
+            ApduType::SystemNetworkParameterRead,
+            &[0x00, 0x07, 0x01],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 4,
+                got: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_adc_read() {
+        let ind = parse_indication(ApduType::AdcRead, &[0x05, 0x03]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::AdcRead {
+                channel: 0x05,
+                count: 0x03,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_property_value_ext_read() {
+        let ind = parse_indication(
+            ApduType::PropertyValueExtRead,
+            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x01, 0x00, 0x01],
+        )
+        .unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::PropertyValueExtRead {
+                object_type: 0x0001,
+                object_instance: 0x012,
+                property_id: 0x003,
+                count: 0x01,
+                start_index: 0x0001,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_property_value_ext_read_truncated() {
+        let err = parse_indication(
+            ApduType::PropertyValueExtRead,
+            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x01],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 7,
+                got: 6
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_property_value_ext_write_con() {
+        let ind = parse_indication(
+            ApduType::PropertyValueExtWriteCon,
+            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x01, 0x00, 0x01, 0xAA],
+        )
+        .unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::PropertyValueExtWriteCon {
+                object_type: 0x0001,
+                object_instance: 0x012,
+                property_id: 0x003,
+                count: 0x01,
+                start_index: 0x0001,
+                ..
+            }
+        ));
+        if let AppIndication::PropertyValueExtWriteCon { data, .. } = ind {
+            assert_eq!(data, &[0x01, 0xAA]);
+        }
+    }
+
+    #[test]
+    fn parse_property_value_ext_write_con_truncated() {
+        let err = parse_indication(
+            ApduType::PropertyValueExtWriteCon,
+            &[0x00, 0x01, 0x01, 0x20, 0x03],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 7,
+                got: 5
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_property_value_ext_write_uncon() {
+        let ind = parse_indication(
+            ApduType::PropertyValueExtWriteUnCon,
+            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x01, 0x00, 0x01, 0xBB],
+        )
+        .unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::PropertyValueExtWriteUnCon {
+                object_type: 0x0001,
+                object_instance: 0x012,
+                property_id: 0x003,
+                count: 0x01,
+                start_index: 0x0001,
+                ..
+            }
+        ));
+        if let AppIndication::PropertyValueExtWriteUnCon { data, .. } = ind {
+            assert_eq!(data, &[0x01, 0xBB]);
+        }
+    }
+
+    #[test]
+    fn parse_property_value_ext_write_uncon_truncated() {
+        let err = parse_indication(
+            ApduType::PropertyValueExtWriteUnCon,
+            &[0x00, 0x01, 0x01],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 7,
+                got: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_property_ext_description_read() {
+        let ind = parse_indication(
+            ApduType::PropertyExtDescriptionRead,
+            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x10, 0x05],
+        )
+        .unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::PropertyExtDescriptionRead {
+                object_type: 0x0001,
+                object_instance: 0x012,
+                property_id: 0x003,
+                description_type: 0x01,
+                property_index: 0x005,
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_property_ext_description_read_truncated() {
+        let err = parse_indication(
+            ApduType::PropertyExtDescriptionRead,
+            &[0x00, 0x01, 0x01, 0x20],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 7,
+                got: 4
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_group_value_response() {
+        let ind = parse_indication(ApduType::GroupValueResponse, &[0x01, 0x02]).unwrap();
+        assert!(matches!(ind, AppIndication::GroupValueResponse { data, .. } if data == [0x01, 0x02]));
+    }
 }
