@@ -37,6 +37,27 @@ pub enum ObjectType {
     RfMedium = 19,
 }
 
+impl TryFrom<u16> for ObjectType {
+    type Error = u16;
+    fn try_from(v: u16) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Device),
+            1 => Ok(Self::AddressTable),
+            2 => Ok(Self::AssociationTable),
+            3 => Ok(Self::ApplicationProgram),
+            4 => Ok(Self::InterfaceProgram),
+            5 => Ok(Self::ObjectAssociationTable),
+            6 => Ok(Self::Router),
+            8 => Ok(Self::CemiServer),
+            9 => Ok(Self::GroupObjectTable),
+            11 => Ok(Self::IpParameter),
+            17 => Ok(Self::Security),
+            19 => Ok(Self::RfMedium),
+            _ => Err(v),
+        }
+    }
+}
+
 /// An interface object — a named collection of properties.
 pub struct InterfaceObject {
     object_type: ObjectType,

@@ -61,8 +61,16 @@ impl Bau {
     /// `device` is the device object (index 0). Additional interface objects
     /// can be added with `add_object()`.
     pub fn new(device: InterfaceObject, group_object_count: u16, default_go_size: usize) -> Self {
+        use crate::application_program::new_application_program_object;
+        use crate::interface_object::ObjectType;
+
+        // Standard object layout: 0=Device, 1=AddrTable, 2=AssocTable, 3=AppProgram
+        let addr_table_obj = InterfaceObject::new(ObjectType::AddressTable);
+        let assoc_table_obj = InterfaceObject::new(ObjectType::AssociationTable);
+        let app_program_obj = new_application_program_object();
+
         Self {
-            objects: vec![device],
+            objects: vec![device, addr_table_obj, assoc_table_obj, app_program_obj],
             address_table: AddressTable::new(),
             association_table: AssociationTable::new(),
             addr_table_object: TableObject::new(),
@@ -290,9 +298,61 @@ impl Bau {
             AppIndication::AdcRead { channel, count } => {
                 self.queue_adc_response(source, channel, count);
             }
-            _ => {
-                // Restart, extended property services, and other unhandled services
+            AppIndication::PropertyValueExtRead {
+                object_type,
+                object_instance,
+                property_id,
+                count,
+                start_index,
+            } => {
+                self.handle_property_value_ext_read(
+                    source,
+                    object_type,
+                    object_instance,
+                    property_id,
+                    count,
+                    start_index,
+                );
             }
+            AppIndication::PropertyValueExtWriteCon {
+                object_type,
+                object_instance,
+                property_id,
+                count,
+                start_index,
+                data,
+            } => {
+                self.handle_property_value_ext_write(
+                    source,
+                    object_type,
+                    object_instance,
+                    property_id,
+                    count,
+                    start_index,
+                    &data,
+                    true,
+                );
+            }
+            AppIndication::PropertyValueExtWriteUnCon {
+                object_type,
+                object_instance,
+                property_id,
+                count,
+                start_index,
+                data,
+            } => {
+                self.handle_property_value_ext_write(
+                    source,
+                    object_type,
+                    object_instance,
+                    property_id,
+                    count,
+                    start_index,
+                    &data,
+                    false,
+                );
+            }
+            _ => {}
         }
     }
 
@@ -364,10 +424,20 @@ impl Bau {
     ///
     /// Format: `[addr_table_obj:9][assoc_table_obj:9][app_program_obj:9][mem_len:4LE][memory_area]`
     pub fn save(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(TableObject::SAVE_SIZE * 3 + 4 + self.memory_area.len());
+        let mut buf =
+            Vec::with_capacity(TableObject::SAVE_SIZE * 3 + 5 + 4 + self.memory_area.len());
         self.addr_table_object.save(&mut buf);
         self.assoc_table_object.save(&mut buf);
         self.app_program_object.save(&mut buf);
+        // Save program version (5 bytes) from application program object (index 3)
+        if let Some(obj) = self.objects.get(3) {
+            let mut ver = Vec::new();
+            obj.read_property(PropertyId::ProgramVersion, 1, 1, &mut ver);
+            ver.resize(5, 0);
+            buf.extend_from_slice(&ver);
+        } else {
+            buf.extend_from_slice(&[0u8; 5]);
+        }
         #[expect(clippy::cast_possible_truncation)]
         let mem_len = self.memory_area.len() as u32;
         buf.extend_from_slice(&mem_len.to_le_bytes());
@@ -382,7 +452,7 @@ impl Bau {
     ///
     /// Returns `true` if restore succeeded.
     pub fn restore(&mut self, data: &[u8]) -> bool {
-        let header = TableObject::SAVE_SIZE * 3 + 4;
+        let header = TableObject::SAVE_SIZE * 3 + 5 + 4; // 3 table objects + 5 prog version + 4 mem_len
         if data.len() < header {
             return false;
         }
@@ -405,6 +475,15 @@ impl Bau {
             return false;
         }
         offset += n;
+
+        // Restore program version (5 bytes)
+        if offset + 5 > data.len() {
+            return false;
+        }
+        if let Some(obj) = self.objects.get_mut(3) {
+            obj.write_property(PropertyId::ProgramVersion, 1, 1, &data[offset..offset + 5]);
+        }
+        offset += 5;
 
         let mem_len = u32::from_le_bytes([
             data[offset],
@@ -859,6 +938,111 @@ impl Bau {
     fn queue_adc_response(&mut self, destination: u16, channel: u8, count: u8) {
         let payload = application_layer::encode_adc_response(channel, count, 0);
         self.queue_individual_frame(destination, Priority::System, &payload);
+    }
+
+    /// Find an interface object index by object type and instance number.
+    fn find_object_by_type(&self, object_type: u16, instance: u16) -> Option<u8> {
+        let target = crate::interface_object::ObjectType::try_from(object_type).ok()?;
+        let mut instance_count = 0u16;
+        #[expect(clippy::cast_possible_truncation)]
+        for (i, obj) in self.objects.iter().enumerate() {
+            if obj.object_type() == target {
+                if instance_count == instance {
+                    return Some(i as u8);
+                }
+                instance_count += 1;
+            }
+        }
+        None
+    }
+
+    fn handle_property_value_ext_read(
+        &mut self,
+        source: u16,
+        object_type: u16,
+        object_instance: u16,
+        property_id: u16,
+        count: u8,
+        start_index: u16,
+    ) {
+        let obj_idx = self.find_object_by_type(object_type, object_instance);
+        if let Some(idx) = obj_idx {
+            // Delegate to standard property read logic
+            #[expect(clippy::cast_possible_truncation)]
+            let pid = property_id as u8;
+            let Ok(pid_enum) = PropertyId::try_from(pid) else {
+                let payload = application_layer::encode_property_value_ext_response(
+                    object_type,
+                    object_instance,
+                    property_id,
+                    0,
+                    start_index,
+                    &[],
+                );
+                self.queue_individual_frame(source, Priority::System, &payload);
+                return;
+            };
+            if let Some(obj) = self.objects.get(idx as usize) {
+                let mut buf = Vec::new();
+                let read_count = obj.read_property(pid_enum, start_index, count, &mut buf);
+                let payload = application_layer::encode_property_value_ext_response(
+                    object_type,
+                    object_instance,
+                    property_id,
+                    read_count,
+                    start_index,
+                    &buf,
+                );
+                self.queue_individual_frame(source, Priority::System, &payload);
+                return;
+            }
+        }
+        // Object not found — respond with count=0
+        let payload = application_layer::encode_property_value_ext_response(
+            object_type,
+            object_instance,
+            property_id,
+            0,
+            start_index,
+            &[],
+        );
+        self.queue_individual_frame(source, Priority::System, &payload);
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn handle_property_value_ext_write(
+        &mut self,
+        source: u16,
+        object_type: u16,
+        object_instance: u16,
+        property_id: u16,
+        count: u8,
+        start_index: u16,
+        data: &[u8],
+        confirmed: bool,
+    ) {
+        let obj_idx = self.find_object_by_type(object_type, object_instance);
+        if let Some(idx) = obj_idx {
+            #[expect(clippy::cast_possible_truncation)]
+            let pid = property_id as u8;
+            if let Ok(pid_enum) = PropertyId::try_from(pid) {
+                if let Some(obj) = self.objects.get_mut(idx as usize) {
+                    obj.write_property(pid_enum, start_index, count, data);
+                }
+            }
+        }
+        if confirmed {
+            // Send write confirmation response
+            let payload = application_layer::encode_property_value_ext_response(
+                object_type,
+                object_instance,
+                property_id,
+                count,
+                start_index,
+                &[],
+            );
+            self.queue_individual_frame(source, Priority::System, &payload);
+        }
     }
 
     /// Apply a fill request from `AdditionalLoadControls` to the memory area.
