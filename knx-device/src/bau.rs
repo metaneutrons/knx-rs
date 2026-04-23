@@ -164,6 +164,7 @@ impl Bau {
         self.dispatch_indication(frame, source, indication);
     }
 
+    #[expect(clippy::too_many_lines)]
     fn dispatch_indication(&mut self, frame: &CemiFrame, source: u16, indication: AppIndication) {
         match indication {
             AppIndication::GroupValueWrite { data, .. } => {
@@ -224,7 +225,74 @@ impl Bau {
             } => {
                 self.handle_memory_write(address, &data);
             }
-            _ => {}
+            AppIndication::RestartMasterReset {
+                erase_code,
+                channel: _,
+            } => {
+                self.handle_restart_master_reset(source, erase_code);
+            }
+            AppIndication::AuthorizeRequest { key: _ } => {
+                // Accept all authorize requests with level 0 (no security)
+                self.queue_authorize_response(source, 0);
+            }
+            AppIndication::KeyWrite { level, key: _ } => {
+                // Accept key writes (no security implementation)
+                self.queue_key_response(source, level);
+            }
+            AppIndication::PropertyDescriptionRead {
+                object_index,
+                property_id,
+                property_index,
+            } => {
+                self.handle_property_description_read(
+                    source,
+                    object_index,
+                    property_id,
+                    property_index,
+                );
+            }
+            AppIndication::MemoryExtRead { count, address } => {
+                self.handle_memory_ext_read(source, count, address);
+            }
+            AppIndication::MemoryExtWrite {
+                count: _,
+                address,
+                data,
+            } => {
+                self.handle_memory_ext_write(source, address, &data);
+            }
+            AppIndication::IndividualAddressSerialNumberRead { serial } => {
+                self.handle_individual_address_serial_number_read(serial);
+            }
+            AppIndication::IndividualAddressSerialNumberWrite { serial, address } => {
+                self.handle_individual_address_serial_number_write(serial, address);
+            }
+            AppIndication::FunctionPropertyCommand {
+                object_index,
+                property_id,
+                data: _,
+            }
+            | AppIndication::FunctionPropertyState {
+                object_index,
+                property_id,
+                data: _,
+            } => {
+                // Respond with empty result (no function properties implemented)
+                self.queue_function_property_state_response(source, object_index, property_id, &[]);
+            }
+            AppIndication::SystemNetworkParameterRead {
+                object_type,
+                property_id,
+                test_info,
+            } => {
+                self.handle_system_network_parameter_read(object_type, property_id, &test_info);
+            }
+            AppIndication::AdcRead { channel, count } => {
+                self.queue_adc_response(source, channel, count);
+            }
+            _ => {
+                // Restart, extended property services, and other unhandled services
+            }
         }
     }
 
@@ -561,6 +629,187 @@ impl Bau {
             self.memory_area.resize(needed, 0);
         }
         self.memory_area[addr..addr + data.len()].copy_from_slice(data);
+    }
+
+    fn handle_restart_master_reset(&mut self, source: u16, erase_code: u8) {
+        match erase_code {
+            1 => {
+                // Confirmed restart — reset all table objects
+                self.addr_table_object = TableObject::new();
+                self.assoc_table_object = TableObject::new();
+                self.app_program_object = TableObject::new();
+                self.address_table = AddressTable::new();
+                self.association_table = AssociationTable::new();
+                self.memory_area.clear();
+            }
+            2..=4 => {
+                // Factory reset — clear everything
+                self.addr_table_object = TableObject::new();
+                self.assoc_table_object = TableObject::new();
+                self.app_program_object = TableObject::new();
+                self.address_table = AddressTable::new();
+                self.association_table = AssociationTable::new();
+                self.memory_area.clear();
+            }
+            _ => {}
+        }
+        let payload = application_layer::encode_restart_response(0, 0);
+        self.queue_individual_frame(source, Priority::System, &payload);
+    }
+
+    fn handle_property_description_read(
+        &mut self,
+        source: u16,
+        object_index: u8,
+        property_id: u8,
+        property_index: u8,
+    ) {
+        let Some(obj) = self.objects.get(object_index as usize) else {
+            // Unknown object — send error (property_id=0)
+            let payload = application_layer::encode_property_description_response(
+                object_index,
+                0,
+                0,
+                false,
+                0,
+                0,
+                0,
+            );
+            self.queue_individual_frame(source, Priority::System, &payload);
+            return;
+        };
+
+        if let Some((idx, desc)) = obj.read_property_description(property_id, property_index) {
+            let payload = application_layer::encode_property_description_response(
+                object_index,
+                desc.id as u8,
+                idx,
+                desc.write_enable,
+                desc.data_type as u8,
+                desc.max_elements,
+                desc.access,
+            );
+            self.queue_individual_frame(source, Priority::System, &payload);
+        } else {
+            // Property not found
+            let payload = application_layer::encode_property_description_response(
+                object_index,
+                0,
+                0,
+                false,
+                0,
+                0,
+                0,
+            );
+            self.queue_individual_frame(source, Priority::System, &payload);
+        }
+    }
+
+    fn handle_memory_ext_read(&mut self, source: u16, count: u8, address: u32) {
+        let addr = address as usize;
+        let len = count as usize;
+        let (return_code, data) = if addr + len <= self.memory_area.len() {
+            (0, self.memory_area[addr..addr + len].to_vec())
+        } else {
+            (1, Vec::new()) // out of range
+        };
+        let payload =
+            application_layer::encode_memory_ext_read_response(return_code, address, &data);
+        self.queue_individual_frame(source, Priority::System, &payload);
+    }
+
+    fn handle_memory_ext_write(&mut self, source: u16, address: u32, data: &[u8]) {
+        let addr = address as usize;
+        let needed = addr + data.len();
+        if needed > self.memory_area.len() {
+            self.memory_area.resize(needed, 0);
+        }
+        self.memory_area[addr..addr + data.len()].copy_from_slice(data);
+        let payload = application_layer::encode_memory_ext_write_response(0, address);
+        self.queue_individual_frame(source, Priority::System, &payload);
+    }
+
+    fn handle_individual_address_serial_number_read(&mut self, serial: [u8; 6]) {
+        let device_serial = device_object::serial_number(self.device());
+        if serial == device_serial {
+            let payload = application_layer::encode_individual_address_serial_number_response(
+                serial, 0, // domain address (IP devices: 0)
+            );
+            // Respond as broadcast
+            let src = self.individual_address();
+            let dst = DestinationAddress::Group(GroupAddress::from_raw(0));
+            self.outbox.push_back(CemiFrame::new_l_data(
+                MessageCode::LDataReq,
+                src,
+                dst,
+                Priority::System,
+                &payload,
+            ));
+        }
+    }
+
+    fn handle_individual_address_serial_number_write(&mut self, serial: [u8; 6], address: u16) {
+        let device_serial = device_object::serial_number(self.device());
+        if serial == device_serial {
+            device_object::set_individual_address(self.device_mut(), address);
+        }
+    }
+
+    fn handle_system_network_parameter_read(
+        &mut self,
+        object_type: u16,
+        property_id: u16,
+        test_info: &[u8],
+    ) {
+        // Only respond to PID_SERIAL_NUMBER (11) on device object (0)
+        if object_type == 0 && property_id == 11 {
+            let serial = device_object::serial_number(self.device());
+            let payload = application_layer::encode_system_network_parameter_response(
+                object_type,
+                property_id,
+                test_info,
+                &serial,
+            );
+            let src = self.individual_address();
+            let dst = DestinationAddress::Group(GroupAddress::from_raw(0));
+            self.outbox.push_back(CemiFrame::new_l_data(
+                MessageCode::LDataReq,
+                src,
+                dst,
+                Priority::System,
+                &payload,
+            ));
+        }
+    }
+
+    fn queue_authorize_response(&mut self, destination: u16, level: u8) {
+        let payload = application_layer::encode_authorize_response(level);
+        self.queue_individual_frame(destination, Priority::System, &payload);
+    }
+
+    fn queue_key_response(&mut self, destination: u16, level: u8) {
+        let payload = application_layer::encode_key_response(level);
+        self.queue_individual_frame(destination, Priority::System, &payload);
+    }
+
+    fn queue_function_property_state_response(
+        &mut self,
+        destination: u16,
+        object_index: u8,
+        property_id: u8,
+        result: &[u8],
+    ) {
+        let payload = application_layer::encode_function_property_state_response(
+            object_index,
+            property_id,
+            result,
+        );
+        self.queue_individual_frame(destination, Priority::System, &payload);
+    }
+
+    fn queue_adc_response(&mut self, destination: u16, channel: u8, count: u8) {
+        let payload = application_layer::encode_adc_response(channel, count, 0);
+        self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
     // ── Frame builders ────────────────────────────────────────

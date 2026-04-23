@@ -3,6 +3,8 @@
 
 //! KNX Device Object — the mandatory root interface object.
 
+use alloc::vec::Vec;
+
 use knx_core::address::IndividualAddress;
 
 use crate::interface_object::{InterfaceObject, ObjectType};
@@ -129,8 +131,8 @@ fn add_config_properties(obj: &mut InterfaceObject, hw_type: [u8; 6]) {
 
 /// Read the individual address from a device object.
 pub fn individual_address(obj: &InterfaceObject) -> IndividualAddress {
-    let mut subnet = alloc::vec::Vec::new();
-    let mut device = alloc::vec::Vec::new();
+    let mut subnet = Vec::new();
+    let mut device = Vec::new();
     obj.read_property(PropertyId::SubnetAddr, 1, 1, &mut subnet);
     obj.read_property(PropertyId::DeviceAddr, 1, 1, &mut device);
     let s = subnet.first().copied().unwrap_or(0xFF);
@@ -148,7 +150,7 @@ pub fn set_individual_address(obj: &mut InterfaceObject, addr: u16) {
 
 /// Check if programming mode is active.
 pub fn prog_mode(obj: &InterfaceObject) -> bool {
-    let mut buf = alloc::vec::Vec::new();
+    let mut buf = Vec::new();
     obj.read_property(PropertyId::ProgMode, 1, 1, &mut buf);
     buf.first().copied().unwrap_or(0) != 0
 }
@@ -156,6 +158,16 @@ pub fn prog_mode(obj: &InterfaceObject) -> bool {
 /// Set programming mode.
 pub fn set_prog_mode(obj: &mut InterfaceObject, enabled: bool) {
     obj.write_property(PropertyId::ProgMode, 1, 1, &[u8::from(enabled)]);
+}
+
+/// Read the device serial number (6 bytes).
+pub fn serial_number(obj: &InterfaceObject) -> [u8; 6] {
+    let mut buf = Vec::new();
+    obj.read_property(PropertyId::SerialNumber, 1, 1, &mut buf);
+    let mut serial = [0u8; 6];
+    let len = buf.len().min(6);
+    serial[..len].copy_from_slice(&buf[..len]);
+    serial
 }
 
 #[cfg(test)]
@@ -170,7 +182,7 @@ mod tests {
     #[test]
     fn has_serial_number() {
         let obj = test_device();
-        let mut buf = alloc::vec::Vec::new();
+        let mut buf = Vec::new();
         obj.read_property(PropertyId::SerialNumber, 1, 1, &mut buf);
         assert_eq!(buf, &[0x00, 0xFA, 0x01, 0x02, 0x03, 0x04]);
     }
