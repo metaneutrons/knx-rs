@@ -77,6 +77,170 @@ pub fn encode_memory_response(address: u16, data: &[u8]) -> Vec<u8> {
     payload
 }
 
+/// Encode an `AuthorizeResponse` APDU payload.
+pub fn encode_authorize_response(level: u8) -> Vec<u8> {
+    alloc::vec![0x03, 0xD2, level]
+}
+
+/// Encode a `KeyResponse` APDU payload.
+pub fn encode_key_response(level: u8) -> Vec<u8> {
+    alloc::vec![0x03, 0xD4, level]
+}
+
+/// Encode a `RestartResponse` APDU payload (master reset response).
+pub fn encode_restart_response(error_code: u8, process_time: u16) -> Vec<u8> {
+    let t = process_time.to_be_bytes();
+    alloc::vec![0x03, 0xA1, error_code, t[0], t[1]]
+}
+
+/// Encode a `PropertyDescriptionResponse` APDU payload.
+pub fn encode_property_description_response(
+    object_index: u8,
+    property_id: u8,
+    property_index: u8,
+    write_enable: bool,
+    pdt: u8,
+    max_elements: u16,
+    access: u8,
+) -> Vec<u8> {
+    let type_byte = if write_enable {
+        0x80 | (pdt & 0x3F)
+    } else {
+        pdt & 0x3F
+    };
+    let max_hi = ((max_elements >> 8) & 0x0F) as u8;
+    let max_lo = (max_elements & 0xFF) as u8;
+    alloc::vec![
+        0x03,
+        0xD9,
+        object_index,
+        property_id,
+        property_index,
+        type_byte,
+        max_hi,
+        max_lo,
+        access
+    ]
+}
+
+/// Encode a `MemoryExtReadResponse` APDU payload.
+pub fn encode_memory_ext_read_response(return_code: u8, address: u32, data: &[u8]) -> Vec<u8> {
+    let a = address.to_be_bytes();
+    let mut payload = Vec::with_capacity(6 + data.len());
+    payload.push(0x01);
+    payload.push(0xFE);
+    payload.push(return_code);
+    payload.extend_from_slice(&a[1..4]); // 24-bit address
+    payload.extend_from_slice(data);
+    payload
+}
+
+/// Encode a `MemoryExtWriteResponse` APDU payload.
+pub fn encode_memory_ext_write_response(return_code: u8, address: u32) -> Vec<u8> {
+    let a = address.to_be_bytes();
+    alloc::vec![0x01, 0xFC, return_code, a[1], a[2], a[3]]
+}
+
+/// Encode an `IndividualAddressSerialNumberReadResponse` APDU payload.
+pub fn encode_individual_address_serial_number_response(
+    serial: [u8; 6],
+    domain_address: u16,
+) -> Vec<u8> {
+    let d = domain_address.to_be_bytes();
+    let mut payload = Vec::with_capacity(10);
+    payload.push(0x03);
+    payload.push(0xDD);
+    payload.extend_from_slice(&serial);
+    payload.extend_from_slice(&d);
+    payload
+}
+
+/// Encode a `SystemNetworkParameterResponse` APDU payload.
+pub fn encode_system_network_parameter_response(
+    object_type: u16,
+    property_id: u16,
+    test_info: &[u8],
+    test_result: &[u8],
+) -> Vec<u8> {
+    let ot = object_type.to_be_bytes();
+    let pid_shifted = property_id << 4;
+    let pid_bytes = pid_shifted.to_be_bytes();
+    let mut payload = Vec::with_capacity(6 + test_info.len() + test_result.len());
+    payload.push(0x01);
+    payload.push(0xC9);
+    payload.extend_from_slice(&ot);
+    payload.extend_from_slice(&pid_bytes);
+    payload.extend_from_slice(test_info);
+    payload.extend_from_slice(test_result);
+    payload
+}
+
+/// Encode an `AdcResponse` APDU payload.
+pub fn encode_adc_response(channel: u8, count: u8, value: u16) -> Vec<u8> {
+    let v = value.to_be_bytes();
+    alloc::vec![0x01, 0xC0 | (channel & 0x3F), count, v[0], v[1]]
+}
+
+/// Encode a `FunctionPropertyStateResponse` APDU payload.
+pub fn encode_function_property_state_response(
+    object_index: u8,
+    property_id: u8,
+    result_data: &[u8],
+) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(4 + result_data.len());
+    payload.push(0x02);
+    payload.push(0xC9);
+    payload.push(object_index);
+    payload.push(property_id);
+    payload.extend_from_slice(result_data);
+    payload
+}
+
+/// Encode a `PropertyValueExtResponse` APDU payload.
+pub fn encode_property_value_ext_response(
+    object_type: u16,
+    object_instance: u16,
+    property_id: u16,
+    count: u8,
+    start_index: u16,
+    data: &[u8],
+) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(9 + data.len());
+    payload.push(0x01);
+    payload.push(0xCD);
+    encode_ext_property_header(
+        &mut payload,
+        object_type,
+        object_instance,
+        property_id,
+        count,
+        start_index,
+    );
+    payload.extend_from_slice(data);
+    payload
+}
+
+/// Helper to encode the common extended property header.
+fn encode_ext_property_header(
+    buf: &mut Vec<u8>,
+    object_type: u16,
+    object_instance: u16,
+    property_id: u16,
+    count: u8,
+    start_index: u16,
+) {
+    let ot = object_type.to_be_bytes();
+    buf.extend_from_slice(&ot);
+    #[expect(clippy::cast_possible_truncation)]
+    {
+        buf.push(((object_instance >> 4) & 0xFF) as u8);
+        buf.push((((object_instance & 0x0F) << 4) | ((property_id >> 8) & 0x0F)) as u8);
+        buf.push((property_id & 0xFF) as u8);
+    }
+    buf.push(count);
+    buf.extend_from_slice(&start_index.to_be_bytes());
+}
+
 /// Shared helper for group value write/response encoding.
 /// Applies the short-value optimization (≤6 bits packed into APCI byte).
 fn encode_group_value(tpci: u8, apci: u8, data: &[u8]) -> Vec<u8> {
@@ -175,11 +339,153 @@ pub enum AppIndication {
         /// Key.
         key: u32,
     },
+    /// Restart master reset (from ETS).
+    RestartMasterReset {
+        /// Erase code.
+        erase_code: u8,
+        /// Channel number.
+        channel: u8,
+    },
+    /// Property description read (from ETS).
+    PropertyDescriptionRead {
+        /// Object index.
+        object_index: u8,
+        /// Property ID (0 = by index).
+        property_id: u8,
+        /// Property index.
+        property_index: u8,
+    },
+    /// Memory extended read (32-bit address).
+    MemoryExtRead {
+        /// Number of bytes.
+        count: u8,
+        /// 24-bit memory address.
+        address: u32,
+    },
+    /// Memory extended write (32-bit address).
+    MemoryExtWrite {
+        /// Number of bytes.
+        count: u8,
+        /// 24-bit memory address.
+        address: u32,
+        /// Data.
+        data: Vec<u8>,
+    },
+    /// Individual address serial number read (broadcast).
+    IndividualAddressSerialNumberRead {
+        /// Serial number (6 bytes).
+        serial: [u8; 6],
+    },
+    /// Individual address serial number write (broadcast).
+    IndividualAddressSerialNumberWrite {
+        /// Serial number (6 bytes).
+        serial: [u8; 6],
+        /// New individual address.
+        address: u16,
+    },
+    /// Key write (from ETS).
+    KeyWrite {
+        /// Access level.
+        level: u8,
+        /// Key value.
+        key: u32,
+    },
+    /// Function property command.
+    FunctionPropertyCommand {
+        /// Object index.
+        object_index: u8,
+        /// Property ID.
+        property_id: u8,
+        /// Function input data.
+        data: Vec<u8>,
+    },
+    /// Function property state read.
+    FunctionPropertyState {
+        /// Object index.
+        object_index: u8,
+        /// Property ID.
+        property_id: u8,
+        /// Function input data.
+        data: Vec<u8>,
+    },
+    /// System network parameter read (broadcast).
+    SystemNetworkParameterRead {
+        /// Object type.
+        object_type: u16,
+        /// Property ID.
+        property_id: u16,
+        /// Test info data.
+        test_info: Vec<u8>,
+    },
+    /// ADC read.
+    AdcRead {
+        /// Channel number.
+        channel: u8,
+        /// Read count.
+        count: u8,
+    },
+    /// Property value extended read.
+    PropertyValueExtRead {
+        /// Object type.
+        object_type: u16,
+        /// Object instance.
+        object_instance: u16,
+        /// Property ID.
+        property_id: u16,
+        /// Number of elements.
+        count: u8,
+        /// Start index.
+        start_index: u16,
+    },
+    /// Property value extended write (confirmed).
+    PropertyValueExtWriteCon {
+        /// Object type.
+        object_type: u16,
+        /// Object instance.
+        object_instance: u16,
+        /// Property ID.
+        property_id: u16,
+        /// Number of elements.
+        count: u8,
+        /// Start index.
+        start_index: u16,
+        /// Data.
+        data: Vec<u8>,
+    },
+    /// Property value extended write (unconfirmed).
+    PropertyValueExtWriteUnCon {
+        /// Object type.
+        object_type: u16,
+        /// Object instance.
+        object_instance: u16,
+        /// Property ID.
+        property_id: u16,
+        /// Number of elements.
+        count: u8,
+        /// Start index.
+        start_index: u16,
+        /// Data.
+        data: Vec<u8>,
+    },
+    /// Property extended description read.
+    PropertyExtDescriptionRead {
+        /// Object type.
+        object_type: u16,
+        /// Object instance.
+        object_instance: u16,
+        /// Property ID.
+        property_id: u16,
+        /// Description type.
+        description_type: u8,
+        /// Property index.
+        property_index: u16,
+    },
 }
 
 /// Parse an APDU type + data into an `AppIndication`.
 ///
 /// Returns `None` for unsupported or malformed APDUs.
+#[expect(clippy::too_many_lines)]
 pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndication> {
     match apdu_type {
         ApduType::GroupValueWrite => Some(AppIndication::GroupValueWrite {
@@ -228,8 +534,137 @@ pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndicatio
         ApduType::AuthorizeRequest if data.len() >= 5 => Some(AppIndication::AuthorizeRequest {
             key: u32::from_be_bytes([data[1], data[2], data[3], data[4]]),
         }),
+        ApduType::RestartMasterReset if data.len() >= 3 => {
+            Some(AppIndication::RestartMasterReset {
+                erase_code: data[1],
+                channel: data[2],
+            })
+        }
+        ApduType::PropertyDescriptionRead if data.len() >= 3 => {
+            Some(AppIndication::PropertyDescriptionRead {
+                object_index: data[0],
+                property_id: data[1],
+                property_index: data[2],
+            })
+        }
+        ApduType::MemoryExtRead if data.len() >= 4 => Some(AppIndication::MemoryExtRead {
+            count: data[0],
+            address: u32::from_be_bytes([0, data[1], data[2], data[3]]),
+        }),
+        ApduType::MemoryExtWrite if data.len() >= 4 => Some(AppIndication::MemoryExtWrite {
+            count: data[0],
+            address: u32::from_be_bytes([0, data[1], data[2], data[3]]),
+            data: data[4..].to_vec(),
+        }),
+        ApduType::IndividualAddressSerialNumberRead if data.len() >= 6 => {
+            let mut serial = [0u8; 6];
+            serial.copy_from_slice(&data[0..6]);
+            Some(AppIndication::IndividualAddressSerialNumberRead { serial })
+        }
+        ApduType::IndividualAddressSerialNumberWrite if data.len() >= 8 => {
+            let mut serial = [0u8; 6];
+            serial.copy_from_slice(&data[0..6]);
+            Some(AppIndication::IndividualAddressSerialNumberWrite {
+                serial,
+                address: u16::from_be_bytes([data[6], data[7]]),
+            })
+        }
+        ApduType::KeyWrite if data.len() >= 5 => Some(AppIndication::KeyWrite {
+            level: data[0],
+            key: u32::from_be_bytes([data[1], data[2], data[3], data[4]]),
+        }),
+        ApduType::FunctionPropertyCommand if data.len() >= 2 => {
+            Some(AppIndication::FunctionPropertyCommand {
+                object_index: data[0],
+                property_id: data[1],
+                data: data[2..].to_vec(),
+            })
+        }
+        ApduType::FunctionPropertyState if data.len() >= 2 => {
+            Some(AppIndication::FunctionPropertyState {
+                object_index: data[0],
+                property_id: data[1],
+                data: data[2..].to_vec(),
+            })
+        }
+        ApduType::SystemNetworkParameterRead if data.len() >= 4 => {
+            let object_type = u16::from_be_bytes([data[0], data[1]]);
+            let pid_raw = u16::from_be_bytes([data[2], data[3]]);
+            Some(AppIndication::SystemNetworkParameterRead {
+                object_type,
+                property_id: pid_raw >> 4,
+                test_info: data[3..].to_vec(),
+            })
+        }
+        ApduType::AdcRead => Some(AppIndication::AdcRead {
+            channel: data.first().copied().unwrap_or(0) & 0x3F,
+            count: data.get(1).copied().unwrap_or(1),
+        }),
+        ApduType::PropertyValueExtRead if data.len() >= 7 => {
+            let (ot, oi, pid, count, si) = parse_ext_property_header(data);
+            Some(AppIndication::PropertyValueExtRead {
+                object_type: ot,
+                object_instance: oi,
+                property_id: pid,
+                count,
+                start_index: si,
+            })
+        }
+        ApduType::PropertyValueExtWriteCon if data.len() >= 7 => {
+            let (ot, oi, pid, count, si) = parse_ext_property_header(data);
+            Some(AppIndication::PropertyValueExtWriteCon {
+                object_type: ot,
+                object_instance: oi,
+                property_id: pid,
+                count,
+                start_index: si,
+                data: data[7..].to_vec(),
+            })
+        }
+        ApduType::PropertyValueExtWriteUnCon if data.len() >= 7 => {
+            let (ot, oi, pid, count, si) = parse_ext_property_header(data);
+            Some(AppIndication::PropertyValueExtWriteUnCon {
+                object_type: ot,
+                object_instance: oi,
+                property_id: pid,
+                count,
+                start_index: si,
+                data: data[7..].to_vec(),
+            })
+        }
+        ApduType::PropertyExtDescriptionRead if data.len() >= 7 => {
+            let object_type = u16::from_be_bytes([data[0], data[1]]);
+            let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
+            let property_id = (u16::from(data[3] & 0x0F) << 8) | u16::from(data[4]);
+            let description_type = data[5] >> 4;
+            let property_index = (u16::from(data[5] & 0x0F) << 8) | u16::from(data[6]);
+            Some(AppIndication::PropertyExtDescriptionRead {
+                object_type,
+                object_instance,
+                property_id,
+                description_type,
+                property_index,
+            })
+        }
         _ => None,
     }
+}
+
+/// Parse the common header for extended property services.
+/// Returns `(object_type, object_instance, property_id, count, start_index)`.
+fn parse_ext_property_header(data: &[u8]) -> (u16, u16, u16, u8, u16) {
+    let object_type = u16::from_be_bytes([data[0], data[1]]);
+    let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
+    let property_id = (u16::from(data[3] & 0x0F) << 8) | u16::from(data[4]);
+    let count = data[5];
+    let start_index = u16::from_be_bytes([data[6], data.get(7).copied().unwrap_or(0)]);
+    (
+        object_type,
+        object_instance,
+        property_id,
+        count,
+        start_index,
+    )
 }
 
 #[cfg(test)]
