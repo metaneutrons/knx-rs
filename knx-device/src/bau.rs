@@ -23,6 +23,7 @@ use crate::group_object::{ComFlag, GroupObjectStore};
 use crate::group_object_table::GroupObjectTable;
 use crate::interface_object::InterfaceObject;
 use crate::property::{Property, PropertyId};
+use crate::table_object::TableObject;
 use crate::transport_layer::TransportLayer;
 
 /// Mask version for IP devices (System B).
@@ -36,6 +37,12 @@ pub struct Bau {
     pub address_table: AddressTable,
     /// Association table.
     pub association_table: AssociationTable,
+    /// Address table object (Load State Machine for ETS programming).
+    pub addr_table_object: TableObject,
+    /// Association table object (Load State Machine for ETS programming).
+    pub assoc_table_object: TableObject,
+    /// Application program table object (Load State Machine for ETS programming).
+    pub app_program_object: TableObject,
     /// Group object table.
     pub group_object_table: GroupObjectTable,
     /// Group objects.
@@ -58,6 +65,9 @@ impl Bau {
             objects: vec![device],
             address_table: AddressTable::new(),
             association_table: AssociationTable::new(),
+            addr_table_object: TableObject::new(),
+            assoc_table_object: TableObject::new(),
+            app_program_object: TableObject::new(),
             group_object_table: GroupObjectTable::new(),
             group_objects: GroupObjectStore::new(group_object_count, default_go_size),
             transport: TransportLayer::new(),
@@ -238,7 +248,7 @@ impl Bau {
         self.outbox.pop_front()
     }
 
-    /// Set the memory area (for MemoryRead/Write from ETS).
+    /// Set the memory area (for `MemoryRead`/`MemoryWrite` from ETS).
     pub fn set_memory_area(&mut self, data: Vec<u8>) {
         self.memory_area = data;
     }
@@ -246,6 +256,78 @@ impl Bau {
     /// Get the memory area (for persistence after ETS programming).
     pub fn memory_area(&self) -> &[u8] {
         &self.memory_area
+    }
+
+    /// Serialize the full device state for persistence.
+    ///
+    /// Format: `[addr_table_obj:9][assoc_table_obj:9][app_program_obj:9][mem_len:4LE][memory_area]`
+    pub fn save(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(TableObject::SAVE_SIZE * 3 + 4 + self.memory_area.len());
+        self.addr_table_object.save(&mut buf);
+        self.assoc_table_object.save(&mut buf);
+        self.app_program_object.save(&mut buf);
+        #[expect(clippy::cast_possible_truncation)]
+        let mem_len = self.memory_area.len() as u32;
+        buf.extend_from_slice(&mem_len.to_le_bytes());
+        buf.extend_from_slice(&self.memory_area);
+        buf
+    }
+
+    /// Restore device state from persisted data.
+    ///
+    /// After restoring, the address and association tables are automatically
+    /// parsed from the memory area if their table objects are in `Loaded` state.
+    ///
+    /// Returns `true` if restore succeeded.
+    pub fn restore(&mut self, data: &[u8]) -> bool {
+        let header = TableObject::SAVE_SIZE * 3 + 4;
+        if data.len() < header {
+            return false;
+        }
+
+        let mut offset = 0;
+        let n = self.addr_table_object.restore(&data[offset..]);
+        if n == 0 {
+            return false;
+        }
+        offset += n;
+
+        let n = self.assoc_table_object.restore(&data[offset..]);
+        if n == 0 {
+            return false;
+        }
+        offset += n;
+
+        let n = self.app_program_object.restore(&data[offset..]);
+        if n == 0 {
+            return false;
+        }
+        offset += n;
+
+        let mem_len = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
+        offset += 4;
+
+        if data.len() < offset + mem_len {
+            return false;
+        }
+        self.memory_area = data[offset..offset + mem_len].to_vec();
+
+        // Reload tables from memory if they were in Loaded state
+        let addr_data = self.addr_table_object.data(&self.memory_area).to_vec();
+        if !addr_data.is_empty() {
+            self.address_table.load(&addr_data);
+        }
+        let assoc_data = self.assoc_table_object.data(&self.memory_area).to_vec();
+        if !assoc_data.is_empty() {
+            self.association_table.load(&assoc_data);
+        }
+
+        true
     }
 
     /// Load tables from the memory area at the given offsets.
@@ -336,12 +418,30 @@ impl Bau {
         start_index: u16,
     ) {
         let Ok(pid) = PropertyId::try_from(property_id) else {
-            // Unknown property — send error response (count=0)
             self.queue_property_response(source, object_index, property_id, 0, start_index, &[]);
             return;
         };
+
+        // Intercept LoadStateControl reads for table objects
+        if pid == PropertyId::LoadStateControl && start_index == 1 {
+            let state = match object_index {
+                1 => self.addr_table_object.load_state() as u8,
+                2 => self.assoc_table_object.load_state() as u8,
+                _ if object_index >= 3 => self.app_program_object.load_state() as u8,
+                _ => 0,
+            };
+            self.queue_property_response(
+                source,
+                object_index,
+                property_id,
+                1,
+                start_index,
+                &[state],
+            );
+            return;
+        }
+
         let Some(obj) = self.objects.get(object_index as usize) else {
-            // Unknown object — send error response (count=0)
             self.queue_property_response(source, object_index, property_id, 0, start_index, &[]);
             return;
         };
@@ -385,6 +485,37 @@ impl Bau {
         let Ok(pid) = PropertyId::try_from(property_id) else {
             return;
         };
+
+        // Intercept LoadStateControl writes for table objects
+        if pid == PropertyId::LoadStateControl {
+            let mem_len = self.memory_area.len();
+            match object_index {
+                1 => {
+                    if self.addr_table_object.handle_load_event(data, mem_len) {
+                        // Address table loaded — parse it
+                        let tbl_data = self.addr_table_object.data(&self.memory_area).to_vec();
+                        self.address_table.load(&tbl_data);
+                    }
+                }
+                2 => {
+                    if self.assoc_table_object.handle_load_event(data, mem_len) {
+                        // Association table loaded — parse it
+                        let tbl_data = self.assoc_table_object.data(&self.memory_area).to_vec();
+                        self.association_table.load(&tbl_data);
+                    }
+                }
+                _ => {
+                    // Application program or other objects
+                    if object_index >= 3 {
+                        self.app_program_object.handle_load_event(data, mem_len);
+                    }
+                }
+            }
+            // Send read-back response with current load state
+            self.handle_property_read(source, object_index, property_id, count, start_index);
+            return;
+        }
+
         if let Some(obj) = self.objects.get_mut(object_index as usize) {
             obj.write_property(pid, start_index, count, data);
         }
@@ -659,5 +790,43 @@ mod tests {
         bau.queue_device_descriptor_response(0x1102);
         let resp = bau.next_outgoing_frame().unwrap();
         assert_eq!(resp.destination_address_raw(), 0x1102);
+    }
+
+    #[test]
+    fn save_restore_roundtrip() {
+        let mut bau = test_bau();
+
+        // Simulate ETS programming: write some memory and mark tables as loaded
+        bau.handle_memory_write(0x0000, &[0xAA, 0xBB, 0xCC]);
+
+        // Manually set up address table object as loaded at offset 3, size 6
+        bau.addr_table_object.handle_load_event(&[1], 0); // START_LOADING
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x06, 0x01, 0x00]; // alloc 6 bytes
+        bau.addr_table_object.handle_load_event(&alc, 3);
+        // Write address table data at offset 3
+        bau.handle_memory_write(0x0003, &[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]); // 2 entries: 1/0/1, 1/0/2
+        let became_loaded = bau.addr_table_object.handle_load_event(&[2], 9); // LOAD_COMPLETED
+        assert!(became_loaded);
+        let tbl_data = bau.addr_table_object.data(&bau.memory_area).to_vec();
+        bau.address_table.load(&tbl_data);
+
+        // Verify table works
+        assert_eq!(bau.address_table.get_tsap(0x0801), Some(1));
+        assert_eq!(bau.address_table.get_tsap(0x0802), Some(2));
+
+        // Save
+        let saved = bau.save();
+
+        // Restore into a fresh BAU
+        let mut bau2 = test_bau();
+        assert!(bau2.restore(&saved));
+
+        // Verify tables are restored
+        assert_eq!(bau2.address_table.get_tsap(0x0801), Some(1));
+        assert_eq!(bau2.address_table.get_tsap(0x0802), Some(2));
+        assert_eq!(
+            bau2.memory_area(),
+            &[0xAA, 0xBB, 0xCC, 0x00, 0x02, 0x08, 0x01, 0x08, 0x02]
+        );
     }
 }
