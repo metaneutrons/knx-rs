@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use knx_core::message::ApduType;
 
 use super::{
-    apci_bytes, DESCRIPTOR_TYPE_UNSUPPORTED, MASK_12BIT, MASK_4BIT, MASK_6BIT, WRITE_ENABLE_FLAG,
+    DESCRIPTOR_TYPE_UNSUPPORTED, MASK_4BIT, MASK_6BIT, MASK_12BIT, WRITE_ENABLE_FLAG, apci_bytes,
 };
 
 /// Encode a `GroupValueWrite` APDU payload.
@@ -120,7 +120,17 @@ pub fn encode_property_description_response(
     };
     let max_hi = ((max_elements >> 8) & u16::from(MASK_4BIT)) as u8;
     let max_lo = (max_elements & 0xFF) as u8;
-    alloc::vec![hi, lo, object_index, property_id, property_index, type_byte, max_hi, max_lo, access]
+    alloc::vec![
+        hi,
+        lo,
+        object_index,
+        property_id,
+        property_index,
+        type_byte,
+        max_hi,
+        max_lo,
+        access
+    ]
 }
 
 /// Encode a `MemoryExtReadResponse` APDU payload.

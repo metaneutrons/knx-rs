@@ -40,207 +40,278 @@ pub fn parse_raw_apdu(data: &[u8]) -> Result<AppIndication, AppLayerError> {
 ///
 /// Returns `AppLayerError::UnsupportedApdu` for unknown APDU types,
 /// `AppLayerError::TruncatedPayload` if the data is too short.
-#[expect(clippy::too_many_lines)]
-pub fn parse_indication(
-    apdu_type: ApduType,
-    data: &[u8],
-) -> Result<AppIndication, AppLayerError> {
+pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Result<AppIndication, AppLayerError> {
     match apdu_type {
-        ApduType::GroupValueWrite => Ok(AppIndication::GroupValueWrite {
-            asap: 0,
-            data: data.to_vec(),
-        }),
-        ApduType::GroupValueResponse => Ok(AppIndication::GroupValueResponse {
-            asap: 0,
-            data: data.to_vec(),
-        }),
-        ApduType::GroupValueRead => Ok(AppIndication::GroupValueRead { asap: 0 }),
-        ApduType::PropertyValueRead => {
-            check_len(data, 3)?;
-            Ok(AppIndication::PropertyValueRead {
-                object_index: data[0],
-                property_id: data[1],
-                count: (data[2] >> 4) & MASK_4BIT,
-                start_index: u16::from(data[2] & MASK_4BIT) << 8
-                    | u16::from(*data.get(3).unwrap_or(&0)),
-            })
-        }
-        ApduType::PropertyValueWrite => {
-            check_len(data, 4)?;
-            Ok(AppIndication::PropertyValueWrite {
-                object_index: data[0],
-                property_id: data[1],
-                count: (data[2] >> 4) & MASK_4BIT,
-                start_index: u16::from(data[2] & MASK_4BIT) << 8 | u16::from(data[3]),
-                data: data[4..].to_vec(),
-            })
-        }
-        ApduType::DeviceDescriptorRead => Ok(AppIndication::DeviceDescriptorRead {
-            descriptor_type: data.first().copied().unwrap_or(0) & MASK_6BIT,
-        }),
-        ApduType::MemoryRead => {
-            check_len(data, 3)?;
-            Ok(AppIndication::MemoryRead {
-                count: data[0] & MASK_4BIT,
-                address: u16::from_be_bytes([data[1], data[2]]),
-            })
-        }
-        ApduType::MemoryWrite => {
-            check_len(data, 3)?;
-            Ok(AppIndication::MemoryWrite {
-                count: data[0] & MASK_4BIT,
-                address: u16::from_be_bytes([data[1], data[2]]),
-                data: data[3..].to_vec(),
-            })
-        }
-        ApduType::Restart => Ok(AppIndication::Restart),
-        ApduType::IndividualAddressWrite => {
-            check_len(data, 2)?;
-            Ok(AppIndication::IndividualAddressWrite {
-                address: u16::from_be_bytes([data[0], data[1]]),
-            })
-        }
-        ApduType::IndividualAddressRead => Ok(AppIndication::IndividualAddressRead),
-        ApduType::AuthorizeRequest => {
-            check_len(data, 5)?;
-            Ok(AppIndication::AuthorizeRequest {
-                key: u32::from_be_bytes([data[1], data[2], data[3], data[4]]),
-            })
-        }
-        ApduType::RestartMasterReset => {
-            check_len(data, 3)?;
-            Ok(AppIndication::RestartMasterReset {
-                erase_code: data[1],
-                channel: data[2],
-            })
-        }
-        ApduType::PropertyDescriptionRead => {
-            check_len(data, 3)?;
-            Ok(AppIndication::PropertyDescriptionRead {
-                object_index: data[0],
-                property_id: data[1],
-                property_index: data[2],
-            })
-        }
-        ApduType::MemoryExtRead => {
-            check_len(data, 4)?;
-            Ok(AppIndication::MemoryExtRead {
-                count: data[0],
-                address: u32::from_be_bytes([0, data[1], data[2], data[3]]),
-            })
-        }
-        ApduType::MemoryExtWrite => {
-            check_len(data, 4)?;
-            Ok(AppIndication::MemoryExtWrite {
-                count: data[0],
-                address: u32::from_be_bytes([0, data[1], data[2], data[3]]),
-                data: data[4..].to_vec(),
-            })
-        }
+        ApduType::GroupValueWrite => Ok(parse_group_value_write(data)),
+        ApduType::GroupValueResponse => Ok(parse_group_value_response(data)),
+        ApduType::GroupValueRead => Ok(parse_group_value_read(data)),
+        ApduType::PropertyValueRead => parse_property_value_read(data),
+        ApduType::PropertyValueWrite => parse_property_value_write(data),
+        ApduType::DeviceDescriptorRead => Ok(parse_device_descriptor_read(data)),
+        ApduType::MemoryRead => parse_memory_read(data),
+        ApduType::MemoryWrite => parse_memory_write(data),
+        ApduType::Restart => Ok(parse_restart(data)),
+        ApduType::IndividualAddressWrite => parse_individual_address_write(data),
+        ApduType::IndividualAddressRead => Ok(parse_individual_address_read(data)),
+        ApduType::AuthorizeRequest => parse_authorize_request(data),
+        ApduType::RestartMasterReset => parse_restart_master_reset(data),
+        ApduType::PropertyDescriptionRead => parse_property_description_read(data),
+        ApduType::MemoryExtRead => parse_memory_ext_read(data),
+        ApduType::MemoryExtWrite => parse_memory_ext_write(data),
         ApduType::IndividualAddressSerialNumberRead => {
-            check_len(data, 6)?;
-            let mut serial = [0u8; 6];
-            serial.copy_from_slice(&data[0..6]);
-            Ok(AppIndication::IndividualAddressSerialNumberRead { serial })
+            parse_individual_address_serial_number_read(data)
         }
         ApduType::IndividualAddressSerialNumberWrite => {
-            check_len(data, 8)?;
-            let mut serial = [0u8; 6];
-            serial.copy_from_slice(&data[0..6]);
-            Ok(AppIndication::IndividualAddressSerialNumberWrite {
-                serial,
-                address: u16::from_be_bytes([data[6], data[7]]),
-            })
+            parse_individual_address_serial_number_write(data)
         }
-        ApduType::KeyWrite => {
-            check_len(data, 5)?;
-            Ok(AppIndication::KeyWrite {
-                level: data[0],
-                key: u32::from_be_bytes([data[1], data[2], data[3], data[4]]),
-            })
-        }
-        ApduType::FunctionPropertyCommand => {
-            check_len(data, 2)?;
-            Ok(AppIndication::FunctionPropertyCommand {
-                object_index: data[0],
-                property_id: data[1],
-                data: data[2..].to_vec(),
-            })
-        }
-        ApduType::FunctionPropertyState => {
-            check_len(data, 2)?;
-            Ok(AppIndication::FunctionPropertyState {
-                object_index: data[0],
-                property_id: data[1],
-                data: data[2..].to_vec(),
-            })
-        }
-        ApduType::SystemNetworkParameterRead => {
-            check_len(data, 4)?;
-            let object_type = u16::from_be_bytes([data[0], data[1]]);
-            let pid_raw = u16::from_be_bytes([data[2], data[3]]);
-            Ok(AppIndication::SystemNetworkParameterRead {
-                object_type,
-                property_id: pid_raw >> 4,
-                test_info: data[3..].to_vec(),
-            })
-        }
-        ApduType::AdcRead => Ok(AppIndication::AdcRead {
-            channel: data.first().copied().unwrap_or(0) & MASK_6BIT,
-            count: data.get(1).copied().unwrap_or(1),
-        }),
-        ApduType::PropertyValueExtRead => {
-            check_len(data, 7)?;
-            let (ot, oi, pid, count, si) = parse_ext_property_header(data);
-            Ok(AppIndication::PropertyValueExtRead {
-                object_type: ot,
-                object_instance: oi,
-                property_id: pid,
-                count,
-                start_index: si,
-            })
-        }
-        ApduType::PropertyValueExtWriteCon => {
-            check_len(data, 7)?;
-            let (ot, oi, pid, count, si) = parse_ext_property_header(data);
-            Ok(AppIndication::PropertyValueExtWriteCon {
-                object_type: ot,
-                object_instance: oi,
-                property_id: pid,
-                count,
-                start_index: si,
-                data: data[7..].to_vec(),
-            })
-        }
-        ApduType::PropertyValueExtWriteUnCon => {
-            check_len(data, 7)?;
-            let (ot, oi, pid, count, si) = parse_ext_property_header(data);
-            Ok(AppIndication::PropertyValueExtWriteUnCon {
-                object_type: ot,
-                object_instance: oi,
-                property_id: pid,
-                count,
-                start_index: si,
-                data: data[7..].to_vec(),
-            })
-        }
-        ApduType::PropertyExtDescriptionRead => {
-            check_len(data, 7)?;
-            let object_type = u16::from_be_bytes([data[0], data[1]]);
-            let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
-            let property_id = (u16::from(data[3] & MASK_4BIT) << 8) | u16::from(data[4]);
-            let description_type = data[5] >> 4;
-            let property_index = (u16::from(data[5] & MASK_4BIT) << 8) | u16::from(data[6]);
-            Ok(AppIndication::PropertyExtDescriptionRead {
-                object_type,
-                object_instance,
-                property_id,
-                description_type,
-                property_index,
-            })
-        }
+        ApduType::KeyWrite => parse_key_write(data),
+        ApduType::FunctionPropertyCommand => parse_function_property_command(data),
+        ApduType::FunctionPropertyState => parse_function_property_state(data),
+        ApduType::SystemNetworkParameterRead => parse_system_network_parameter_read(data),
+        ApduType::AdcRead => Ok(parse_adc_read(data)),
+        ApduType::PropertyValueExtRead => parse_property_value_ext_read(data),
+        ApduType::PropertyValueExtWriteCon => parse_property_value_ext_write_con(data),
+        ApduType::PropertyValueExtWriteUnCon => parse_property_value_ext_write_uncon(data),
+        ApduType::PropertyExtDescriptionRead => parse_property_ext_description_read(data),
         _ => Err(AppLayerError::UnsupportedApdu(apdu_type)),
     }
+}
+
+fn parse_group_value_write(data: &[u8]) -> AppIndication {
+    AppIndication::GroupValueWrite {
+        asap: 0,
+        data: data.to_vec(),
+    }
+}
+
+fn parse_group_value_response(data: &[u8]) -> AppIndication {
+    AppIndication::GroupValueResponse {
+        asap: 0,
+        data: data.to_vec(),
+    }
+}
+
+const fn parse_group_value_read(_data: &[u8]) -> AppIndication {
+    AppIndication::GroupValueRead { asap: 0 }
+}
+
+fn parse_property_value_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 3)?;
+    Ok(AppIndication::PropertyValueRead {
+        object_index: data[0],
+        property_id: data[1],
+        count: (data[2] >> 4) & MASK_4BIT,
+        start_index: u16::from(data[2] & MASK_4BIT) << 8 | u16::from(*data.get(3).unwrap_or(&0)),
+    })
+}
+
+fn parse_property_value_write(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 4)?;
+    Ok(AppIndication::PropertyValueWrite {
+        object_index: data[0],
+        property_id: data[1],
+        count: (data[2] >> 4) & MASK_4BIT,
+        start_index: u16::from(data[2] & MASK_4BIT) << 8 | u16::from(data[3]),
+        data: data[4..].to_vec(),
+    })
+}
+
+fn parse_device_descriptor_read(data: &[u8]) -> AppIndication {
+    AppIndication::DeviceDescriptorRead {
+        descriptor_type: data.first().copied().unwrap_or(0) & MASK_6BIT,
+    }
+}
+
+fn parse_memory_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 3)?;
+    Ok(AppIndication::MemoryRead {
+        count: data[0] & MASK_4BIT,
+        address: u16::from_be_bytes([data[1], data[2]]),
+    })
+}
+
+fn parse_memory_write(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 3)?;
+    Ok(AppIndication::MemoryWrite {
+        count: data[0] & MASK_4BIT,
+        address: u16::from_be_bytes([data[1], data[2]]),
+        data: data[3..].to_vec(),
+    })
+}
+
+const fn parse_restart(_data: &[u8]) -> AppIndication {
+    AppIndication::Restart
+}
+
+fn parse_individual_address_write(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 2)?;
+    Ok(AppIndication::IndividualAddressWrite {
+        address: u16::from_be_bytes([data[0], data[1]]),
+    })
+}
+
+const fn parse_individual_address_read(_data: &[u8]) -> AppIndication {
+    AppIndication::IndividualAddressRead
+}
+
+fn parse_authorize_request(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 5)?;
+    Ok(AppIndication::AuthorizeRequest {
+        key: u32::from_be_bytes([data[1], data[2], data[3], data[4]]),
+    })
+}
+
+fn parse_restart_master_reset(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 3)?;
+    Ok(AppIndication::RestartMasterReset {
+        erase_code: data[1],
+        channel: data[2],
+    })
+}
+
+fn parse_property_description_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 3)?;
+    Ok(AppIndication::PropertyDescriptionRead {
+        object_index: data[0],
+        property_id: data[1],
+        property_index: data[2],
+    })
+}
+
+fn parse_memory_ext_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 4)?;
+    Ok(AppIndication::MemoryExtRead {
+        count: data[0],
+        address: u32::from_be_bytes([0, data[1], data[2], data[3]]),
+    })
+}
+
+fn parse_memory_ext_write(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 4)?;
+    Ok(AppIndication::MemoryExtWrite {
+        count: data[0],
+        address: u32::from_be_bytes([0, data[1], data[2], data[3]]),
+        data: data[4..].to_vec(),
+    })
+}
+
+fn parse_individual_address_serial_number_read(
+    data: &[u8],
+) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 6)?;
+    let mut serial = [0u8; 6];
+    serial.copy_from_slice(&data[0..6]);
+    Ok(AppIndication::IndividualAddressSerialNumberRead { serial })
+}
+
+fn parse_individual_address_serial_number_write(
+    data: &[u8],
+) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 8)?;
+    let mut serial = [0u8; 6];
+    serial.copy_from_slice(&data[0..6]);
+    Ok(AppIndication::IndividualAddressSerialNumberWrite {
+        serial,
+        address: u16::from_be_bytes([data[6], data[7]]),
+    })
+}
+
+fn parse_key_write(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 5)?;
+    Ok(AppIndication::KeyWrite {
+        level: data[0],
+        key: u32::from_be_bytes([data[1], data[2], data[3], data[4]]),
+    })
+}
+
+fn parse_function_property_command(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 2)?;
+    Ok(AppIndication::FunctionPropertyCommand {
+        object_index: data[0],
+        property_id: data[1],
+        data: data[2..].to_vec(),
+    })
+}
+
+fn parse_function_property_state(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 2)?;
+    Ok(AppIndication::FunctionPropertyState {
+        object_index: data[0],
+        property_id: data[1],
+        data: data[2..].to_vec(),
+    })
+}
+
+fn parse_system_network_parameter_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 4)?;
+    let object_type = u16::from_be_bytes([data[0], data[1]]);
+    let pid_raw = u16::from_be_bytes([data[2], data[3]]);
+    Ok(AppIndication::SystemNetworkParameterRead {
+        object_type,
+        property_id: pid_raw >> 4,
+        test_info: data[3..].to_vec(),
+    })
+}
+
+fn parse_adc_read(data: &[u8]) -> AppIndication {
+    AppIndication::AdcRead {
+        channel: data.first().copied().unwrap_or(0) & MASK_6BIT,
+        count: data.get(1).copied().unwrap_or(1),
+    }
+}
+
+fn parse_property_value_ext_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 7)?;
+    let (ot, oi, pid, count, si) = parse_ext_property_header(data);
+    Ok(AppIndication::PropertyValueExtRead {
+        object_type: ot,
+        object_instance: oi,
+        property_id: pid,
+        count,
+        start_index: si,
+    })
+}
+
+fn parse_property_value_ext_write_con(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 7)?;
+    let (ot, oi, pid, count, si) = parse_ext_property_header(data);
+    Ok(AppIndication::PropertyValueExtWriteCon {
+        object_type: ot,
+        object_instance: oi,
+        property_id: pid,
+        count,
+        start_index: si,
+        data: data[7..].to_vec(),
+    })
+}
+
+fn parse_property_value_ext_write_uncon(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 7)?;
+    let (ot, oi, pid, count, si) = parse_ext_property_header(data);
+    Ok(AppIndication::PropertyValueExtWriteUnCon {
+        object_type: ot,
+        object_instance: oi,
+        property_id: pid,
+        count,
+        start_index: si,
+        data: data[7..].to_vec(),
+    })
+}
+
+fn parse_property_ext_description_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 7)?;
+    let object_type = u16::from_be_bytes([data[0], data[1]]);
+    let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
+    let property_id = (u16::from(data[3] & MASK_4BIT) << 8) | u16::from(data[4]);
+    let description_type = data[5] >> 4;
+    let property_index = (u16::from(data[5] & MASK_4BIT) << 8) | u16::from(data[6]);
+    Ok(AppIndication::PropertyExtDescriptionRead {
+        object_type,
+        object_instance,
+        property_id,
+        description_type,
+        property_index,
+    })
 }
 
 /// Parse the common header for extended property services.
@@ -251,7 +322,13 @@ fn parse_ext_property_header(data: &[u8]) -> (u16, u16, u16, u8, u16) {
     let property_id = (u16::from(data[3] & MASK_4BIT) << 8) | u16::from(data[4]);
     let count = data[5];
     let start_index = u16::from_be_bytes([data[6], data.get(7).copied().unwrap_or(0)]);
-    (object_type, object_instance, property_id, count, start_index)
+    (
+        object_type,
+        object_instance,
+        property_id,
+        count,
+        start_index,
+    )
 }
 
 #[cfg(test)]
@@ -268,8 +345,7 @@ mod tests {
 
     #[test]
     fn parse_property_read() {
-        let ind =
-            parse_indication(ApduType::PropertyValueRead, &[0x00, 0x01, 0x10, 0x01]).unwrap();
+        let ind = parse_indication(ApduType::PropertyValueRead, &[0x00, 0x01, 0x10, 0x01]).unwrap();
         assert!(matches!(
             ind,
             AppIndication::PropertyValueRead {
@@ -331,8 +407,7 @@ mod tests {
 
     #[test]
     fn parse_memory_write() {
-        let ind =
-            parse_indication(ApduType::MemoryWrite, &[0x02, 0x00, 0x20, 0xAA, 0xBB]).unwrap();
+        let ind = parse_indication(ApduType::MemoryWrite, &[0x02, 0x00, 0x20, 0xAA, 0xBB]).unwrap();
         assert!(matches!(
             ind,
             AppIndication::MemoryWrite {

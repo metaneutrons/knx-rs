@@ -13,9 +13,9 @@
 //! - [`encode`] — outgoing APDU encoding functions
 //! - [`parse`] — incoming APDU parsing functions
 
-mod types;
 pub mod encode;
 pub mod parse;
+mod types;
 
 // Re-export public API at module level for backward compatibility.
 pub use encode::*;
