@@ -151,27 +151,40 @@ impl TableObject {
 
     /// Handle a write to `PID_LOAD_STATE_CONTROL`.
     ///
-    /// `memory_area_len` is the current size of the BAU memory area,
-    /// used to determine the allocation offset for new table data.
+    /// `memory_area_len` is the current size of the BAU memory area.
     ///
-    /// Returns `true` if the state changed to `Loaded` (caller should
-    /// parse the table data).
-    pub fn handle_load_event(&mut self, data: &[u8], memory_area_len: usize) -> bool {
+    /// Returns `(became_loaded, fill_request)`:
+    /// - `became_loaded`: true if state changed to `Loaded` (caller should parse table data)
+    /// - `fill_request`: `Some((offset, size, fill_byte))` if memory should be filled
+    pub fn handle_load_event(
+        &mut self,
+        data: &[u8],
+        memory_area_len: usize,
+    ) -> (bool, Option<(u32, u32, u8)>) {
         if data.is_empty() {
-            return false;
+            return (false, None);
         }
         let Some(event) = LoadEvent::from_byte(data[0]) else {
             self.state = LoadState::Error;
             self.error = ErrorCode::UndefinedLoadCommand;
-            return false;
+            return (false, None);
         };
 
         match self.state {
-            LoadState::Unloaded => self.on_unloaded(event),
+            LoadState::Unloaded => {
+                self.on_unloaded(event);
+                (false, None)
+            }
             LoadState::Loading => self.on_loading(event, data, memory_area_len),
-            LoadState::Loaded => self.on_loaded(event),
-            LoadState::Error => self.on_error(event),
-            _ => false,
+            LoadState::Loaded => {
+                self.on_loaded(event);
+                (false, None)
+            }
+            LoadState::Error => {
+                self.on_error(event);
+                (false, None)
+            }
+            _ => (false, None),
         }
     }
 
@@ -192,22 +205,27 @@ impl TableObject {
         }
     }
 
-    fn on_loading(&mut self, event: LoadEvent, data: &[u8], memory_area_len: usize) -> bool {
+    fn on_loading(
+        &mut self,
+        event: LoadEvent,
+        data: &[u8],
+        memory_area_len: usize,
+    ) -> (bool, Option<(u32, u32, u8)>) {
         match event {
-            LoadEvent::Noop | LoadEvent::StartLoading => false,
+            LoadEvent::Noop | LoadEvent::StartLoading => (false, None),
             LoadEvent::LoadCompleted => {
                 self.state = LoadState::Loaded;
-                true // caller should parse table data
+                (true, None)
             }
             LoadEvent::Unload => {
                 self.state = LoadState::Unloaded;
                 self.data_offset = 0;
                 self.data_size = 0;
-                false
+                (false, None)
             }
             LoadEvent::AdditionalLoadControls => {
-                self.handle_additional_load_controls(data, memory_area_len);
-                false
+                let fill = self.handle_additional_load_controls(data, memory_area_len);
+                (false, fill)
             }
         }
     }
@@ -247,18 +265,56 @@ impl TableObject {
     /// Handle `AdditionalLoadControls` — allocate memory for table data.
     ///
     /// Data format: `[0x03] [0x0B] [size:4be] [fill_mode:1] [fill_byte:1]`
-    fn handle_additional_load_controls(&mut self, data: &[u8], memory_area_len: usize) {
+    ///
+    /// Returns `Some((offset, size, fill_byte))` if memory should be filled,
+    /// `None` if no fill is needed or on error.
+    fn handle_additional_load_controls(
+        &mut self,
+        data: &[u8],
+        memory_area_len: usize,
+    ) -> Option<(u32, u32, u8)> {
         if data.len() < 8 || data[1] != 0x0B {
             self.state = LoadState::Error;
             self.error = ErrorCode::InvalidOpcode;
-            return;
+            return None;
         }
         let size = u32::from_be_bytes([data[2], data[3], data[4], data[5]]);
-        // Allocate at the end of the current memory area
+        let do_fill = data[6] == 0x01;
+        let fill_byte = data[7];
         #[expect(clippy::cast_possible_truncation)]
         let offset = memory_area_len as u32;
         self.data_offset = offset;
         self.data_size = size;
+        if do_fill {
+            Some((offset, size, fill_byte))
+        } else {
+            None
+        }
+    }
+
+    /// Table reference (offset into memory area). Returns 0 if not loaded.
+    pub const fn table_reference(&self) -> u32 {
+        if matches!(self.state, LoadState::Loaded) {
+            self.data_offset
+        } else {
+            0
+        }
+    }
+
+    /// MCB table data: `[segment_size:4be] [crc_control:1] [access:1] [crc16:2be]`.
+    ///
+    /// Returns 8 bytes for `PID_MCB_TABLE` property read. Empty if not loaded.
+    pub fn mcb_table(&self, memory_area: &[u8]) -> [u8; 8] {
+        if !matches!(self.state, LoadState::Loaded) || self.data_size == 0 {
+            return [0; 8];
+        }
+        let data = self.data(memory_area);
+        let crc = crc16_ccitt(data);
+        let size = self.data_size.to_be_bytes();
+        let crc_be = crc.to_be_bytes();
+        [
+            size[0], size[1], size[2], size[3], 0x00, 0xFF, crc_be[0], crc_be[1],
+        ]
     }
 
     // ── Persistence ───────────────────────────────────────────
@@ -293,6 +349,23 @@ impl Default for TableObject {
     }
 }
 
+/// CRC-16 CCITT (polynomial 0x1021, init 0xFFFF).
+/// Used for `PID_MCB_TABLE` integrity check.
+fn crc16_ccitt(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0xFFFF;
+    for &byte in data {
+        crc ^= u16::from(byte) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -313,19 +386,19 @@ mod tests {
         let mut to = TableObject::new();
 
         // Start loading
-        let became_loaded = to.handle_load_event(&[1], 0); // LE_START_LOADING
+        let (became_loaded, _fill) = to.handle_load_event(&[1], 0); // LE_START_LOADING
         assert!(!became_loaded);
         assert_eq!(to.load_state(), LoadState::Loading);
 
         // Additional load controls: allocate 100 bytes
         let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x64, 0x01, 0x00];
-        let became_loaded = to.handle_load_event(&alc, 200);
+        let (became_loaded, _fill) = to.handle_load_event(&alc, 200);
         assert!(!became_loaded);
         assert_eq!(to.data_offset(), 200);
         assert_eq!(to.data_size(), 100);
 
         // Load completed
-        let became_loaded = to.handle_load_event(&[2], 300); // LE_LOAD_COMPLETED
+        let (became_loaded, _fill) = to.handle_load_event(&[2], 300); // LE_LOAD_COMPLETED
         assert!(became_loaded);
         assert_eq!(to.load_state(), LoadState::Loaded);
     }

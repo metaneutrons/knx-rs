@@ -528,6 +528,37 @@ impl Bau {
             return;
         }
 
+        // Intercept TableReference reads for table objects
+        if pid == PropertyId::TableReference && start_index == 1 {
+            let table_ref = match object_index {
+                1 => self.addr_table_object.table_reference(),
+                2 => self.assoc_table_object.table_reference(),
+                _ if object_index >= 3 => self.app_program_object.table_reference(),
+                _ => 0,
+            };
+            self.queue_property_response(
+                source,
+                object_index,
+                property_id,
+                1,
+                start_index,
+                &table_ref.to_be_bytes(),
+            );
+            return;
+        }
+
+        // Intercept McbTable reads for table objects
+        if pid == PropertyId::McbTable && start_index == 1 {
+            let mcb = match object_index {
+                1 => self.addr_table_object.mcb_table(&self.memory_area),
+                2 => self.assoc_table_object.mcb_table(&self.memory_area),
+                _ if object_index >= 3 => self.app_program_object.mcb_table(&self.memory_area),
+                _ => [0; 8],
+            };
+            self.queue_property_response(source, object_index, property_id, 1, start_index, &mcb);
+            return;
+        }
+
         let Some(obj) = self.objects.get(object_index as usize) else {
             self.queue_property_response(source, object_index, property_id, 0, start_index, &[]);
             return;
@@ -578,23 +609,26 @@ impl Bau {
             let mem_len = self.memory_area.len();
             match object_index {
                 1 => {
-                    if self.addr_table_object.handle_load_event(data, mem_len) {
-                        // Address table loaded — parse it
+                    let (loaded, fill) = self.addr_table_object.handle_load_event(data, mem_len);
+                    self.apply_fill(fill);
+                    if loaded {
                         let tbl_data = self.addr_table_object.data(&self.memory_area).to_vec();
                         self.address_table.load(&tbl_data);
                     }
                 }
                 2 => {
-                    if self.assoc_table_object.handle_load_event(data, mem_len) {
-                        // Association table loaded — parse it
+                    let (loaded, fill) = self.assoc_table_object.handle_load_event(data, mem_len);
+                    self.apply_fill(fill);
+                    if loaded {
                         let tbl_data = self.assoc_table_object.data(&self.memory_area).to_vec();
                         self.association_table.load(&tbl_data);
                     }
                 }
                 _ => {
-                    // Application program or other objects
                     if object_index >= 3 {
-                        self.app_program_object.handle_load_event(data, mem_len);
+                        let (_loaded, fill) =
+                            self.app_program_object.handle_load_event(data, mem_len);
+                        self.apply_fill(fill);
                     }
                 }
             }
@@ -810,6 +844,18 @@ impl Bau {
     fn queue_adc_response(&mut self, destination: u16, channel: u8, count: u8) {
         let payload = application_layer::encode_adc_response(channel, count, 0);
         self.queue_individual_frame(destination, Priority::System, &payload);
+    }
+
+    /// Apply a fill request from `AdditionalLoadControls` to the memory area.
+    fn apply_fill(&mut self, fill: Option<(u32, u32, u8)>) {
+        if let Some((offset, size, fill_byte)) = fill {
+            let start = offset as usize;
+            let end = start + size as usize;
+            if end > self.memory_area.len() {
+                self.memory_area.resize(end, 0);
+            }
+            self.memory_area[start..end].fill(fill_byte);
+        }
     }
 
     // ── Frame builders ────────────────────────────────────────
@@ -1079,7 +1125,7 @@ mod tests {
         bau.addr_table_object.handle_load_event(&alc, 3);
         // Write address table data at offset 3
         bau.handle_memory_write(0x0003, &[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]); // 2 entries: 1/0/1, 1/0/2
-        let became_loaded = bau.addr_table_object.handle_load_event(&[2], 9); // LOAD_COMPLETED
+        let (became_loaded, _fill) = bau.addr_table_object.handle_load_event(&[2], 9); // LOAD_COMPLETED
         assert!(became_loaded);
         let tbl_data = bau.addr_table_object.data(&bau.memory_area).to_vec();
         bau.address_table.load(&tbl_data);
