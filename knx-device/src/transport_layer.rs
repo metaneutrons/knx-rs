@@ -121,6 +121,7 @@ pub struct TransportLayer {
     actions: Vec<Action>,
 }
 
+/// Saved frame for retransmission when waiting for ACK.
 struct SavedFrame {
     destination: u16,
     seq_no: u8,
@@ -128,6 +129,7 @@ struct SavedFrame {
     apdu: Vec<u8>,
 }
 
+/// Buffered data request queued while connection is busy.
 struct BufferedRequest {
     priority: Priority,
     apdu: Vec<u8>,
@@ -783,6 +785,68 @@ mod tests {
         // ACK with wrong sequence
         tl.ack_indication(0x1001, 5, 200);
         assert_eq!(tl.state(), State::Closed);
+    }
+
+    #[test]
+    fn connect_request_transitions_to_connecting() {
+        let mut tl = TransportLayer::new();
+        tl.connect_request(0x1001, 0);
+        assert_eq!(tl.state(), State::Connecting);
+        assert_eq!(tl.connection_address(), 0x1001);
+        let actions = tl.take_actions();
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::SendControl {
+                destination: 0x1001,
+                tpdu_type: TpduType::Connect,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn disconnect_request_from_open_idle() {
+        let mut tl = TransportLayer::new();
+        tl.connect_indication(0x1001, 0);
+        tl.take_actions();
+        assert_eq!(tl.state(), State::OpenIdle);
+
+        tl.disconnect_request();
+        assert_eq!(tl.state(), State::Closed);
+        let actions = tl.take_actions();
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::SendControl {
+                tpdu_type: TpduType::Disconnect,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn data_in_connecting_state_is_buffered() {
+        let mut tl = TransportLayer::new();
+        tl.connect_request(0x1001, 0);
+        tl.take_actions();
+        assert_eq!(tl.state(), State::Connecting);
+
+        tl.data_connected_request(Priority::Low, alloc::vec![0xAB], 100);
+        let actions = tl.take_actions();
+        // Data should be buffered, not sent
+        assert!(actions.is_empty());
+
+        // After connect confirm, poll should send the buffered data
+        tl.connect_confirm(true);
+        tl.take_actions();
+        assert_eq!(tl.state(), State::OpenIdle);
+
+        tl.poll(200);
+        assert_eq!(tl.state(), State::OpenWait);
+        let actions = tl.take_actions();
+        assert!(matches!(
+            actions[0],
+            Action::SendDataConnected { seq_no: 0, .. }
+        ));
     }
 
     #[test]

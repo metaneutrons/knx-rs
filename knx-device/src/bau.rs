@@ -31,8 +31,6 @@ pub const MASK_VERSION_IP: u16 = 0x57B0;
 
 // ── Standard interface object indices (KNX spec) ─────────────
 
-/// Object index for the device object.
-const _OBJ_DEVICE: u8 = 0;
 /// Object index for the address table object.
 const OBJ_ADDR_TABLE: u8 = 1;
 /// Object index for the association table object.
@@ -1658,5 +1656,157 @@ mod tests {
         // 257th must fail
         let obj = InterfaceObject::new(crate::interface_object::ObjectType::Device);
         assert!(bau.add_object(obj).is_none());
+    }
+
+    #[test]
+    fn handle_group_value_response_checks_update_enable() {
+        let mut bau = test_bau();
+        // Load GO table: 2 GOs, GO1 has update_enable (A-flag) + comm_enable (K-flag)
+        let go1: u16 = (1 << 15) | (1 << 10) | 1; // A + K + size=1
+        let go2: u16 = (1 << 10) | 1; // K only (no A-flag)
+        let mut tbl = Vec::new();
+        tbl.extend_from_slice(&2u16.to_be_bytes());
+        tbl.extend_from_slice(&go1.to_be_bytes());
+        tbl.extend_from_slice(&go2.to_be_bytes());
+        bau.group_object_table.load(&tbl);
+
+        // GroupValueResponse to GA 0x0801 (tsap=1 → asap=1): APDU 0x00,0x41 = response with data=1
+        let frame = CemiFrame::parse(&[
+            0x29, 0x00, 0xBC, 0xE0, 0x11, 0x02, 0x08, 0x01, 0x01, 0x00, 0x41,
+        ])
+        .unwrap();
+        bau.process_frame(&frame, 0);
+        assert_eq!(bau.group_objects.get(1).unwrap().comm_flag(), ComFlag::Updated);
+        assert_eq!(bau.group_objects.get(1).unwrap().value_ref(), &[0x01]);
+
+        // GroupValueResponse to GA 0x0802 (tsap=2 → asap=2): GO2 has no A-flag → should NOT update
+        let frame2 = CemiFrame::parse(&[
+            0x29, 0x00, 0xBC, 0xE0, 0x11, 0x02, 0x08, 0x02, 0x01, 0x00, 0x41,
+        ])
+        .unwrap();
+        bau.process_frame(&frame2, 0);
+        assert_eq!(
+            bau.group_objects.get(2).unwrap().comm_flag(),
+            ComFlag::Uninitialized
+        );
+    }
+
+    #[test]
+    fn handle_property_description_read_known_property() {
+        let mut bau = test_bau();
+        // Object 0 (device) has PID_OBJECT_TYPE (1) — read its description
+        bau.handle_property_description_read(0x1102, 0, 1, 0);
+        let resp = bau.next_outgoing_frame().expect("expected response");
+        assert_eq!(resp.destination_address_raw(), 0x1102);
+        // Payload should contain property_id=1 (not 0, which signals error)
+        let payload = resp.payload();
+        // PropertyDescriptionResponse APDU: [apci_hi, apci_lo, obj_idx, pid, pidx, ...]
+        assert_ne!(payload[3], 0, "property_id=0 means error");
+    }
+
+    #[test]
+    fn handle_property_description_read_unknown_object() {
+        let mut bau = test_bau();
+        // Object index 99 doesn't exist
+        bau.handle_property_description_read(0x1102, 99, 1, 0);
+        let resp = bau.next_outgoing_frame().expect("expected error response");
+        assert_eq!(resp.destination_address_raw(), 0x1102);
+        // Error response has property_id=0
+        let payload = resp.payload();
+        assert_eq!(payload[3], 0, "expected property_id=0 for unknown object");
+    }
+
+    #[test]
+    fn handle_memory_ext_read_roundtrip() {
+        let mut bau = test_bau();
+        let data = [0xDE, 0xAD, 0xBE, 0xEF];
+        bau.handle_memory_ext_write(0x1102, 0x0010, &data);
+        // Drain the write response
+        bau.next_outgoing_frame().unwrap();
+
+        bau.handle_memory_ext_read(0x1102, 4, 0x0010);
+        let resp = bau.next_outgoing_frame().expect("expected ext read response");
+        let payload = resp.payload();
+        // MemoryExtReadResponse: [apci_hi, apci_lo, return_code, addr(3 bytes), data...]
+        assert_eq!(payload[2], 0, "return_code should be 0 (success)");
+        assert_eq!(&payload[6..10], &data);
+    }
+
+    #[test]
+    fn handle_memory_ext_write_roundtrip() {
+        let mut bau = test_bau();
+        bau.handle_memory_ext_write(0x1102, 0x0020, &[0xCA, 0xFE]);
+        assert_eq!(bau.memory_area[0x20], 0xCA);
+        assert_eq!(bau.memory_area[0x21], 0xFE);
+    }
+
+    #[test]
+    fn init_read_requests_queues_for_i_flag() {
+        let mut bau = test_bau();
+        // Load GO table: GO1 has I-flag (read_on_init) + K-flag (comm_enable)
+        let go1: u16 = (1 << 13) | (1 << 10) | 1; // I + K + size=1
+        let go2: u16 = (1 << 10) | 1; // K only (no I-flag)
+        let mut tbl = Vec::new();
+        tbl.extend_from_slice(&2u16.to_be_bytes());
+        tbl.extend_from_slice(&go1.to_be_bytes());
+        tbl.extend_from_slice(&go2.to_be_bytes());
+        bau.group_object_table.load(&tbl);
+
+        bau.init_read_requests();
+
+        assert_eq!(
+            bau.group_objects.get(1).unwrap().comm_flag(),
+            ComFlag::ReadRequest
+        );
+        // GO2 has no I-flag → should remain Uninitialized
+        assert_eq!(
+            bau.group_objects.get(2).unwrap().comm_flag(),
+            ComFlag::Uninitialized
+        );
+    }
+
+    #[test]
+    fn save_restore_full_roundtrip() {
+        let mut bau = test_bau();
+
+        // Set up loaded tables with memory data
+        bau.addr_table_object.handle_load_event(&[1], 0);
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x06, 0x01, 0x00];
+        bau.addr_table_object.handle_load_event(&alc, 0);
+        bau.handle_memory_write(0x0000, &[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]);
+        bau.addr_table_object.handle_load_event(&[2], 6);
+        let tbl_data = bau.addr_table_object.data(&bau.memory_area).to_vec();
+        bau.address_table.load(&tbl_data);
+
+        bau.assoc_table_object.handle_load_event(&[1], 0);
+        let alc2 = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x0A, 0x01, 0x06];
+        bau.assoc_table_object.handle_load_event(&alc2, 0);
+        bau.handle_memory_write(
+            0x0006,
+            &[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02],
+        );
+        bau.assoc_table_object.handle_load_event(&[2], 16);
+        let tbl_data2 = bau.assoc_table_object.data(&bau.memory_area).to_vec();
+        bau.association_table.load(&tbl_data2);
+
+        // Write some extra memory
+        bau.handle_memory_write(0x0010, &[0xCA, 0xFE]);
+
+        // Verify pre-save state
+        assert!(bau.configured());
+        assert_eq!(bau.address_table.get_tsap(0x0801), Some(1));
+
+        let saved = bau.save();
+
+        // Restore into fresh BAU
+        let mut bau2 = test_bau();
+        assert!(!bau2.configured());
+        assert!(bau2.restore(&saved));
+
+        assert!(bau2.configured());
+        assert_eq!(bau2.address_table.get_tsap(0x0801), Some(1));
+        assert_eq!(bau2.address_table.get_tsap(0x0802), Some(2));
+        assert_eq!(bau2.memory_area[0x10], 0xCA);
+        assert_eq!(bau2.memory_area[0x11], 0xFE);
     }
 }
