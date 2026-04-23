@@ -330,6 +330,21 @@ impl Bau {
         }
     }
 
+    /// Queue read requests for all group objects with the I-flag (read on init) set.
+    /// Should be called after tables are loaded (ETS programming or restore).
+    pub fn init_read_requests(&mut self) {
+        let count = self.group_object_table.entry_count();
+        for asap in 1..=count {
+            if let Some(desc) = self.group_object_table.get_descriptor(asap) {
+                if desc.communication_enable() && desc.read_on_init() {
+                    if let Some(go) = self.group_objects.get_mut(asap) {
+                        go.request_object_read();
+                    }
+                }
+            }
+        }
+    }
+
     /// Take the next outgoing CEMI frame.
     pub fn next_outgoing_frame(&mut self) -> Option<CemiFrame> {
         self.outbox.pop_front()

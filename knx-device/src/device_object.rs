@@ -127,6 +127,15 @@ fn add_config_properties(obj: &mut InterfaceObject, hw_type: [u8; 6]) {
         )
         .into(),
     );
+    // Device descriptor / mask version (PID 83)
+    obj.add_property(
+        DataProperty::read_only(
+            PropertyId::DeviceDescriptor,
+            PropertyDataType::UnsignedInt,
+            &crate::bau::MASK_VERSION_IP.to_be_bytes(),
+        )
+        .into(),
+    );
 }
 
 /// Read the individual address from a device object.
