@@ -27,6 +27,7 @@ pub mod application_layer;
 pub mod application_program;
 pub mod association_table;
 pub mod bau;
+pub mod bau_persistence;
 pub mod device_object;
 pub mod group_object;
 pub mod group_object_table;
