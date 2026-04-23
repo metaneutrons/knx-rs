@@ -328,10 +328,10 @@ async fn full_device_stack_group_read_response() {
         panic!("expected TunnelFrame");
     };
 
-    bau.process_frame(&frame);
+    bau.process_frame(&frame, 0);
 
     // BAU should have generated a GroupValueResponse
-    bau.poll();
+    bau.poll(0);
     let response = bau.next_outgoing_frame();
     assert!(response.is_some(), "BAU should generate a response frame");
     let response = response.unwrap();

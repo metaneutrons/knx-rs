@@ -164,7 +164,7 @@ pub fn encode_data_connected(seq_no: u8, apdu: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use crate::message::ApduType;
+    use crate::message::{ApduType, TpduType};
     use crate::types::AddressType;
 
     use super::Tpdu;
