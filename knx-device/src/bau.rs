@@ -261,8 +261,54 @@ impl Bau {
         }
     }
 
-    #[expect(clippy::too_many_lines)]
     fn dispatch_indication(&mut self, frame: &CemiFrame, source: u16, indication: AppIndication) {
+        match &indication {
+            AppIndication::GroupValueWrite { .. }
+            | AppIndication::GroupValueResponse { .. }
+            | AppIndication::GroupValueRead { .. } => {
+                self.dispatch_group_services(frame, source, indication);
+            }
+            AppIndication::DeviceDescriptorRead { .. }
+            | AppIndication::Restart
+            | AppIndication::RestartMasterReset { .. }
+            | AppIndication::IndividualAddressWrite { .. }
+            | AppIndication::IndividualAddressRead
+            | AppIndication::AuthorizeRequest { .. }
+            | AppIndication::KeyWrite { .. } => {
+                self.dispatch_device_management(source, &indication);
+            }
+            AppIndication::PropertyValueRead { .. }
+            | AppIndication::PropertyValueWrite { .. }
+            | AppIndication::PropertyDescriptionRead { .. } => {
+                self.dispatch_property_services(source, indication);
+            }
+            AppIndication::MemoryRead { .. }
+            | AppIndication::MemoryWrite { .. }
+            | AppIndication::MemoryExtRead { .. }
+            | AppIndication::MemoryExtWrite { .. } => {
+                self.dispatch_memory_services(source, indication);
+            }
+            AppIndication::PropertyValueExtRead { .. }
+            | AppIndication::PropertyValueExtWriteCon { .. }
+            | AppIndication::PropertyValueExtWriteUnCon { .. }
+            | AppIndication::FunctionPropertyCommand { .. }
+            | AppIndication::FunctionPropertyState { .. }
+            | AppIndication::SystemNetworkParameterRead { .. }
+            | AppIndication::AdcRead { .. }
+            | AppIndication::IndividualAddressSerialNumberRead { .. }
+            | AppIndication::IndividualAddressSerialNumberWrite { .. } => {
+                self.dispatch_ext_property_services(source, indication);
+            }
+            AppIndication::PropertyExtDescriptionRead { .. } => {}
+        }
+    }
+
+    fn dispatch_group_services(
+        &mut self,
+        frame: &CemiFrame,
+        _source: u16,
+        indication: AppIndication,
+    ) {
         match indication {
             AppIndication::GroupValueWrite { data, .. } => {
                 self.handle_group_value_write(frame, &data);
@@ -273,6 +319,24 @@ impl Bau {
             AppIndication::GroupValueRead { .. } => {
                 self.handle_group_value_read(frame);
             }
+            _ => {}
+        }
+    }
+
+    fn dispatch_device_management(&mut self, source: u16, indication: &AppIndication) {
+        match *indication {
+            AppIndication::DeviceDescriptorRead { descriptor_type: 0 } => {
+                self.queue_device_descriptor_response(source);
+            }
+            AppIndication::DeviceDescriptorRead { .. } => {
+                self.queue_device_descriptor_unsupported(source);
+            }
+            AppIndication::RestartMasterReset {
+                erase_code,
+                channel: _,
+            } => {
+                self.handle_restart_master_reset(source, erase_code);
+            }
             AppIndication::IndividualAddressWrite { address }
                 if device_object::prog_mode(self.device()) =>
             {
@@ -281,6 +345,18 @@ impl Bau {
             AppIndication::IndividualAddressRead if device_object::prog_mode(self.device()) => {
                 self.queue_individual_address_response();
             }
+            AppIndication::AuthorizeRequest { key: _ } => {
+                self.queue_authorize_response(source, 0);
+            }
+            AppIndication::KeyWrite { level, key: _ } => {
+                self.queue_key_response(source, level);
+            }
+            _ => {}
+        }
+    }
+
+    fn dispatch_property_services(&mut self, source: u16, indication: AppIndication) {
+        match indication {
             AppIndication::PropertyValueRead {
                 object_index,
                 property_id,
@@ -305,37 +381,6 @@ impl Bau {
                     &data,
                 );
             }
-            AppIndication::DeviceDescriptorRead { descriptor_type: 0 } => {
-                self.queue_device_descriptor_response(source);
-            }
-            AppIndication::DeviceDescriptorRead { .. } => {
-                // Unsupported descriptor type — respond with type 0x3F (C++ ref behavior)
-                self.queue_device_descriptor_unsupported(source);
-            }
-            AppIndication::MemoryRead { count, address } => {
-                self.handle_memory_read(source, count, address);
-            }
-            AppIndication::MemoryWrite {
-                count: _,
-                address,
-                data,
-            } => {
-                self.handle_memory_write(address, &data);
-            }
-            AppIndication::RestartMasterReset {
-                erase_code,
-                channel: _,
-            } => {
-                self.handle_restart_master_reset(source, erase_code);
-            }
-            AppIndication::AuthorizeRequest { key: _ } => {
-                // Accept all authorize requests with level 0 (no security)
-                self.queue_authorize_response(source, 0);
-            }
-            AppIndication::KeyWrite { level, key: _ } => {
-                // Accept key writes (no security implementation)
-                self.queue_key_response(source, level);
-            }
             AppIndication::PropertyDescriptionRead {
                 object_index,
                 property_id,
@@ -348,6 +393,22 @@ impl Bau {
                     property_index,
                 );
             }
+            _ => {}
+        }
+    }
+
+    fn dispatch_memory_services(&mut self, source: u16, indication: AppIndication) {
+        match indication {
+            AppIndication::MemoryRead { count, address } => {
+                self.handle_memory_read(source, count, address);
+            }
+            AppIndication::MemoryWrite {
+                count: _,
+                address,
+                data,
+            } => {
+                self.handle_memory_write(address, &data);
+            }
             AppIndication::MemoryExtRead { count, address } => {
                 self.handle_memory_ext_read(source, count, address);
             }
@@ -358,35 +419,12 @@ impl Bau {
             } => {
                 self.handle_memory_ext_write(source, address, &data);
             }
-            AppIndication::IndividualAddressSerialNumberRead { serial } => {
-                self.handle_individual_address_serial_number_read(serial);
-            }
-            AppIndication::IndividualAddressSerialNumberWrite { serial, address } => {
-                self.handle_individual_address_serial_number_write(serial, address);
-            }
-            AppIndication::FunctionPropertyCommand {
-                object_index,
-                property_id,
-                data: _,
-            }
-            | AppIndication::FunctionPropertyState {
-                object_index,
-                property_id,
-                data: _,
-            } => {
-                // Respond with empty result (no function properties implemented)
-                self.queue_function_property_state_response(source, object_index, property_id, &[]);
-            }
-            AppIndication::SystemNetworkParameterRead {
-                object_type,
-                property_id,
-                test_info,
-            } => {
-                self.handle_system_network_parameter_read(object_type, property_id, &test_info);
-            }
-            AppIndication::AdcRead { channel, count } => {
-                self.queue_adc_response(source, channel, count);
-            }
+            _ => {}
+        }
+    }
+
+    fn dispatch_ext_property_services(&mut self, source: u16, indication: AppIndication) {
+        match indication {
             AppIndication::PropertyValueExtRead {
                 object_type,
                 object_instance,
@@ -440,6 +478,34 @@ impl Bau {
                     &data,
                     false,
                 );
+            }
+            AppIndication::FunctionPropertyCommand {
+                object_index,
+                property_id,
+                data: _,
+            }
+            | AppIndication::FunctionPropertyState {
+                object_index,
+                property_id,
+                data: _,
+            } => {
+                self.queue_function_property_state_response(source, object_index, property_id, &[]);
+            }
+            AppIndication::SystemNetworkParameterRead {
+                object_type,
+                property_id,
+                test_info,
+            } => {
+                self.handle_system_network_parameter_read(object_type, property_id, &test_info);
+            }
+            AppIndication::AdcRead { channel, count } => {
+                self.queue_adc_response(source, channel, count);
+            }
+            AppIndication::IndividualAddressSerialNumberRead { serial } => {
+                self.handle_individual_address_serial_number_read(serial);
+            }
+            AppIndication::IndividualAddressSerialNumberWrite { serial, address } => {
+                self.handle_individual_address_serial_number_write(serial, address);
             }
             _ => {}
         }
