@@ -22,9 +22,9 @@ use alloc::vec::Vec;
 pub enum LoadState {
     /// No data loaded. ETS must program the object.
     Unloaded = 0,
-    /// ETS is currently downloading data.
-    Loaded = 1,
     /// Data is loaded and valid.
+    Loaded = 1,
+    /// ETS is currently downloading data.
     Loading = 2,
     /// An error occurred during loading.
     Error = 3,
@@ -115,6 +115,12 @@ impl TableObject {
         }
     }
 
+    /// Reset data offset and size to zero.
+    const fn reset_data(&mut self) {
+        self.data_offset = 0;
+        self.data_size = 0;
+    }
+
     /// Current load state.
     pub const fn load_state(&self) -> LoadState {
         self.state
@@ -192,16 +198,13 @@ impl TableObject {
         match event {
             LoadEvent::StartLoading => {
                 self.state = LoadState::Loading;
-                self.data_offset = 0;
-                self.data_size = 0;
+                self.reset_data();
                 false
             }
-            LoadEvent::Noop | LoadEvent::LoadCompleted | LoadEvent::Unload => false,
-            LoadEvent::AdditionalLoadControls => {
-                self.state = LoadState::Error;
-                self.error = ErrorCode::UndefinedLoadCommand;
-                false
-            }
+            LoadEvent::Noop
+            | LoadEvent::LoadCompleted
+            | LoadEvent::Unload
+            | LoadEvent::AdditionalLoadControls => false,
         }
     }
 
@@ -219,8 +222,7 @@ impl TableObject {
             }
             LoadEvent::Unload => {
                 self.state = LoadState::Unloaded;
-                self.data_offset = 0;
-                self.data_size = 0;
+                self.reset_data();
                 (false, None)
             }
             LoadEvent::AdditionalLoadControls => {
@@ -235,14 +237,12 @@ impl TableObject {
             LoadEvent::Noop | LoadEvent::LoadCompleted => false,
             LoadEvent::StartLoading => {
                 self.state = LoadState::Loading;
-                self.data_offset = 0;
-                self.data_size = 0;
+                self.reset_data();
                 false
             }
             LoadEvent::Unload => {
                 self.state = LoadState::Unloaded;
-                self.data_offset = 0;
-                self.data_size = 0;
+                self.reset_data();
                 false
             }
             LoadEvent::AdditionalLoadControls => {
@@ -256,8 +256,7 @@ impl TableObject {
     const fn on_error(&mut self, event: LoadEvent) -> bool {
         if matches!(event, LoadEvent::Unload) {
             self.state = LoadState::Unloaded;
-            self.data_offset = 0;
-            self.data_size = 0;
+            self.reset_data();
         }
         false
     }

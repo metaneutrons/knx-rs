@@ -18,11 +18,25 @@ use knx_core::message::ApduType;
 /// The 10-bit APCI value is encoded as:
 /// - `high`: bits 9..8 (masked into the lower 2 bits)
 /// - `low`: bits 7..0
-#[expect(clippy::cast_possible_truncation, reason = "APCI is 10-bit, both halves fit in u8")]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "APCI is 10-bit, both halves fit in u8"
+)]
 const fn apci_bytes(t: ApduType) -> [u8; 2] {
     let v = t as u16;
     [(v >> 8) as u8, v as u8]
 }
+
+/// 6-bit mask for short APDU values and descriptor types.
+const MASK_6BIT: u8 = 0x3F;
+/// 4-bit mask for count fields and nibble extraction.
+const MASK_4BIT: u8 = 0x0F;
+/// 12-bit mask for `start_index` fields.
+const MASK_12BIT: u16 = 0x0FFF;
+/// Write-enable flag in property description type byte.
+const WRITE_ENABLE_FLAG: u8 = 0x80;
+/// Unsupported device descriptor type (0x3F = all bits set in 6-bit field).
+const DESCRIPTOR_TYPE_UNSUPPORTED: u8 = 0x3F;
 
 // ── APDU encoding (outgoing) ─────────────────────────────────
 
@@ -60,7 +74,7 @@ pub fn encode_device_descriptor_response(mask_version: u16) -> Vec<u8> {
 /// Encode a `DeviceDescriptorResponse` for unsupported descriptor types (type 0x3F).
 pub fn encode_device_descriptor_unsupported() -> Vec<u8> {
     let [hi, _] = apci_bytes(ApduType::DeviceDescriptorResponse);
-    alloc::vec![hi, 0x3F]
+    alloc::vec![hi, DESCRIPTOR_TYPE_UNSUPPORTED]
 }
 
 /// Encode a `PropertyValueResponse` APDU payload.
@@ -77,7 +91,7 @@ pub fn encode_property_response(
     payload.push(lo);
     payload.push(object_index);
     payload.push(property_id);
-    let count_start = (u16::from(count) << 12) | (start_index & 0x0FFF);
+    let count_start = (u16::from(count) << 12) | (start_index & MASK_12BIT);
     payload.extend_from_slice(&count_start.to_be_bytes());
     payload.extend_from_slice(data);
     payload
@@ -92,7 +106,7 @@ pub fn encode_memory_response(address: u16, data: &[u8]) -> Vec<u8> {
     let [hi, lo] = apci_bytes(ApduType::MemoryResponse);
     let mut payload = Vec::with_capacity(5 + data.len());
     payload.push(hi);
-    payload.push(lo | (data.len() as u8 & 0x0F));
+    payload.push(lo | (data.len() as u8 & MASK_4BIT));
     payload.extend_from_slice(&address.to_be_bytes());
     payload.extend_from_slice(data);
     payload
@@ -129,13 +143,23 @@ pub fn encode_property_description_response(
 ) -> Vec<u8> {
     let [hi, lo] = apci_bytes(ApduType::PropertyDescriptionResponse);
     let type_byte = if write_enable {
-        0x80 | (pdt & 0x3F)
+        WRITE_ENABLE_FLAG | (pdt & MASK_6BIT)
     } else {
-        pdt & 0x3F
+        pdt & MASK_6BIT
     };
-    let max_hi = ((max_elements >> 8) & 0x0F) as u8;
+    let max_hi = ((max_elements >> 8) & u16::from(MASK_4BIT)) as u8;
     let max_lo = (max_elements & 0xFF) as u8;
-    alloc::vec![hi, lo, object_index, property_id, property_index, type_byte, max_hi, max_lo, access]
+    alloc::vec![
+        hi,
+        lo,
+        object_index,
+        property_id,
+        property_index,
+        type_byte,
+        max_hi,
+        max_lo,
+        access
+    ]
 }
 
 /// Encode a `MemoryExtReadResponse` APDU payload.
@@ -198,7 +222,7 @@ pub fn encode_system_network_parameter_response(
 pub fn encode_adc_response(channel: u8, count: u8, value: u16) -> Vec<u8> {
     let [hi, lo] = apci_bytes(ApduType::AdcResponse);
     let v = value.to_be_bytes();
-    alloc::vec![hi, lo | (channel & 0x3F), count, v[0], v[1]]
+    alloc::vec![hi, lo | (channel & MASK_6BIT), count, v[0], v[1]]
 }
 
 /// Encode a `FunctionPropertyStateResponse` APDU payload.
@@ -256,7 +280,10 @@ fn encode_ext_property_header(
     #[expect(clippy::cast_possible_truncation)]
     {
         buf.push(((object_instance >> 4) & 0xFF) as u8);
-        buf.push((((object_instance & 0x0F) << 4) | ((property_id >> 8) & 0x0F)) as u8);
+        buf.push(
+            ((object_instance & u16::from(MASK_4BIT)) << 4
+                | (property_id >> 8) & u16::from(MASK_4BIT)) as u8,
+        );
         buf.push((property_id & 0xFF) as u8);
     }
     buf.push(count);
@@ -268,8 +295,8 @@ fn encode_ext_property_header(
 fn encode_group_value(tpci: u8, apci: u8, data: &[u8]) -> Vec<u8> {
     let mut payload = Vec::with_capacity(2 + data.len());
     payload.push(tpci);
-    if data.len() == 1 && data[0] <= 0x3F {
-        payload.push(apci | (data[0] & 0x3F));
+    if data.len() == 1 && data[0] <= MASK_6BIT {
+        payload.push(apci | (data[0] & MASK_6BIT));
     } else {
         payload.push(apci);
         payload.extend_from_slice(data);
@@ -542,27 +569,28 @@ pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndicatio
         ApduType::PropertyValueRead if data.len() >= 3 => Some(AppIndication::PropertyValueRead {
             object_index: data[0],
             property_id: data[1],
-            count: (data[2] >> 4) & 0x0F,
-            start_index: u16::from(data[2] & 0x0F) << 8 | u16::from(*data.get(3).unwrap_or(&0)),
+            count: (data[2] >> 4) & MASK_4BIT,
+            start_index: u16::from(data[2] & MASK_4BIT) << 8
+                | u16::from(*data.get(3).unwrap_or(&0)),
         }),
         ApduType::PropertyValueWrite if data.len() >= 4 => {
             Some(AppIndication::PropertyValueWrite {
                 object_index: data[0],
                 property_id: data[1],
-                count: (data[2] >> 4) & 0x0F,
-                start_index: u16::from(data[2] & 0x0F) << 8 | u16::from(data[3]),
+                count: (data[2] >> 4) & MASK_4BIT,
+                start_index: u16::from(data[2] & MASK_4BIT) << 8 | u16::from(data[3]),
                 data: data[4..].to_vec(),
             })
         }
         ApduType::DeviceDescriptorRead => Some(AppIndication::DeviceDescriptorRead {
-            descriptor_type: data.first().copied().unwrap_or(0) & 0x3F,
+            descriptor_type: data.first().copied().unwrap_or(0) & MASK_6BIT,
         }),
         ApduType::MemoryRead if data.len() >= 3 => Some(AppIndication::MemoryRead {
-            count: data[0] & 0x0F,
+            count: data[0] & MASK_4BIT,
             address: u16::from_be_bytes([data[1], data[2]]),
         }),
         ApduType::MemoryWrite if data.len() >= 3 => Some(AppIndication::MemoryWrite {
-            count: data[0] & 0x0F,
+            count: data[0] & MASK_4BIT,
             address: u16::from_be_bytes([data[1], data[2]]),
             data: data[3..].to_vec(),
         }),
@@ -639,7 +667,7 @@ pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndicatio
             })
         }
         ApduType::AdcRead => Some(AppIndication::AdcRead {
-            channel: data.first().copied().unwrap_or(0) & 0x3F,
+            channel: data.first().copied().unwrap_or(0) & MASK_6BIT,
             count: data.get(1).copied().unwrap_or(1),
         }),
         ApduType::PropertyValueExtRead if data.len() >= 7 => {
@@ -677,9 +705,9 @@ pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndicatio
         ApduType::PropertyExtDescriptionRead if data.len() >= 7 => {
             let object_type = u16::from_be_bytes([data[0], data[1]]);
             let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
-            let property_id = (u16::from(data[3] & 0x0F) << 8) | u16::from(data[4]);
+            let property_id = (u16::from(data[3] & MASK_4BIT) << 8) | u16::from(data[4]);
             let description_type = data[5] >> 4;
-            let property_index = (u16::from(data[5] & 0x0F) << 8) | u16::from(data[6]);
+            let property_index = (u16::from(data[5] & MASK_4BIT) << 8) | u16::from(data[6]);
             Some(AppIndication::PropertyExtDescriptionRead {
                 object_type,
                 object_instance,
@@ -697,7 +725,7 @@ pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndicatio
 fn parse_ext_property_header(data: &[u8]) -> (u16, u16, u16, u8, u16) {
     let object_type = u16::from_be_bytes([data[0], data[1]]);
     let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
-    let property_id = (u16::from(data[3] & 0x0F) << 8) | u16::from(data[4]);
+    let property_id = (u16::from(data[3] & MASK_4BIT) << 8) | u16::from(data[4]);
     let count = data[5];
     let start_index = u16::from_be_bytes([data[6], data.get(7).copied().unwrap_or(0)]);
     (

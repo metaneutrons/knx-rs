@@ -27,6 +27,9 @@ const ACK_TIMEOUT_MS: u64 = 3000;
 /// Maximum retransmission attempts before giving up.
 const MAX_REP_COUNT: u8 = 3;
 
+/// Mask for 4-bit sequence number wrapping (0–15).
+const SEQ_NO_MASK: u8 = 0x0F;
+
 // ── State ─────────────────────────────────────────────────────
 
 /// Transport layer connection state.
@@ -204,7 +207,7 @@ impl TransportLayer {
             return;
         }
 
-        let prev_seq = self.seq_no_recv.wrapping_sub(1) & 0xF;
+        let prev_seq = self.seq_no_recv.wrapping_sub(1) & SEQ_NO_MASK;
 
         match self.state {
             State::Closed => {}
@@ -221,7 +224,7 @@ impl TransportLayer {
                 if seq_no == prev_seq {
                     self.a3_ack_repeated(source, seq_no, now_ms);
                 } else {
-                    self.a6_active_disconnect();
+                    self.active_disconnect();
                     self.state = State::Closed;
                 }
             }
@@ -247,13 +250,13 @@ impl TransportLayer {
                     self.state = State::OpenIdle;
                 } else {
                     // E9: wrong ACK sequence
-                    self.a6_active_disconnect();
+                    self.active_disconnect();
                     self.state = State::Closed;
                 }
             }
             State::Connecting => {
                 // E8/E9 in Connecting → disconnect
-                self.a6_active_disconnect();
+                self.active_disconnect();
                 self.state = State::Closed;
             }
         }
@@ -273,7 +276,7 @@ impl TransportLayer {
             State::Closed => {}
             State::OpenIdle | State::Connecting => {
                 // E11/E12/E13 in OpenIdle/Connecting → disconnect
-                self.a6_active_disconnect();
+                self.active_disconnect();
                 self.state = State::Closed;
             }
             State::OpenWait => {
@@ -286,7 +289,7 @@ impl TransportLayer {
                     self.a9_retransmit(now_ms);
                 } else {
                     // E13: max retries exceeded
-                    self.a6_active_disconnect();
+                    self.active_disconnect();
                     self.state = State::Closed;
                 }
             }
@@ -334,7 +337,7 @@ impl TransportLayer {
             self.a12_initiate_connection(destination, now_ms);
             self.state = State::Connecting;
         } else {
-            self.a6_active_disconnect();
+            self.active_disconnect();
             self.state = State::Closed;
         }
     }
@@ -346,7 +349,7 @@ impl TransportLayer {
                 address: self.connection_address,
             });
         } else {
-            self.a14_active_disconnect_requested();
+            self.active_disconnect();
             self.state = State::Closed;
         }
     }
@@ -362,7 +365,7 @@ impl TransportLayer {
                 // E16: connection timeout
                 match self.state {
                     State::OpenIdle | State::OpenWait | State::Connecting => {
-                        self.a6_active_disconnect();
+                        self.active_disconnect();
                         self.state = State::Closed;
                     }
                     State::Closed => {}
@@ -380,7 +383,7 @@ impl TransportLayer {
                     self.a9_retransmit(now_ms);
                 } else {
                     // E18: max retries
-                    self.a6_active_disconnect();
+                    self.active_disconnect();
                     self.state = State::Closed;
                 }
                 return;
@@ -416,7 +419,7 @@ impl TransportLayer {
             tpdu_type: TpduType::Ack,
             seq_no: self.seq_no_recv,
         });
-        self.seq_no_recv = (self.seq_no_recv + 1) & 0xF;
+        self.seq_no_recv = (self.seq_no_recv + 1) & SEQ_NO_MASK;
         self.enable_connection_timeout(now_ms);
         self.actions.push(Action::DataConnectedIndication {
             source,
@@ -452,8 +455,8 @@ impl TransportLayer {
         self.actions.push(Action::DisconnectIndication { address });
     }
 
-    /// A6: Active disconnect (error or timeout).
-    fn a6_active_disconnect(&mut self) {
+    /// Active disconnect (error, timeout, or application request).
+    fn active_disconnect(&mut self) {
         self.actions.push(Action::SendControl {
             destination: self.connection_address,
             tpdu_type: TpduType::Disconnect,
@@ -488,7 +491,7 @@ impl TransportLayer {
     /// A8: ACK received for our data.
     fn a8_ack_received(&mut self, now_ms: u64) {
         self.ack_timeout_deadline = None;
-        self.seq_no_send = (self.seq_no_send + 1) & 0xF;
+        self.seq_no_send = (self.seq_no_send + 1) & SEQ_NO_MASK;
         self.saved_frame = None;
         self.enable_connection_timeout(now_ms);
         self.actions.push(Action::DataConnectedConfirm);
@@ -529,20 +532,6 @@ impl TransportLayer {
             seq_no: 0,
         });
         self.enable_connection_timeout(now_ms);
-    }
-
-    /// A14: Active disconnect (application requested).
-    fn a14_active_disconnect_requested(&mut self) {
-        self.actions.push(Action::SendControl {
-            destination: self.connection_address,
-            tpdu_type: TpduType::Disconnect,
-            seq_no: 0,
-        });
-        self.actions.push(Action::DisconnectIndication {
-            address: self.connection_address,
-        });
-        self.connection_timeout_deadline = None;
-        self.ack_timeout_deadline = None;
     }
 
     // ── Timer helpers ─────────────────────────────────────────
@@ -806,7 +795,7 @@ mod tests {
         for i in 0u8..16 {
             tl.data_connected_request(Priority::Low, alloc::vec![i], u64::from(i) * 100);
             tl.take_actions();
-            tl.ack_indication(0x1001, i & 0xF, u64::from(i) * 100 + 50);
+            tl.ack_indication(0x1001, i & SEQ_NO_MASK, u64::from(i) * 100 + 50);
             tl.take_actions();
         }
 
