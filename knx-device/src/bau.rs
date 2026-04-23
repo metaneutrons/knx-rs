@@ -29,6 +29,26 @@ use crate::transport_layer::TransportLayer;
 /// Mask version for IP devices (System B).
 pub const MASK_VERSION_IP: u16 = 0x57B0;
 
+// ── Standard interface object indices (KNX spec) ─────────────
+
+/// Object index for the device object.
+const _OBJ_DEVICE: u8 = 0;
+/// Object index for the address table object.
+const OBJ_ADDR_TABLE: u8 = 1;
+/// Object index for the association table object.
+const OBJ_ASSOC_TABLE: u8 = 2;
+/// Object index for the application program object (first user object).
+const OBJ_APP_PROGRAM: u8 = 3;
+
+// ── KNX restart erase codes (KNX 3/5/2) ─────────────────────
+
+/// Erase code: confirmed restart (reset table objects).
+const ERASE_CONFIRMED_RESTART: u8 = 1;
+/// Erase code range: factory reset (clear everything).
+const ERASE_FACTORY_RESET_MIN: u8 = 2;
+/// Erase code range: factory reset upper bound.
+const ERASE_FACTORY_RESET_MAX: u8 = 4;
+
 /// The Bus Access Unit — main device controller.
 pub struct Bau {
     /// Interface objects indexed by object index (0=device, 1=address table, etc.).
@@ -110,6 +130,28 @@ impl Bau {
     /// Get a mutable interface object by index.
     pub fn object_mut(&mut self, index: u8) -> Option<&mut InterfaceObject> {
         self.objects.get_mut(index as usize)
+    }
+
+    /// Look up the `TableObject` for a given interface object index.
+    ///
+    /// Returns `None` for object index 0 (device object) which has no table.
+    const fn table_object(&self, object_index: u8) -> Option<&TableObject> {
+        match object_index {
+            OBJ_ADDR_TABLE => Some(&self.addr_table_object),
+            OBJ_ASSOC_TABLE => Some(&self.assoc_table_object),
+            _ if object_index >= OBJ_APP_PROGRAM => Some(&self.app_program_object),
+            _ => None,
+        }
+    }
+
+    /// Mutable version of [`table_object`](Self::table_object).
+    const fn table_object_mut(&mut self, object_index: u8) -> Option<&mut TableObject> {
+        match object_index {
+            OBJ_ADDR_TABLE => Some(&mut self.addr_table_object),
+            OBJ_ASSOC_TABLE => Some(&mut self.assoc_table_object),
+            _ if object_index >= OBJ_APP_PROGRAM => Some(&mut self.app_program_object),
+            _ => None,
+        }
     }
 
     /// The device's individual address.
@@ -707,52 +749,50 @@ impl Bau {
 
         // Intercept LoadStateControl reads for table objects
         if pid == PropertyId::LoadStateControl && start_index == 1 {
-            let state = match object_index {
-                1 => self.addr_table_object.load_state() as u8,
-                2 => self.assoc_table_object.load_state() as u8,
-                _ if object_index >= 3 => self.app_program_object.load_state() as u8,
-                _ => 0,
-            };
-            self.queue_property_response(
-                source,
-                object_index,
-                property_id,
-                1,
-                start_index,
-                &[state],
-            );
-            return;
+            if let Some(to) = self.table_object(object_index) {
+                let state = to.load_state() as u8;
+                self.queue_property_response(
+                    source,
+                    object_index,
+                    property_id,
+                    1,
+                    start_index,
+                    &[state],
+                );
+                return;
+            }
         }
 
         // Intercept TableReference reads for table objects
         if pid == PropertyId::TableReference && start_index == 1 {
-            let table_ref = match object_index {
-                1 => self.addr_table_object.table_reference(),
-                2 => self.assoc_table_object.table_reference(),
-                _ if object_index >= 3 => self.app_program_object.table_reference(),
-                _ => 0,
-            };
-            self.queue_property_response(
-                source,
-                object_index,
-                property_id,
-                1,
-                start_index,
-                &table_ref.to_be_bytes(),
-            );
-            return;
+            if let Some(to) = self.table_object(object_index) {
+                let table_ref = to.table_reference();
+                self.queue_property_response(
+                    source,
+                    object_index,
+                    property_id,
+                    1,
+                    start_index,
+                    &table_ref.to_be_bytes(),
+                );
+                return;
+            }
         }
 
         // Intercept McbTable reads for table objects
         if pid == PropertyId::McbTable && start_index == 1 {
-            let mcb = match object_index {
-                1 => self.addr_table_object.mcb_table(&self.memory_area),
-                2 => self.assoc_table_object.mcb_table(&self.memory_area),
-                _ if object_index >= 3 => self.app_program_object.mcb_table(&self.memory_area),
-                _ => [0; 8],
-            };
-            self.queue_property_response(source, object_index, property_id, 1, start_index, &mcb);
-            return;
+            if let Some(to) = self.table_object(object_index) {
+                let mcb = to.mcb_table(&self.memory_area);
+                self.queue_property_response(
+                    source,
+                    object_index,
+                    property_id,
+                    1,
+                    start_index,
+                    &mcb,
+                );
+                return;
+            }
         }
 
         let Some(obj) = self.objects.get(object_index as usize) else {
@@ -803,29 +843,11 @@ impl Bau {
         // Intercept LoadStateControl writes for table objects
         if pid == PropertyId::LoadStateControl {
             let mem_len = self.memory_area.len();
-            match object_index {
-                1 => {
-                    let (loaded, fill) = self.addr_table_object.handle_load_event(data, mem_len);
-                    self.apply_fill(fill);
-                    if loaded {
-                        let tbl_data = self.addr_table_object.data(&self.memory_area).to_vec();
-                        self.address_table.load(&tbl_data);
-                    }
-                }
-                2 => {
-                    let (loaded, fill) = self.assoc_table_object.handle_load_event(data, mem_len);
-                    self.apply_fill(fill);
-                    if loaded {
-                        let tbl_data = self.assoc_table_object.data(&self.memory_area).to_vec();
-                        self.association_table.load(&tbl_data);
-                    }
-                }
-                _ => {
-                    if object_index >= 3 {
-                        let (_loaded, fill) =
-                            self.app_program_object.handle_load_event(data, mem_len);
-                        self.apply_fill(fill);
-                    }
+            if let Some(to) = self.table_object_mut(object_index) {
+                let (loaded, fill) = to.handle_load_event(data, mem_len);
+                self.apply_fill(fill);
+                if loaded {
+                    self.reload_runtime_table(object_index);
                 }
             }
             // Send read-back response with current load state
@@ -863,7 +885,7 @@ impl Bau {
 
     fn handle_restart_master_reset(&mut self, source: u16, erase_code: u8) {
         match erase_code {
-            1 => {
+            ERASE_CONFIRMED_RESTART => {
                 // Confirmed restart — reset all table objects
                 self.addr_table_object = TableObject::new();
                 self.assoc_table_object = TableObject::new();
@@ -872,7 +894,7 @@ impl Bau {
                 self.association_table = AssociationTable::new();
                 self.memory_area.clear();
             }
-            2..=4 => {
+            ERASE_FACTORY_RESET_MIN..=ERASE_FACTORY_RESET_MAX => {
                 // Factory reset — clear everything
                 self.addr_table_object = TableObject::new();
                 self.assoc_table_object = TableObject::new();
@@ -1159,6 +1181,21 @@ impl Bau {
         }
     }
 
+    /// Reload the runtime table (address/association) from memory after ETS load completes.
+    fn reload_runtime_table(&mut self, object_index: u8) {
+        match object_index {
+            OBJ_ADDR_TABLE => {
+                let tbl_data = self.addr_table_object.data(&self.memory_area).to_vec();
+                self.address_table.load(&tbl_data);
+            }
+            OBJ_ASSOC_TABLE => {
+                let tbl_data = self.assoc_table_object.data(&self.memory_area).to_vec();
+                self.association_table.load(&tbl_data);
+            }
+            _ => {} // Application program has no runtime table to reload
+        }
+    }
+
     // ── Frame builders ────────────────────────────────────────
 
     fn queue_group_value_write(&mut self, ga: u16, data: &[u8]) {
@@ -1285,6 +1322,7 @@ impl Bau {
 mod tests {
     use super::*;
     use crate::device_object;
+    use crate::table_object::LoadState;
 
     fn test_bau() -> Bau {
         let device =
@@ -1492,5 +1530,84 @@ mod tests {
             bau2.memory_area(),
             &[0xAA, 0xBB, 0xCC, 0x00, 0x02, 0x08, 0x01, 0x08, 0x02]
         );
+    }
+
+    // ── BAU handler tests ─────────────────────────────────────
+
+    fn handler_test_bau() -> Bau {
+        let device =
+            device_object::new_device_object([0x00, 0xFA, 0x01, 0x02, 0x03, 0x04], [0x00; 6]);
+        let mut bau = Bau::new(device, 2, 2);
+        device_object::set_individual_address(bau.device_mut(), 0x1101);
+        bau
+    }
+
+    #[test]
+    fn restart_master_reset_clears_memory() {
+        let mut bau = handler_test_bau();
+        bau.handle_memory_write(0x0000, &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(bau.memory_area.len(), 4);
+
+        bau.handle_restart_master_reset(0x1102, 1);
+        assert!(bau.memory_area.is_empty());
+    }
+
+    #[test]
+    fn restart_master_reset_resets_table_objects() {
+        let mut bau = handler_test_bau();
+        // Transition tables to Loaded state
+        bau.addr_table_object.handle_load_event(&[1], 0);
+        bau.addr_table_object.handle_load_event(&[2], 0);
+        bau.assoc_table_object.handle_load_event(&[1], 0);
+        bau.assoc_table_object.handle_load_event(&[2], 0);
+        assert_eq!(bau.addr_table_object.load_state(), LoadState::Loaded);
+        assert_eq!(bau.assoc_table_object.load_state(), LoadState::Loaded);
+
+        bau.handle_restart_master_reset(0x1102, 1);
+        assert_eq!(bau.addr_table_object.load_state(), LoadState::Unloaded);
+        assert_eq!(bau.assoc_table_object.load_state(), LoadState::Unloaded);
+        assert_eq!(bau.app_program_object.load_state(), LoadState::Unloaded);
+    }
+
+    #[test]
+    fn restart_master_reset_sends_response() {
+        let mut bau = handler_test_bau();
+        bau.handle_restart_master_reset(0x1102, 1);
+        let resp = bau.next_outgoing_frame().expect("expected restart response");
+        assert_eq!(resp.destination_address_raw(), 0x1102);
+    }
+
+    #[test]
+    fn memory_write_and_read_roundtrip() {
+        let mut bau = handler_test_bau();
+        let data = [0x01, 0x02, 0x03, 0x04];
+        bau.handle_memory_write(0x0010, &data);
+        bau.handle_memory_read(0x1102, 4, 0x0010);
+
+        let resp = bau.next_outgoing_frame().expect("expected memory read response");
+        // Payload: [apci_hi, apci_lo|count, addr_hi, addr_lo, data...]
+        let payload = resp.payload();
+        assert_eq!(&payload[4..8], &data);
+    }
+
+    #[test]
+    fn memory_write_extends_memory() {
+        let mut bau = handler_test_bau();
+        assert!(bau.memory_area.is_empty());
+        bau.handle_memory_write(0x0020, &[0xFF]);
+        assert!(bau.memory_area.len() >= 0x21);
+        assert_eq!(bau.memory_area[0x20], 0xFF);
+    }
+
+    #[test]
+    fn memory_read_out_of_bounds() {
+        let mut bau = handler_test_bau();
+        // Memory is empty, reading should return empty data
+        bau.handle_memory_read(0x1102, 4, 0x0000);
+        let resp = bau.next_outgoing_frame().expect("expected memory read response");
+        // MemoryResponse with empty data: [apci_hi, apci_lo|0, addr_hi, addr_lo]
+        let payload = resp.payload();
+        assert_eq!(payload[1] & 0x0F, 0); // count nibble = 0
+        assert_eq!(payload.len(), 4); // no data bytes appended
     }
 }

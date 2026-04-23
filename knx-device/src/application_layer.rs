@@ -11,37 +11,56 @@ use alloc::vec::Vec;
 
 use knx_core::message::ApduType;
 
+// ── APCI byte helpers (SSOT: derived from ApduType enum) ─────
+
+/// Split an `ApduType` into its two APCI wire bytes `[high, low]`.
+///
+/// The 10-bit APCI value is encoded as:
+/// - `high`: bits 9..8 (masked into the lower 2 bits)
+/// - `low`: bits 7..0
+#[expect(clippy::cast_possible_truncation, reason = "APCI is 10-bit, both halves fit in u8")]
+const fn apci_bytes(t: ApduType) -> [u8; 2] {
+    let v = t as u16;
+    [(v >> 8) as u8, v as u8]
+}
+
 // ── APDU encoding (outgoing) ─────────────────────────────────
 
 /// Encode a `GroupValueWrite` APDU payload.
 pub fn encode_group_value_write(data: &[u8]) -> Vec<u8> {
-    encode_group_value(0x00, 0x80, data)
+    let [hi, lo] = apci_bytes(ApduType::GroupValueWrite);
+    encode_group_value(hi, lo, data)
 }
 
 /// Encode a `GroupValueResponse` APDU payload.
 pub fn encode_group_value_response(data: &[u8]) -> Vec<u8> {
-    encode_group_value(0x00, 0x40, data)
+    let [hi, lo] = apci_bytes(ApduType::GroupValueResponse);
+    encode_group_value(hi, lo, data)
 }
 
 /// Encode a `GroupValueRead` APDU payload.
 pub fn encode_group_value_read() -> Vec<u8> {
-    alloc::vec![0x00, 0x00]
+    let [hi, lo] = apci_bytes(ApduType::GroupValueRead);
+    alloc::vec![hi, lo]
 }
 
 /// Encode an `IndividualAddressResponse` APDU payload.
 pub fn encode_individual_address_response() -> Vec<u8> {
-    alloc::vec![0x01, 0x40]
+    let [hi, lo] = apci_bytes(ApduType::IndividualAddressResponse);
+    alloc::vec![hi, lo]
 }
 
 /// Encode a `DeviceDescriptorResponse` APDU payload for descriptor type 0.
 pub fn encode_device_descriptor_response(mask_version: u16) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::DeviceDescriptorResponse);
     let m = mask_version.to_be_bytes();
-    alloc::vec![0x03, 0x40, m[0], m[1]]
+    alloc::vec![hi, lo, m[0], m[1]]
 }
 
 /// Encode a `DeviceDescriptorResponse` for unsupported descriptor types (type 0x3F).
 pub fn encode_device_descriptor_unsupported() -> Vec<u8> {
-    alloc::vec![0x03, 0x7F]
+    let [hi, _] = apci_bytes(ApduType::DeviceDescriptorResponse);
+    alloc::vec![hi, 0x3F]
 }
 
 /// Encode a `PropertyValueResponse` APDU payload.
@@ -52,9 +71,10 @@ pub fn encode_property_response(
     start_index: u16,
     data: &[u8],
 ) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::PropertyValueResponse);
     let mut payload = Vec::with_capacity(6 + data.len());
-    payload.push(0x03);
-    payload.push(0xD6); // PropertyValueResponse
+    payload.push(hi);
+    payload.push(lo);
     payload.push(object_index);
     payload.push(property_id);
     let count_start = (u16::from(count) << 12) | (start_index & 0x0FFF);
@@ -69,9 +89,10 @@ pub fn encode_property_response(
     reason = "data.len() is always <= 15"
 )]
 pub fn encode_memory_response(address: u16, data: &[u8]) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::MemoryResponse);
     let mut payload = Vec::with_capacity(5 + data.len());
-    payload.push(0x02);
-    payload.push(0x40 | (data.len() as u8 & 0x0F));
+    payload.push(hi);
+    payload.push(lo | (data.len() as u8 & 0x0F));
     payload.extend_from_slice(&address.to_be_bytes());
     payload.extend_from_slice(data);
     payload
@@ -79,18 +100,21 @@ pub fn encode_memory_response(address: u16, data: &[u8]) -> Vec<u8> {
 
 /// Encode an `AuthorizeResponse` APDU payload.
 pub fn encode_authorize_response(level: u8) -> Vec<u8> {
-    alloc::vec![0x03, 0xD2, level]
+    let [hi, lo] = apci_bytes(ApduType::AuthorizeResponse);
+    alloc::vec![hi, lo, level]
 }
 
 /// Encode a `KeyResponse` APDU payload.
 pub fn encode_key_response(level: u8) -> Vec<u8> {
-    alloc::vec![0x03, 0xD4, level]
+    let [hi, lo] = apci_bytes(ApduType::KeyResponse);
+    alloc::vec![hi, lo, level]
 }
 
 /// Encode a `RestartResponse` APDU payload (master reset response).
 pub fn encode_restart_response(error_code: u8, process_time: u16) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::RestartMasterReset);
     let t = process_time.to_be_bytes();
-    alloc::vec![0x03, 0xA1, error_code, t[0], t[1]]
+    alloc::vec![hi, lo, error_code, t[0], t[1]]
 }
 
 /// Encode a `PropertyDescriptionResponse` APDU payload.
@@ -103,6 +127,7 @@ pub fn encode_property_description_response(
     max_elements: u16,
     access: u8,
 ) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::PropertyDescriptionResponse);
     let type_byte = if write_enable {
         0x80 | (pdt & 0x3F)
     } else {
@@ -110,25 +135,16 @@ pub fn encode_property_description_response(
     };
     let max_hi = ((max_elements >> 8) & 0x0F) as u8;
     let max_lo = (max_elements & 0xFF) as u8;
-    alloc::vec![
-        0x03,
-        0xD9,
-        object_index,
-        property_id,
-        property_index,
-        type_byte,
-        max_hi,
-        max_lo,
-        access
-    ]
+    alloc::vec![hi, lo, object_index, property_id, property_index, type_byte, max_hi, max_lo, access]
 }
 
 /// Encode a `MemoryExtReadResponse` APDU payload.
 pub fn encode_memory_ext_read_response(return_code: u8, address: u32, data: &[u8]) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::MemoryExtReadResponse);
     let a = address.to_be_bytes();
     let mut payload = Vec::with_capacity(6 + data.len());
-    payload.push(0x01);
-    payload.push(0xFE);
+    payload.push(hi);
+    payload.push(lo);
     payload.push(return_code);
     payload.extend_from_slice(&a[1..4]); // 24-bit address
     payload.extend_from_slice(data);
@@ -137,8 +153,9 @@ pub fn encode_memory_ext_read_response(return_code: u8, address: u32, data: &[u8
 
 /// Encode a `MemoryExtWriteResponse` APDU payload.
 pub fn encode_memory_ext_write_response(return_code: u8, address: u32) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::MemoryExtWriteResponse);
     let a = address.to_be_bytes();
-    alloc::vec![0x01, 0xFC, return_code, a[1], a[2], a[3]]
+    alloc::vec![hi, lo, return_code, a[1], a[2], a[3]]
 }
 
 /// Encode an `IndividualAddressSerialNumberReadResponse` APDU payload.
@@ -146,10 +163,11 @@ pub fn encode_individual_address_serial_number_response(
     serial: [u8; 6],
     domain_address: u16,
 ) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::IndividualAddressSerialNumberResponse);
     let d = domain_address.to_be_bytes();
     let mut payload = Vec::with_capacity(10);
-    payload.push(0x03);
-    payload.push(0xDD);
+    payload.push(hi);
+    payload.push(lo);
     payload.extend_from_slice(&serial);
     payload.extend_from_slice(&d);
     payload
@@ -162,12 +180,13 @@ pub fn encode_system_network_parameter_response(
     test_info: &[u8],
     test_result: &[u8],
 ) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::SystemNetworkParameterResponse);
     let ot = object_type.to_be_bytes();
     let pid_shifted = property_id << 4;
     let pid_bytes = pid_shifted.to_be_bytes();
     let mut payload = Vec::with_capacity(6 + test_info.len() + test_result.len());
-    payload.push(0x01);
-    payload.push(0xC9);
+    payload.push(hi);
+    payload.push(lo);
     payload.extend_from_slice(&ot);
     payload.extend_from_slice(&pid_bytes);
     payload.extend_from_slice(test_info);
@@ -177,8 +196,9 @@ pub fn encode_system_network_parameter_response(
 
 /// Encode an `AdcResponse` APDU payload.
 pub fn encode_adc_response(channel: u8, count: u8, value: u16) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::AdcResponse);
     let v = value.to_be_bytes();
-    alloc::vec![0x01, 0xC0 | (channel & 0x3F), count, v[0], v[1]]
+    alloc::vec![hi, lo | (channel & 0x3F), count, v[0], v[1]]
 }
 
 /// Encode a `FunctionPropertyStateResponse` APDU payload.
@@ -187,9 +207,10 @@ pub fn encode_function_property_state_response(
     property_id: u8,
     result_data: &[u8],
 ) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::FunctionPropertyStateResponse);
     let mut payload = Vec::with_capacity(4 + result_data.len());
-    payload.push(0x02);
-    payload.push(0xC9);
+    payload.push(hi);
+    payload.push(lo);
     payload.push(object_index);
     payload.push(property_id);
     payload.extend_from_slice(result_data);
@@ -205,9 +226,10 @@ pub fn encode_property_value_ext_response(
     start_index: u16,
     data: &[u8],
 ) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::PropertyValueExtResponse);
     let mut payload = Vec::with_capacity(9 + data.len());
-    payload.push(0x01);
-    payload.push(0xCD);
+    payload.push(hi);
+    payload.push(lo);
     encode_ext_property_header(
         &mut payload,
         object_type,
@@ -803,5 +825,127 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    // ── Encoding tests ───────────────────────────────────────
+
+    /// Helper: expected APCI wire bytes for a given `ApduType`.
+    fn expected_apci(t: ApduType) -> [u8; 2] {
+        let v = t as u16;
+        [(v >> 8) as u8, v as u8]
+    }
+
+    #[test]
+    fn encode_group_value_write_short() {
+        let [hi, lo] = expected_apci(ApduType::GroupValueWrite);
+        let result = encode_group_value_write(&[0x01]);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo | 0x01);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn encode_group_value_write_long() {
+        let [hi, lo] = expected_apci(ApduType::GroupValueWrite);
+        let result = encode_group_value_write(&[0xAA, 0xBB]);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(&result[2..], &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn encode_group_value_response_short() {
+        let [hi, lo] = expected_apci(ApduType::GroupValueResponse);
+        let result = encode_group_value_response(&[0x3F]);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo | 0x3F);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn encode_group_value_response_long() {
+        let [hi, lo] = expected_apci(ApduType::GroupValueResponse);
+        let result = encode_group_value_response(&[0xFF, 0x01]);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(&result[2..], &[0xFF, 0x01]);
+    }
+
+    #[test]
+    fn encode_group_value_read_bytes() {
+        let result = encode_group_value_read();
+        assert_eq!(result, &[0x00, 0x00]);
+    }
+
+    #[test]
+    fn encode_device_descriptor_response_mask() {
+        let [hi, lo] = expected_apci(ApduType::DeviceDescriptorResponse);
+        let result = encode_device_descriptor_response(0x07B0);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(&result[2..], &[0x07, 0xB0]);
+    }
+
+    #[test]
+    fn encode_property_response_encoding() {
+        let [hi, lo] = expected_apci(ApduType::PropertyValueResponse);
+        // count=1, start_index=1 → count_start = (1 << 12) | 1 = 0x1001
+        let result = encode_property_response(0, 0x36, 1, 1, &[0xAA]);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(result[2], 0x00); // object_index
+        assert_eq!(result[3], 0x36); // property_id
+        assert_eq!(&result[4..6], &[0x10, 0x01]); // count_start BE
+        assert_eq!(result[6], 0xAA);
+    }
+
+    #[test]
+    fn encode_memory_response_encoding() {
+        let [hi, lo] = expected_apci(ApduType::MemoryResponse);
+        let result = encode_memory_response(0x0010, &[0xDE, 0xAD]);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo | 0x02); // data.len() = 2
+        assert_eq!(&result[2..4], &[0x00, 0x10]); // address BE
+        assert_eq!(&result[4..], &[0xDE, 0xAD]);
+    }
+
+    #[test]
+    fn encode_authorize_response_level() {
+        let [hi, lo] = expected_apci(ApduType::AuthorizeResponse);
+        let result = encode_authorize_response(0x03);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(result[2], 0x03);
+    }
+
+    #[test]
+    fn encode_restart_response_encoding() {
+        let [hi, lo] = expected_apci(ApduType::RestartMasterReset);
+        let result = encode_restart_response(0x01, 0x0064);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(result[2], 0x01); // error_code
+        assert_eq!(&result[3..5], &[0x00, 0x64]); // process_time BE
+    }
+
+    #[test]
+    fn encode_memory_ext_read_response_24bit_addr() {
+        let [hi, lo] = expected_apci(ApduType::MemoryExtReadResponse);
+        let result = encode_memory_ext_read_response(0x00, 0x00_12_34_56, &[0xFF]);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(result[2], 0x00); // return_code
+        assert_eq!(&result[3..6], &[0x12, 0x34, 0x56]); // 24-bit address
+        assert_eq!(result[6], 0xFF);
+    }
+
+    #[test]
+    fn encode_memory_ext_write_response_24bit_addr() {
+        let [hi, lo] = expected_apci(ApduType::MemoryExtWriteResponse);
+        let result = encode_memory_ext_write_response(0x00, 0x00_AB_CD_EF);
+        assert_eq!(result[0], hi);
+        assert_eq!(result[1], lo);
+        assert_eq!(result[2], 0x00); // return_code
+        assert_eq!(&result[3..6], &[0xAB, 0xCD, 0xEF]); // 24-bit address
     }
 }

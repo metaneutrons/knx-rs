@@ -470,4 +470,62 @@ mod tests {
         let mem = vec![0x01, 0x02, 0x03];
         assert_eq!(to.data(&mem), &[] as &[u8]);
     }
+
+    #[test]
+    fn mcb_table_returns_correct_format() {
+        let mut to = TableObject::new();
+        to.state = LoadState::Loaded;
+        to.data_offset = 0;
+        to.data_size = 4;
+
+        let mem = vec![0x01, 0x02, 0x03, 0x04];
+        let crc = crc16_ccitt(&mem);
+        let crc_be = crc.to_be_bytes();
+        let expected = [0x00, 0x00, 0x00, 0x04, 0x00, 0xFF, crc_be[0], crc_be[1]];
+        assert_eq!(to.mcb_table(&mem), expected);
+    }
+
+    #[test]
+    fn mcb_table_returns_zeros_when_unloaded() {
+        let to = TableObject::new();
+        assert_eq!(to.mcb_table(&[]), [0; 8]);
+    }
+
+    #[test]
+    fn crc16_ccitt_known_vector() {
+        assert_eq!(crc16_ccitt(b"123456789"), 0x29B1);
+    }
+
+    #[test]
+    fn table_reference_returns_offset_when_loaded() {
+        let mut to = TableObject::new();
+        to.state = LoadState::Loaded;
+        to.data_offset = 42;
+        assert_eq!(to.table_reference(), 42);
+    }
+
+    #[test]
+    fn table_reference_returns_zero_when_unloaded() {
+        let to = TableObject::new();
+        assert_eq!(to.table_reference(), 0);
+    }
+
+    #[test]
+    fn additional_load_controls_with_fill() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0);
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x20, 0x01, 0xAA];
+        let (_loaded, fill) = to.handle_load_event(&alc, 100);
+        assert_eq!(fill, Some((100, 32, 0xAA)));
+    }
+
+    #[test]
+    fn additional_load_controls_invalid_opcode() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0);
+        let alc = [0x03, 0xFF, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00];
+        to.handle_load_event(&alc, 0);
+        assert_eq!(to.load_state(), LoadState::Error);
+        assert_eq!(to.error_code(), ErrorCode::InvalidOpcode);
+    }
 }
