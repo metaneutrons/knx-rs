@@ -124,12 +124,31 @@ impl Bau {
     }
 
     fn process_control_tpdu(&mut self, frame: &CemiFrame, tpdu_type: knx_core::message::TpduType) {
+        use knx_core::message::TpduType;
+        // TODO: pass real timestamp for timer support
+        let now_ms = 0;
+        let seq_no = frame.tpdu().map_or(0, |t| match t {
+            Tpdu::Control {
+                sequence_number, ..
+            } => sequence_number,
+            Tpdu::Data { .. } => 0,
+        });
         match tpdu_type {
-            knx_core::message::TpduType::Connect => {
-                self.transport.connect(frame.source_address().raw());
+            TpduType::Connect => {
+                self.transport
+                    .connect_indication(frame.source_address().raw(), now_ms);
             }
-            knx_core::message::TpduType::Disconnect => {
-                self.transport.disconnect();
+            TpduType::Disconnect => {
+                self.transport
+                    .disconnect_indication(frame.source_address().raw());
+            }
+            TpduType::Ack => {
+                self.transport
+                    .ack_indication(frame.source_address().raw(), seq_no, now_ms);
+            }
+            TpduType::Nack => {
+                self.transport
+                    .nack_indication(frame.source_address().raw(), seq_no, now_ms);
             }
             _ => {}
         }
@@ -747,7 +766,10 @@ mod tests {
         ])
         .unwrap();
         bau.process_frame(&connect);
-        assert!(bau.transport.is_connected_to(0x1102));
+        assert!(
+            bau.transport.state() == crate::transport_layer::State::OpenIdle
+                && bau.transport.connection_address() == 0x1102
+        );
 
         // T_Disconnect
         let disconnect = CemiFrame::parse(&[
@@ -755,7 +777,10 @@ mod tests {
         ])
         .unwrap();
         bau.process_frame(&disconnect);
-        assert!(!bau.transport.is_connected_to(0x1102));
+        assert!(
+            bau.transport.state() == crate::transport_layer::State::Closed
+                && bau.transport.connection_address() == 0x1102
+        );
     }
 
     #[test]
