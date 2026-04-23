@@ -118,23 +118,36 @@ impl Bau {
     }
 
     /// Process an incoming CEMI frame.
-    pub fn process_frame(&mut self, frame: &CemiFrame) {
+    ///
+    /// `now_ms` is the current monotonic time in milliseconds, used for
+    /// transport layer timeouts and retry logic.
+    pub fn process_frame(&mut self, frame: &CemiFrame, now_ms: u64) {
         let Some(tpdu) = frame.tpdu() else { return };
 
         match &tpdu {
             Tpdu::Control { tpdu_type, .. } => {
-                self.process_control_tpdu(frame, *tpdu_type);
+                self.process_control_tpdu(frame, *tpdu_type, now_ms);
             }
-            Tpdu::Data { apdu, .. } => {
-                self.process_data_tpdu(frame, apdu);
+            Tpdu::Data {
+                tpdu_type,
+                sequence_number,
+                apdu,
+            } => {
+                self.process_data_tpdu(frame, *tpdu_type, *sequence_number, apdu, now_ms);
             }
         }
+
+        // Process transport layer actions (ACK/NACK/Disconnect frames + connected data)
+        self.drain_transport_actions();
     }
 
-    fn process_control_tpdu(&mut self, frame: &CemiFrame, tpdu_type: knx_core::message::TpduType) {
+    fn process_control_tpdu(
+        &mut self,
+        frame: &CemiFrame,
+        tpdu_type: knx_core::message::TpduType,
+        now_ms: u64,
+    ) {
         use knx_core::message::TpduType;
-        // TODO: pass real timestamp for timer support
-        let now_ms = 0;
         let seq_no = frame.tpdu().map_or(0, |t| match t {
             Tpdu::Control {
                 sequence_number, ..
@@ -162,14 +175,35 @@ impl Bau {
         }
     }
 
-    fn process_data_tpdu(&mut self, frame: &CemiFrame, apdu: &knx_core::apdu::Apdu) {
+    fn process_data_tpdu(
+        &mut self,
+        frame: &CemiFrame,
+        tpdu_type: knx_core::message::TpduType,
+        sequence_number: u8,
+        apdu: &knx_core::apdu::Apdu,
+        now_ms: u64,
+    ) {
+        use knx_core::message::TpduType;
         let source = frame.source_address().raw();
-        let Some(indication) = application_layer::parse_indication(apdu.apdu_type, &apdu.data)
-        else {
-            return;
-        };
 
-        self.dispatch_indication(frame, source, indication);
+        if tpdu_type == TpduType::DataConnected {
+            // Route through transport layer — it handles ACK/NACK and sequence validation.
+            let apdu_data = application_layer::encode_raw_apdu(apdu);
+            self.transport.data_connected_indication(
+                source,
+                sequence_number,
+                frame.priority(),
+                apdu_data,
+                now_ms,
+            );
+        } else {
+            // Connectionless: DataGroup, DataBroadcast, DataIndividual
+            let Some(indication) = application_layer::parse_indication(apdu.apdu_type, &apdu.data)
+            else {
+                return;
+            };
+            self.dispatch_indication(frame, source, indication);
+        }
     }
 
     #[expect(clippy::too_many_lines)]
@@ -357,7 +391,18 @@ impl Bau {
     }
 
     /// Poll for outgoing frames. Drives pending group object writes/reads.
-    pub fn poll(&mut self) {
+    ///
+    /// `now_ms` is the current monotonic time in milliseconds.
+    pub fn poll(&mut self, now_ms: u64) {
+        // Transport layer timeouts and buffered request retry
+        self.transport.poll(now_ms);
+        self.drain_transport_actions();
+
+        // Don't send group telegrams until tables are loaded
+        if !self.configured() {
+            return;
+        }
+
         while let Some(asap) = self.group_objects.next_pending() {
             let Some(go) = self.group_objects.get(asap) else {
                 break;
@@ -408,6 +453,63 @@ impl Bau {
     /// Take the next outgoing CEMI frame.
     pub fn next_outgoing_frame(&mut self) -> Option<CemiFrame> {
         self.outbox.pop_front()
+    }
+
+    /// Check if the device is fully configured (all tables loaded).
+    pub fn configured(&self) -> bool {
+        use crate::table_object::LoadState;
+        self.addr_table_object.load_state() == LoadState::Loaded
+            && self.assoc_table_object.load_state() == LoadState::Loaded
+    }
+
+    /// Consume transport layer actions and convert them to outgoing frames.
+    fn drain_transport_actions(&mut self) {
+        use crate::transport_layer::Action;
+        for action in self.transport.take_actions() {
+            match action {
+                Action::SendControl {
+                    destination,
+                    tpdu_type,
+                    seq_no,
+                } => {
+                    self.queue_control_frame(destination, tpdu_type, seq_no);
+                }
+                Action::SendDataConnected {
+                    destination,
+                    seq_no,
+                    priority,
+                    apdu,
+                } => {
+                    self.queue_data_connected_frame(destination, seq_no, priority, &apdu);
+                }
+                Action::ConnectIndication { .. }
+                | Action::ConnectConfirm { .. }
+                | Action::DisconnectIndication { .. }
+                | Action::DataConnectedConfirm => {}
+                Action::DataConnectedIndication {
+                    source,
+                    priority: _,
+                    apdu,
+                } => {
+                    // Connected data received — parse and dispatch
+                    if let Some(parsed) = application_layer::parse_raw_apdu(&apdu) {
+                        // Create a minimal frame for dispatch_indication (source needed)
+                        self.dispatch_connected_indication(source, parsed);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Dispatch a connected-mode indication (from transport layer).
+    fn dispatch_connected_indication(&mut self, source: u16, indication: AppIndication) {
+        // Connected indications don't have a CemiFrame, so we create a dummy
+        // for handlers that need the source address.
+        let src = IndividualAddress::from_raw(source);
+        let dst = DestinationAddress::Individual(self.individual_address());
+        let dummy_frame =
+            CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::System, &[]);
+        self.dispatch_indication(&dummy_frame, source, indication);
     }
 
     /// Set the memory area (for `MemoryRead`/`MemoryWrite` from ETS).
@@ -1139,6 +1241,43 @@ impl Bau {
             payload,
         ));
     }
+
+    fn queue_control_frame(
+        &mut self,
+        destination: u16,
+        tpdu_type: knx_core::message::TpduType,
+        seq_no: u8,
+    ) {
+        let src = self.individual_address();
+        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
+        let payload = knx_core::tpdu::encode_control(tpdu_type, seq_no);
+        self.outbox.push_back(CemiFrame::new_l_data(
+            MessageCode::LDataReq,
+            src,
+            dst,
+            Priority::System,
+            &payload,
+        ));
+    }
+
+    fn queue_data_connected_frame(
+        &mut self,
+        destination: u16,
+        seq_no: u8,
+        priority: Priority,
+        apdu: &[u8],
+    ) {
+        let src = self.individual_address();
+        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
+        let payload = knx_core::tpdu::encode_data_connected(seq_no, apdu);
+        self.outbox.push_back(CemiFrame::new_l_data(
+            MessageCode::LDataReq,
+            src,
+            dst,
+            priority,
+            &payload,
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -1167,7 +1306,7 @@ mod tests {
             0x29, 0x00, 0xBC, 0xE0, 0x11, 0x02, 0x08, 0x01, 0x01, 0x00, 0x81,
         ])
         .unwrap();
-        bau.process_frame(&frame);
+        bau.process_frame(&frame, 0);
         assert_eq!(
             bau.group_objects.get(1).unwrap().comm_flag(),
             ComFlag::Updated
@@ -1186,15 +1325,21 @@ mod tests {
             0x29, 0x00, 0xBC, 0xE0, 0x11, 0x02, 0x08, 0x01, 0x01, 0x00, 0x00,
         ])
         .unwrap();
-        bau.process_frame(&frame);
+        bau.process_frame(&frame, 0);
         assert!(bau.next_outgoing_frame().is_some());
     }
 
     #[test]
     fn poll_sends_pending_writes() {
         let mut bau = test_bau();
+        // Mark tables as loaded so configured() returns true
+        bau.addr_table_object.handle_load_event(&[1], 0);
+        bau.addr_table_object.handle_load_event(&[2], 0);
+        bau.assoc_table_object.handle_load_event(&[1], 0);
+        bau.assoc_table_object.handle_load_event(&[2], 0);
+
         bau.group_objects.get_mut(1).unwrap().write_value(&[1]);
-        bau.poll();
+        bau.poll(0);
         let frame = bau.next_outgoing_frame().unwrap();
         assert_eq!(frame.destination_address_raw(), 0x0801);
         assert_eq!(
@@ -1211,7 +1356,7 @@ mod tests {
             0x29, 0x00, 0xB0, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0xC0, 0x11, 0x05,
         ])
         .unwrap();
-        bau.process_frame(&frame);
+        bau.process_frame(&frame, 0);
         assert_eq!(bau.individual_address().raw(), 0x1105);
     }
 
@@ -1222,7 +1367,7 @@ mod tests {
             0x29, 0x00, 0xB0, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0xC0, 0x11, 0x05,
         ])
         .unwrap();
-        bau.process_frame(&frame);
+        bau.process_frame(&frame, 0);
         assert_eq!(bau.individual_address().raw(), 0x1101);
     }
 
@@ -1236,7 +1381,7 @@ mod tests {
             0x01,
         ])
         .unwrap();
-        bau.process_frame(&frame);
+        bau.process_frame(&frame, 0);
         let resp = bau.next_outgoing_frame().unwrap();
         // Response should be sent to 1.1.2 (the source of the request)
         assert_eq!(resp.destination_address_raw(), 0x1102);
@@ -1259,7 +1404,7 @@ mod tests {
             0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x00, 0x80, 0x00,
         ])
         .unwrap();
-        bau.process_frame(&connect);
+        bau.process_frame(&connect, 0);
         assert!(
             bau.transport.state() == crate::transport_layer::State::OpenIdle
                 && bau.transport.connection_address() == 0x1102
@@ -1270,7 +1415,7 @@ mod tests {
             0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x00, 0x81, 0x00,
         ])
         .unwrap();
-        bau.process_frame(&disconnect);
+        bau.process_frame(&disconnect, 0);
         assert!(
             bau.transport.state() == crate::transport_layer::State::Closed
                 && bau.transport.connection_address() == 0x1102

@@ -117,7 +117,7 @@ async fn demo_device_full_flow() {
     // Server should deliver the frame as an event
     let event = timeout(TIMEOUT, server.recv()).await.unwrap().unwrap();
     if let ServerEvent::TunnelFrame(f) = event {
-        bau.process_frame(&f);
+        bau.process_frame(&f, 0);
     }
 
     // GO 2 should be updated with value 1
@@ -142,11 +142,11 @@ async fn demo_device_full_flow() {
     // Process the read request in the BAU
     let event2 = timeout(TIMEOUT, server.recv()).await.unwrap().unwrap();
     if let ServerEvent::TunnelFrame(f) = event2 {
-        bau.process_frame(&f);
+        bau.process_frame(&f, 0);
     }
 
     // BAU should have generated a GroupValueResponse
-    bau.poll();
+    bau.poll(0);
     let response = bau.next_outgoing_frame();
     assert!(
         response.is_some(),

@@ -66,7 +66,7 @@ fn log_updated_group_objects(bau: &mut Bau) {
 }
 
 async fn flush_outgoing(bau: &mut Bau, server: &DeviceServer) {
-    bau.poll();
+    bau.poll(0);
     while let Some(frame) = bau.next_outgoing_frame() {
         if let Err(e) = server.send_frame(frame).await {
             tracing::warn!(error = %e, "Failed to send frame");
@@ -129,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             dst = %frame.destination_address(),
                             "Received frame"
                         );
-                        bau.process_frame(&frame);
+                        bau.process_frame(&frame, 0);
                         log_updated_group_objects(&mut bau);
                         flush_outgoing(&mut bau, &server).await;
                     }

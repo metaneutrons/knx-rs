@@ -15,6 +15,9 @@
 //! Bits 1..0: varies (control type or APCI high bits)
 //! ```
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use crate::apdu::Apdu;
 use crate::message::TpduType;
 use crate::types::AddressType;
@@ -128,11 +131,43 @@ impl Tpdu {
     }
 }
 
+/// Encode a control TPDU (Connect, Disconnect, ACK, NACK).
+///
+/// Returns the raw TPDU bytes (1 byte for Connect/Disconnect, 1 byte for ACK/NACK).
+pub fn encode_control(tpdu_type: TpduType, seq_no: u8) -> Vec<u8> {
+    let tpci = match tpdu_type {
+        TpduType::Connect => 0x80,    // control=1, numbered=0, bit0=0
+        TpduType::Disconnect => 0x81, // control=1, numbered=0, bit0=1
+        TpduType::Ack => 0xC0 | ((seq_no & 0x0F) << 2), // control=1, numbered=1, bit0=0
+        TpduType::Nack => 0xC0 | ((seq_no & 0x0F) << 2) | 0x01, // control=1, numbered=1, bit0=1
+        _ => return Vec::new(),
+    };
+    vec![tpci]
+}
+
+/// Encode a `DataConnected` TPDU (numbered data with sequence number).
+///
+/// `apdu` is the raw APDU payload (TPCI byte will be prepended).
+pub fn encode_data_connected(seq_no: u8, apdu: &[u8]) -> Vec<u8> {
+    // DataConnected: control=0, numbered=1 → TPCI = 0x40 | (seq << 2)
+    let tpci = 0x40 | ((seq_no & 0x0F) << 2);
+    let mut buf = Vec::with_capacity(1 + apdu.len());
+    // The TPCI is OR'd into the first APDU byte (they share byte 0)
+    if apdu.is_empty() {
+        buf.push(tpci);
+    } else {
+        buf.push(tpci | (apdu[0] & 0x03)); // merge TPCI with APCI high bits
+        buf.extend_from_slice(&apdu[1..]);
+    }
+    buf
+}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
     use crate::message::ApduType;
+    use crate::types::AddressType;
+
+    use super::Tpdu;
 
     #[test]
     fn parse_data_group() {

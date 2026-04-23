@@ -230,6 +230,13 @@ pub enum ApduType {
     SecureService = 0x3F1,
 }
 
+impl ApduType {
+    /// Try to convert a raw APCI value to an `ApduType`.
+    pub const fn from_raw(raw: u16) -> Option<Self> {
+        crate::apdu::apdu_type_from_raw(raw)
+    }
+}
+
 // ── TryFrom implementations ──────────────────────────────────
 
 use crate::types::InvalidWireValue;

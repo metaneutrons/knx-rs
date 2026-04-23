@@ -110,6 +110,13 @@ fn decode_apci(apci_raw: u16, payload: &[u8], npdu_length: u8) -> Option<(ApduTy
     Some((apdu_type, data))
 }
 
+/// Try to convert a raw APCI value to an `ApduType`.
+///
+/// This applies the same masking logic as APDU parsing.
+pub const fn apdu_type_from_raw(raw: u16) -> Option<ApduType> {
+    match_apdu_type(raw)
+}
+
 /// Map a (masked) APCI value to an `ApduType` enum variant.
 const fn match_apdu_type(bits: u16) -> Option<ApduType> {
     // This covers all variants from the C++ knx_types.h

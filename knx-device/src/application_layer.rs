@@ -255,6 +255,26 @@ fn encode_group_value(tpci: u8, apci: u8, data: &[u8]) -> Vec<u8> {
     payload
 }
 
+/// Encode an APDU into raw bytes (for transport layer connected-mode).
+pub fn encode_raw_apdu(apdu: &knx_core::apdu::Apdu) -> Vec<u8> {
+    let apci = apdu.apdu_type as u16;
+    let mut buf = Vec::with_capacity(2 + apdu.data.len());
+    buf.push((apci >> 8) as u8);
+    buf.push((apci & 0xFF) as u8);
+    buf.extend_from_slice(&apdu.data);
+    buf
+}
+
+/// Parse raw APDU bytes back into an `AppIndication` (for transport layer connected-mode).
+pub fn parse_raw_apdu(data: &[u8]) -> Option<AppIndication> {
+    if data.len() < 2 {
+        return None;
+    }
+    let apci_raw = u16::from(data[0]) << 8 | u16::from(data[1]);
+    let apdu_type = ApduType::from_raw(apci_raw)?;
+    parse_indication(apdu_type, &data[1..])
+}
+
 // ── APDU parsing (incoming) ──────────────────────────────────
 
 /// An incoming application-layer indication to be processed by the BAU.
