@@ -253,7 +253,7 @@ impl Bau {
             );
         } else {
             // Connectionless: DataGroup, DataBroadcast, DataIndividual
-            let Some(indication) = application_layer::parse_indication(apdu.apdu_type, &apdu.data)
+            let Ok(indication) = application_layer::parse_indication(apdu.apdu_type, &apdu.data)
             else {
                 return;
             };
@@ -547,7 +547,7 @@ impl Bau {
                     apdu,
                 } => {
                     // Connected data received — parse and dispatch
-                    if let Some(parsed) = application_layer::parse_raw_apdu(&apdu) {
+                    if let Ok(parsed) = application_layer::parse_raw_apdu(&apdu) {
                         // Create a minimal frame for dispatch_indication (source needed)
                         self.dispatch_connected_indication(source, parsed);
                     }

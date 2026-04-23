@@ -315,16 +315,37 @@ pub fn encode_raw_apdu(apdu: &knx_core::apdu::Apdu) -> Vec<u8> {
 }
 
 /// Parse raw APDU bytes back into an `AppIndication` (for transport layer connected-mode).
-pub fn parse_raw_apdu(data: &[u8]) -> Option<AppIndication> {
+///
+/// # Errors
+///
+/// Returns `AppLayerError::MalformedData` if the bytes are too short or the APCI is unrecognized.
+/// Propagates errors from [`parse_indication`].
+pub fn parse_raw_apdu(data: &[u8]) -> Result<AppIndication, AppLayerError> {
     if data.len() < 2 {
-        return None;
+        return Err(AppLayerError::MalformedData);
     }
     let apci_raw = u16::from(data[0]) << 8 | u16::from(data[1]);
-    let apdu_type = ApduType::from_raw(apci_raw)?;
+    let apdu_type = ApduType::from_raw(apci_raw).ok_or(AppLayerError::MalformedData)?;
     parse_indication(apdu_type, &data[1..])
 }
 
 // ── APDU parsing (incoming) ──────────────────────────────────
+
+/// Error type for application-layer APDU parsing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppLayerError {
+    /// The APDU type is not supported by this device.
+    UnsupportedApdu(ApduType),
+    /// The payload is too short for the given APDU type.
+    TruncatedPayload {
+        /// Minimum number of bytes expected.
+        expected: usize,
+        /// Actual number of bytes received.
+        got: usize,
+    },
+    /// The raw APDU bytes could not be decoded.
+    MalformedData,
+}
 
 /// An incoming application-layer indication to be processed by the BAU.
 #[derive(Debug, Clone)]
@@ -551,30 +572,52 @@ pub enum AppIndication {
     },
 }
 
+/// Check that `data` has at least `expected` bytes, or return a truncation error.
+const fn check_len(data: &[u8], expected: usize) -> Result<(), AppLayerError> {
+    if data.len() >= expected {
+        Ok(())
+    } else {
+        Err(AppLayerError::TruncatedPayload {
+            expected,
+            got: data.len(),
+        })
+    }
+}
+
 /// Parse an APDU type + data into an `AppIndication`.
 ///
-/// Returns `None` for unsupported or malformed APDUs.
+/// # Errors
+///
+/// Returns `AppLayerError::UnsupportedApdu` for unknown APDU types,
+/// `AppLayerError::TruncatedPayload` if the data is too short.
 #[expect(clippy::too_many_lines)]
-pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndication> {
+pub fn parse_indication(
+    apdu_type: ApduType,
+    data: &[u8],
+) -> Result<AppIndication, AppLayerError> {
     match apdu_type {
-        ApduType::GroupValueWrite => Some(AppIndication::GroupValueWrite {
+        ApduType::GroupValueWrite => Ok(AppIndication::GroupValueWrite {
             asap: 0,
             data: data.to_vec(),
         }),
-        ApduType::GroupValueResponse => Some(AppIndication::GroupValueResponse {
+        ApduType::GroupValueResponse => Ok(AppIndication::GroupValueResponse {
             asap: 0,
             data: data.to_vec(),
         }),
-        ApduType::GroupValueRead => Some(AppIndication::GroupValueRead { asap: 0 }),
-        ApduType::PropertyValueRead if data.len() >= 3 => Some(AppIndication::PropertyValueRead {
-            object_index: data[0],
-            property_id: data[1],
-            count: (data[2] >> 4) & MASK_4BIT,
-            start_index: u16::from(data[2] & MASK_4BIT) << 8
-                | u16::from(*data.get(3).unwrap_or(&0)),
-        }),
-        ApduType::PropertyValueWrite if data.len() >= 4 => {
-            Some(AppIndication::PropertyValueWrite {
+        ApduType::GroupValueRead => Ok(AppIndication::GroupValueRead { asap: 0 }),
+        ApduType::PropertyValueRead => {
+            check_len(data, 3)?;
+            Ok(AppIndication::PropertyValueRead {
+                object_index: data[0],
+                property_id: data[1],
+                count: (data[2] >> 4) & MASK_4BIT,
+                start_index: u16::from(data[2] & MASK_4BIT) << 8
+                    | u16::from(*data.get(3).unwrap_or(&0)),
+            })
+        }
+        ApduType::PropertyValueWrite => {
+            check_len(data, 4)?;
+            Ok(AppIndication::PropertyValueWrite {
                 object_index: data[0],
                 property_id: data[1],
                 count: (data[2] >> 4) & MASK_4BIT,
@@ -582,97 +625,124 @@ pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndicatio
                 data: data[4..].to_vec(),
             })
         }
-        ApduType::DeviceDescriptorRead => Some(AppIndication::DeviceDescriptorRead {
+        ApduType::DeviceDescriptorRead => Ok(AppIndication::DeviceDescriptorRead {
             descriptor_type: data.first().copied().unwrap_or(0) & MASK_6BIT,
         }),
-        ApduType::MemoryRead if data.len() >= 3 => Some(AppIndication::MemoryRead {
-            count: data[0] & MASK_4BIT,
-            address: u16::from_be_bytes([data[1], data[2]]),
-        }),
-        ApduType::MemoryWrite if data.len() >= 3 => Some(AppIndication::MemoryWrite {
-            count: data[0] & MASK_4BIT,
-            address: u16::from_be_bytes([data[1], data[2]]),
-            data: data[3..].to_vec(),
-        }),
-        ApduType::Restart => Some(AppIndication::Restart),
-        ApduType::IndividualAddressWrite if data.len() >= 2 => {
-            Some(AppIndication::IndividualAddressWrite {
+        ApduType::MemoryRead => {
+            check_len(data, 3)?;
+            Ok(AppIndication::MemoryRead {
+                count: data[0] & MASK_4BIT,
+                address: u16::from_be_bytes([data[1], data[2]]),
+            })
+        }
+        ApduType::MemoryWrite => {
+            check_len(data, 3)?;
+            Ok(AppIndication::MemoryWrite {
+                count: data[0] & MASK_4BIT,
+                address: u16::from_be_bytes([data[1], data[2]]),
+                data: data[3..].to_vec(),
+            })
+        }
+        ApduType::Restart => Ok(AppIndication::Restart),
+        ApduType::IndividualAddressWrite => {
+            check_len(data, 2)?;
+            Ok(AppIndication::IndividualAddressWrite {
                 address: u16::from_be_bytes([data[0], data[1]]),
             })
         }
-        ApduType::IndividualAddressRead => Some(AppIndication::IndividualAddressRead),
-        ApduType::AuthorizeRequest if data.len() >= 5 => Some(AppIndication::AuthorizeRequest {
-            key: u32::from_be_bytes([data[1], data[2], data[3], data[4]]),
-        }),
-        ApduType::RestartMasterReset if data.len() >= 3 => {
-            Some(AppIndication::RestartMasterReset {
+        ApduType::IndividualAddressRead => Ok(AppIndication::IndividualAddressRead),
+        ApduType::AuthorizeRequest => {
+            check_len(data, 5)?;
+            Ok(AppIndication::AuthorizeRequest {
+                key: u32::from_be_bytes([data[1], data[2], data[3], data[4]]),
+            })
+        }
+        ApduType::RestartMasterReset => {
+            check_len(data, 3)?;
+            Ok(AppIndication::RestartMasterReset {
                 erase_code: data[1],
                 channel: data[2],
             })
         }
-        ApduType::PropertyDescriptionRead if data.len() >= 3 => {
-            Some(AppIndication::PropertyDescriptionRead {
+        ApduType::PropertyDescriptionRead => {
+            check_len(data, 3)?;
+            Ok(AppIndication::PropertyDescriptionRead {
                 object_index: data[0],
                 property_id: data[1],
                 property_index: data[2],
             })
         }
-        ApduType::MemoryExtRead if data.len() >= 4 => Some(AppIndication::MemoryExtRead {
-            count: data[0],
-            address: u32::from_be_bytes([0, data[1], data[2], data[3]]),
-        }),
-        ApduType::MemoryExtWrite if data.len() >= 4 => Some(AppIndication::MemoryExtWrite {
-            count: data[0],
-            address: u32::from_be_bytes([0, data[1], data[2], data[3]]),
-            data: data[4..].to_vec(),
-        }),
-        ApduType::IndividualAddressSerialNumberRead if data.len() >= 6 => {
-            let mut serial = [0u8; 6];
-            serial.copy_from_slice(&data[0..6]);
-            Some(AppIndication::IndividualAddressSerialNumberRead { serial })
+        ApduType::MemoryExtRead => {
+            check_len(data, 4)?;
+            Ok(AppIndication::MemoryExtRead {
+                count: data[0],
+                address: u32::from_be_bytes([0, data[1], data[2], data[3]]),
+            })
         }
-        ApduType::IndividualAddressSerialNumberWrite if data.len() >= 8 => {
+        ApduType::MemoryExtWrite => {
+            check_len(data, 4)?;
+            Ok(AppIndication::MemoryExtWrite {
+                count: data[0],
+                address: u32::from_be_bytes([0, data[1], data[2], data[3]]),
+                data: data[4..].to_vec(),
+            })
+        }
+        ApduType::IndividualAddressSerialNumberRead => {
+            check_len(data, 6)?;
             let mut serial = [0u8; 6];
             serial.copy_from_slice(&data[0..6]);
-            Some(AppIndication::IndividualAddressSerialNumberWrite {
+            Ok(AppIndication::IndividualAddressSerialNumberRead { serial })
+        }
+        ApduType::IndividualAddressSerialNumberWrite => {
+            check_len(data, 8)?;
+            let mut serial = [0u8; 6];
+            serial.copy_from_slice(&data[0..6]);
+            Ok(AppIndication::IndividualAddressSerialNumberWrite {
                 serial,
                 address: u16::from_be_bytes([data[6], data[7]]),
             })
         }
-        ApduType::KeyWrite if data.len() >= 5 => Some(AppIndication::KeyWrite {
-            level: data[0],
-            key: u32::from_be_bytes([data[1], data[2], data[3], data[4]]),
-        }),
-        ApduType::FunctionPropertyCommand if data.len() >= 2 => {
-            Some(AppIndication::FunctionPropertyCommand {
+        ApduType::KeyWrite => {
+            check_len(data, 5)?;
+            Ok(AppIndication::KeyWrite {
+                level: data[0],
+                key: u32::from_be_bytes([data[1], data[2], data[3], data[4]]),
+            })
+        }
+        ApduType::FunctionPropertyCommand => {
+            check_len(data, 2)?;
+            Ok(AppIndication::FunctionPropertyCommand {
                 object_index: data[0],
                 property_id: data[1],
                 data: data[2..].to_vec(),
             })
         }
-        ApduType::FunctionPropertyState if data.len() >= 2 => {
-            Some(AppIndication::FunctionPropertyState {
+        ApduType::FunctionPropertyState => {
+            check_len(data, 2)?;
+            Ok(AppIndication::FunctionPropertyState {
                 object_index: data[0],
                 property_id: data[1],
                 data: data[2..].to_vec(),
             })
         }
-        ApduType::SystemNetworkParameterRead if data.len() >= 4 => {
+        ApduType::SystemNetworkParameterRead => {
+            check_len(data, 4)?;
             let object_type = u16::from_be_bytes([data[0], data[1]]);
             let pid_raw = u16::from_be_bytes([data[2], data[3]]);
-            Some(AppIndication::SystemNetworkParameterRead {
+            Ok(AppIndication::SystemNetworkParameterRead {
                 object_type,
                 property_id: pid_raw >> 4,
                 test_info: data[3..].to_vec(),
             })
         }
-        ApduType::AdcRead => Some(AppIndication::AdcRead {
+        ApduType::AdcRead => Ok(AppIndication::AdcRead {
             channel: data.first().copied().unwrap_or(0) & MASK_6BIT,
             count: data.get(1).copied().unwrap_or(1),
         }),
-        ApduType::PropertyValueExtRead if data.len() >= 7 => {
+        ApduType::PropertyValueExtRead => {
+            check_len(data, 7)?;
             let (ot, oi, pid, count, si) = parse_ext_property_header(data);
-            Some(AppIndication::PropertyValueExtRead {
+            Ok(AppIndication::PropertyValueExtRead {
                 object_type: ot,
                 object_instance: oi,
                 property_id: pid,
@@ -680,20 +750,10 @@ pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndicatio
                 start_index: si,
             })
         }
-        ApduType::PropertyValueExtWriteCon if data.len() >= 7 => {
+        ApduType::PropertyValueExtWriteCon => {
+            check_len(data, 7)?;
             let (ot, oi, pid, count, si) = parse_ext_property_header(data);
-            Some(AppIndication::PropertyValueExtWriteCon {
-                object_type: ot,
-                object_instance: oi,
-                property_id: pid,
-                count,
-                start_index: si,
-                data: data[7..].to_vec(),
-            })
-        }
-        ApduType::PropertyValueExtWriteUnCon if data.len() >= 7 => {
-            let (ot, oi, pid, count, si) = parse_ext_property_header(data);
-            Some(AppIndication::PropertyValueExtWriteUnCon {
+            Ok(AppIndication::PropertyValueExtWriteCon {
                 object_type: ot,
                 object_instance: oi,
                 property_id: pid,
@@ -702,13 +762,26 @@ pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndicatio
                 data: data[7..].to_vec(),
             })
         }
-        ApduType::PropertyExtDescriptionRead if data.len() >= 7 => {
+        ApduType::PropertyValueExtWriteUnCon => {
+            check_len(data, 7)?;
+            let (ot, oi, pid, count, si) = parse_ext_property_header(data);
+            Ok(AppIndication::PropertyValueExtWriteUnCon {
+                object_type: ot,
+                object_instance: oi,
+                property_id: pid,
+                count,
+                start_index: si,
+                data: data[7..].to_vec(),
+            })
+        }
+        ApduType::PropertyExtDescriptionRead => {
+            check_len(data, 7)?;
             let object_type = u16::from_be_bytes([data[0], data[1]]);
             let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
             let property_id = (u16::from(data[3] & MASK_4BIT) << 8) | u16::from(data[4]);
             let description_type = data[5] >> 4;
             let property_index = (u16::from(data[5] & MASK_4BIT) << 8) | u16::from(data[6]);
-            Some(AppIndication::PropertyExtDescriptionRead {
+            Ok(AppIndication::PropertyExtDescriptionRead {
                 object_type,
                 object_instance,
                 property_id,
@@ -716,7 +789,7 @@ pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Option<AppIndicatio
                 property_index,
             })
         }
-        _ => None,
+        _ => Err(AppLayerError::UnsupportedApdu(apdu_type)),
     }
 }
 
@@ -780,7 +853,20 @@ mod tests {
 
     #[test]
     fn parse_unsupported() {
-        assert!(parse_indication(ApduType::SecureService, &[]).is_none());
+        let err = parse_indication(ApduType::SecureService, &[]).unwrap_err();
+        assert!(matches!(err, AppLayerError::UnsupportedApdu(ApduType::SecureService)));
+    }
+
+    #[test]
+    fn parse_truncated_property_read() {
+        let err = parse_indication(ApduType::PropertyValueRead, &[0x00, 0x01]).unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 3,
+                got: 2
+            }
+        ));
     }
 
     #[test]
