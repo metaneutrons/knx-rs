@@ -91,6 +91,9 @@ pub enum ErrorCode {
 
 // ── Table Object ──────────────────────────────────────────────
 
+/// Maximum allowed table size (256 KiB).
+const MAX_TABLE_SIZE: u32 = 256 * 1024;
+
 /// A table object that can be loaded by ETS via the Load State Machine.
 ///
 /// The table data lives inside the BAU's `memory_area` at `data_offset`.
@@ -278,6 +281,11 @@ impl TableObject {
             return None;
         }
         let size = u32::from_be_bytes([data[2], data[3], data[4], data[5]]);
+        if size > MAX_TABLE_SIZE {
+            self.state = LoadState::Error;
+            self.error = ErrorCode::MaxTableLengthExceeded;
+            return None;
+        }
         let do_fill = data[6] == 0x01;
         let fill_byte = data[7];
         #[expect(clippy::cast_possible_truncation)]
@@ -526,5 +534,66 @@ mod tests {
         to.handle_load_event(&alc, 0);
         assert_eq!(to.load_state(), LoadState::Error);
         assert_eq!(to.error_code(), ErrorCode::InvalidOpcode);
+    }
+
+    #[test]
+    fn handle_load_event_empty_data() {
+        let mut to = TableObject::new();
+        let (became_loaded, fill) = to.handle_load_event(&[], 0);
+        assert!(!became_loaded);
+        assert_eq!(fill, None);
+    }
+
+    #[test]
+    fn additional_load_controls_short_data() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0);
+        // Only 7 bytes — less than required 8
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x10, 0x00];
+        to.handle_load_event(&alc, 0);
+        assert_eq!(to.load_state(), LoadState::Error);
+    }
+
+    #[test]
+    fn additional_load_controls_no_fill() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0);
+        // do_fill byte = 0x00 (not 0x01)
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00];
+        let (_loaded, fill) = to.handle_load_event(&alc, 0);
+        assert_eq!(fill, None);
+    }
+
+    #[test]
+    fn data_out_of_bounds_returns_empty() {
+        let mut to = TableObject::new();
+        to.state = LoadState::Loaded;
+        to.data_offset = 10;
+        to.data_size = 20;
+        let mem = vec![0u8; 15]; // offset(10) + size(20) = 30 > 15
+        assert_eq!(to.data(&mem), &[] as &[u8]);
+    }
+
+    #[test]
+    fn unloading_and_load_completing_states_ignored() {
+        for state in [LoadState::Unloading, LoadState::LoadCompleting] {
+            let mut to = TableObject::new();
+            to.state = state;
+            let (became_loaded, fill) = to.handle_load_event(&[1], 0); // StartLoading
+            assert!(!became_loaded);
+            assert_eq!(fill, None);
+            assert_eq!(to.load_state(), state);
+        }
+    }
+
+    #[test]
+    fn additional_load_controls_exceeds_max_size() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0);
+        // Size = 0x00100000 (1 MiB) > MAX_TABLE_SIZE (256 KiB)
+        let alc = [0x03, 0x0B, 0x00, 0x10, 0x00, 0x00, 0x01, 0x00];
+        to.handle_load_event(&alc, 0);
+        assert_eq!(to.load_state(), LoadState::Error);
+        assert_eq!(to.error_code(), ErrorCode::MaxTableLengthExceeded);
     }
 }
