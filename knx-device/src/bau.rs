@@ -20,7 +20,7 @@ use crate::application_layer::{self, AppIndication};
 use crate::association_table::AssociationTable;
 use crate::device_object;
 use crate::group_object::{ComFlag, GroupObjectStore};
-use crate::group_object_table::GroupObjectTable;
+use crate::group_object_table::{GroupObjectDescriptor, GroupObjectTable};
 use crate::interface_object::InterfaceObject;
 use crate::property::{Property, PropertyId};
 use crate::table_object::TableObject;
@@ -44,10 +44,23 @@ const OBJ_APP_PROGRAM: u8 = 3;
 
 /// Erase code: confirmed restart (reset table objects).
 const ERASE_CONFIRMED_RESTART: u8 = 1;
-/// Erase code range: factory reset (clear everything).
-const ERASE_FACTORY_RESET_MIN: u8 = 2;
 /// Erase code range: factory reset upper bound.
 const ERASE_FACTORY_RESET_MAX: u8 = 4;
+
+// ── KNX system network parameter constants ───────────────────
+
+/// Property ID for serial number (KNX system network parameter read).
+const PID_SERIAL_NUMBER: u16 = 11;
+/// Object type for the device object.
+const OBJECT_TYPE_DEVICE: u16 = 0;
+/// Domain address for IP devices (always 0).
+const DOMAIN_ADDRESS_IP: u16 = 0;
+/// Restart response: no error.
+const RESTART_ERROR_CODE_OK: u8 = 0;
+/// Restart response: zero process time.
+const RESTART_PROCESS_TIME_ZERO: u16 = 0;
+/// Default ADC value (no ADC hardware).
+const ADC_VALUE_DEFAULT: u16 = 0;
 
 /// The Bus Access Unit — main device controller.
 pub struct Bau {
@@ -676,33 +689,31 @@ impl Bau {
     // ── Handlers ──────────────────────────────────────────────
 
     fn handle_group_value_write(&mut self, frame: &CemiFrame, data: &[u8]) {
-        let ga_raw = frame.destination_address_raw();
-        let Some(tsap) = self.address_table.get_tsap(ga_raw) else {
-            return;
-        };
-        for asap in self.association_table.asaps_for_tsap(tsap) {
-            // Check communication and write flags (C++ ref: groupValueWriteIndication)
-            if let Some(desc) = self.group_object_table.get_descriptor(asap) {
-                if !desc.communication_enable() || !desc.write_enable() {
-                    continue;
-                }
-            }
-            if let Some(go) = self.group_objects.get_mut(asap) {
-                go.value_from_bus(data);
-            }
-        }
+        self.update_group_object_from_bus(frame, data, GroupObjectDescriptor::write_enable);
     }
 
     /// Handle `GroupValueResponse` — checks `update_enable` (A-flag) instead of `write_enable`.
     /// C++ ref: `groupValueReadAppLayerConfirm` checks `responseUpdateEnable()`.
     fn handle_group_value_response(&mut self, frame: &CemiFrame, data: &[u8]) {
+        self.update_group_object_from_bus(frame, data, GroupObjectDescriptor::update_enable);
+    }
+
+    /// Shared logic for `GroupValueWrite` and `GroupValueResponse`.
+    ///
+    /// `check_flag` selects the descriptor flag to test (`write_enable` vs `update_enable`).
+    fn update_group_object_from_bus(
+        &mut self,
+        frame: &CemiFrame,
+        data: &[u8],
+        check_flag: impl Fn(GroupObjectDescriptor) -> bool,
+    ) {
         let ga_raw = frame.destination_address_raw();
         let Some(tsap) = self.address_table.get_tsap(ga_raw) else {
             return;
         };
         for asap in self.association_table.asaps_for_tsap(tsap) {
             if let Some(desc) = self.group_object_table.get_descriptor(asap) {
-                if !desc.communication_enable() || !desc.update_enable() {
+                if !desc.communication_enable() || !check_flag(desc) {
                     continue;
                 }
             }
@@ -884,28 +895,18 @@ impl Bau {
     }
 
     fn handle_restart_master_reset(&mut self, source: u16, erase_code: u8) {
-        match erase_code {
-            ERASE_CONFIRMED_RESTART => {
-                // Confirmed restart — reset all table objects
-                self.addr_table_object = TableObject::new();
-                self.assoc_table_object = TableObject::new();
-                self.app_program_object = TableObject::new();
-                self.address_table = AddressTable::new();
-                self.association_table = AssociationTable::new();
-                self.memory_area.clear();
-            }
-            ERASE_FACTORY_RESET_MIN..=ERASE_FACTORY_RESET_MAX => {
-                // Factory reset — clear everything
-                self.addr_table_object = TableObject::new();
-                self.assoc_table_object = TableObject::new();
-                self.app_program_object = TableObject::new();
-                self.address_table = AddressTable::new();
-                self.association_table = AssociationTable::new();
-                self.memory_area.clear();
-            }
-            _ => {}
+        if let ERASE_CONFIRMED_RESTART..=ERASE_FACTORY_RESET_MAX = erase_code {
+            self.addr_table_object = TableObject::new();
+            self.assoc_table_object = TableObject::new();
+            self.app_program_object = TableObject::new();
+            self.address_table = AddressTable::new();
+            self.association_table = AssociationTable::new();
+            self.memory_area.clear();
         }
-        let payload = application_layer::encode_restart_response(0, 0);
+        let payload = application_layer::encode_restart_response(
+            RESTART_ERROR_CODE_OK,
+            RESTART_PROCESS_TIME_ZERO,
+        );
         self.queue_individual_frame(source, Priority::System, &payload);
     }
 
@@ -985,7 +986,8 @@ impl Bau {
         let device_serial = device_object::serial_number(self.device());
         if serial == device_serial {
             let payload = application_layer::encode_individual_address_serial_number_response(
-                serial, 0, // domain address (IP devices: 0)
+                serial,
+                DOMAIN_ADDRESS_IP,
             );
             // Respond as broadcast
             let src = self.individual_address();
@@ -1013,8 +1015,8 @@ impl Bau {
         property_id: u16,
         test_info: &[u8],
     ) {
-        // Only respond to PID_SERIAL_NUMBER (11) on device object (0)
-        if object_type == 0 && property_id == 11 {
+        // Only respond to PID_SERIAL_NUMBER on device object
+        if object_type == OBJECT_TYPE_DEVICE && property_id == PID_SERIAL_NUMBER {
             let serial = device_object::serial_number(self.device());
             let payload = application_layer::encode_system_network_parameter_response(
                 object_type,
@@ -1060,7 +1062,7 @@ impl Bau {
     }
 
     fn queue_adc_response(&mut self, destination: u16, channel: u8, count: u8) {
-        let payload = application_layer::encode_adc_response(channel, count, 0);
+        let payload = application_layer::encode_adc_response(channel, count, ADC_VALUE_DEFAULT);
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
@@ -1573,7 +1575,9 @@ mod tests {
     fn restart_master_reset_sends_response() {
         let mut bau = handler_test_bau();
         bau.handle_restart_master_reset(0x1102, 1);
-        let resp = bau.next_outgoing_frame().expect("expected restart response");
+        let resp = bau
+            .next_outgoing_frame()
+            .expect("expected restart response");
         assert_eq!(resp.destination_address_raw(), 0x1102);
     }
 
@@ -1584,7 +1588,9 @@ mod tests {
         bau.handle_memory_write(0x0010, &data);
         bau.handle_memory_read(0x1102, 4, 0x0010);
 
-        let resp = bau.next_outgoing_frame().expect("expected memory read response");
+        let resp = bau
+            .next_outgoing_frame()
+            .expect("expected memory read response");
         // Payload: [apci_hi, apci_lo|count, addr_hi, addr_lo, data...]
         let payload = resp.payload();
         assert_eq!(&payload[4..8], &data);
@@ -1604,7 +1610,9 @@ mod tests {
         let mut bau = handler_test_bau();
         // Memory is empty, reading should return empty data
         bau.handle_memory_read(0x1102, 4, 0x0000);
-        let resp = bau.next_outgoing_frame().expect("expected memory read response");
+        let resp = bau
+            .next_outgoing_frame()
+            .expect("expected memory read response");
         // MemoryResponse with empty data: [apci_hi, apci_lo|0, addr_hi, addr_lo]
         let payload = resp.payload();
         assert_eq!(payload[1] & 0x0F, 0); // count nibble = 0
