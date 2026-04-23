@@ -74,6 +74,7 @@ pub fn encode_property_response(
     reason = "data.len() is always <= 15"
 )]
 pub fn encode_memory_response(address: u16, data: &[u8]) -> Vec<u8> {
+    debug_assert!(data.len() <= 15, "MemoryResponse data must be <= 15 bytes");
     let [hi, lo] = apci_bytes(ApduType::MemoryResponse);
     let mut payload = Vec::with_capacity(5 + data.len());
     payload.push(hi);

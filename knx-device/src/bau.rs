@@ -61,6 +61,8 @@ const RESTART_ERROR_CODE_OK: u8 = 0;
 const RESTART_PROCESS_TIME_ZERO: u16 = 0;
 /// Default ADC value (no ADC hardware).
 const ADC_VALUE_DEFAULT: u16 = 0;
+/// Maximum allowed memory area size (256 KiB).
+const MAX_MEMORY_SIZE: usize = 256 * 1024;
 
 /// The Bus Access Unit — main device controller.
 pub struct Bau {
@@ -118,21 +120,38 @@ impl Bau {
     }
 
     /// The device object (index 0).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the object list is empty (violates constructor invariant).
+    #[expect(clippy::expect_used, reason = "constructor guarantees index 0 exists")]
     pub fn device(&self) -> &InterfaceObject {
-        &self.objects[0]
+        self.objects
+            .first()
+            .expect("BAU invariant: device object at index 0")
     }
 
     /// Mutable device object.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the object list is empty (violates constructor invariant).
+    #[expect(clippy::expect_used, reason = "constructor guarantees index 0 exists")]
     pub fn device_mut(&mut self) -> &mut InterfaceObject {
-        &mut self.objects[0]
+        self.objects
+            .first_mut()
+            .expect("BAU invariant: device object at index 0")
     }
 
-    /// Add an interface object. Returns its index.
-    #[expect(clippy::cast_possible_truncation)]
-    pub fn add_object(&mut self, obj: InterfaceObject) -> u8 {
+    /// Add an interface object. Returns its index, or `None` if full.
+    pub fn add_object(&mut self, obj: InterfaceObject) -> Option<u8> {
+        if self.objects.len() >= 256 {
+            return None;
+        }
+        #[expect(clippy::cast_possible_truncation)]
         let idx = self.objects.len() as u8;
         self.objects.push(obj);
-        idx
+        Some(idx)
     }
 
     /// Get an interface object by index.
@@ -645,27 +664,9 @@ impl Bau {
 
     /// Serialize the full device state for persistence.
     ///
-    /// Format: `[addr_table_obj:9][assoc_table_obj:9][app_program_obj:9][mem_len:4LE][memory_area]`
+    /// Format: `[addr_table_obj:9][assoc_table_obj:9][app_program_obj:9][prog_version:5][mem_len:4LE][memory_area]`
     pub fn save(&self) -> Vec<u8> {
-        let mut buf =
-            Vec::with_capacity(TableObject::SAVE_SIZE * 3 + 5 + 4 + self.memory_area.len());
-        self.addr_table_object.save(&mut buf);
-        self.assoc_table_object.save(&mut buf);
-        self.app_program_object.save(&mut buf);
-        // Save program version (5 bytes) from application program object (index 3)
-        if let Some(obj) = self.objects.get(3) {
-            let mut ver = Vec::new();
-            obj.read_property(PropertyId::ProgramVersion, 1, 1, &mut ver);
-            ver.resize(5, 0);
-            buf.extend_from_slice(&ver);
-        } else {
-            buf.extend_from_slice(&[0u8; 5]);
-        }
-        #[expect(clippy::cast_possible_truncation)]
-        let mem_len = self.memory_area.len() as u32;
-        buf.extend_from_slice(&mem_len.to_le_bytes());
-        buf.extend_from_slice(&self.memory_area);
-        buf
+        crate::bau_persistence::save_bau_state(self)
     }
 
     /// Restore device state from persisted data.
@@ -675,63 +676,7 @@ impl Bau {
     ///
     /// Returns `true` if restore succeeded.
     pub fn restore(&mut self, data: &[u8]) -> bool {
-        let header = TableObject::SAVE_SIZE * 3 + 5 + 4; // 3 table objects + 5 prog version + 4 mem_len
-        if data.len() < header {
-            return false;
-        }
-
-        let mut offset = 0;
-        let n = self.addr_table_object.restore(&data[offset..]);
-        if n == 0 {
-            return false;
-        }
-        offset += n;
-
-        let n = self.assoc_table_object.restore(&data[offset..]);
-        if n == 0 {
-            return false;
-        }
-        offset += n;
-
-        let n = self.app_program_object.restore(&data[offset..]);
-        if n == 0 {
-            return false;
-        }
-        offset += n;
-
-        // Restore program version (5 bytes)
-        if offset + 5 > data.len() {
-            return false;
-        }
-        if let Some(obj) = self.objects.get_mut(3) {
-            obj.write_property(PropertyId::ProgramVersion, 1, 1, &data[offset..offset + 5]);
-        }
-        offset += 5;
-
-        let mem_len = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-        offset += 4;
-
-        if data.len() < offset + mem_len {
-            return false;
-        }
-        self.memory_area = data[offset..offset + mem_len].to_vec();
-
-        // Reload tables from memory if they were in Loaded state
-        let addr_data = self.addr_table_object.data(&self.memory_area).to_vec();
-        if !addr_data.is_empty() {
-            self.address_table.load(&addr_data);
-        }
-        let assoc_data = self.assoc_table_object.data(&self.memory_area).to_vec();
-        if !assoc_data.is_empty() {
-            self.association_table.load(&assoc_data);
-        }
-
-        true
+        crate::bau_persistence::restore_bau_state(self, data).is_ok()
     }
 
     /// Load tables from the memory area at the given offsets.
@@ -954,6 +899,9 @@ impl Bau {
     fn handle_memory_write(&mut self, address: u16, data: &[u8]) {
         let addr = address as usize;
         let needed = addr + data.len();
+        if needed > MAX_MEMORY_SIZE {
+            return;
+        }
         if needed > self.memory_area.len() {
             self.memory_area.resize(needed, 0);
         }
@@ -1040,6 +988,9 @@ impl Bau {
     fn handle_memory_ext_write(&mut self, source: u16, address: u32, data: &[u8]) {
         let addr = address as usize;
         let needed = addr + data.len();
+        if needed > MAX_MEMORY_SIZE {
+            return;
+        }
         if needed > self.memory_area.len() {
             self.memory_area.resize(needed, 0);
         }
@@ -1242,6 +1193,9 @@ impl Bau {
         if let Some((offset, size, fill_byte)) = fill {
             let start = offset as usize;
             let end = start + size as usize;
+            if end > MAX_MEMORY_SIZE {
+                return;
+            }
             if end > self.memory_area.len() {
                 self.memory_area.resize(end, 0);
             }
@@ -1549,7 +1503,7 @@ mod tests {
     fn property_read_multi_object() {
         use crate::application_program::new_application_program_object;
         let mut bau = test_bau();
-        let app_idx = bau.add_object(new_application_program_object());
+        let app_idx = bau.add_object(new_application_program_object()).unwrap();
         bau.handle_property_read(0x1102, app_idx, 1, 1, 1); // PID_OBJECT_TYPE
         assert!(bau.next_outgoing_frame().is_some());
     }
@@ -1683,5 +1637,26 @@ mod tests {
         let payload = resp.payload();
         assert_eq!(payload[1] & 0x0F, 0); // count nibble = 0
         assert_eq!(payload.len(), 4); // no data bytes appended
+    }
+
+    #[test]
+    fn memory_write_rejects_oversized() {
+        let mut bau = handler_test_bau();
+        // ext write beyond MAX_MEMORY_SIZE must be rejected
+        bau.handle_memory_ext_write(0x1102, MAX_MEMORY_SIZE as u32, &[0xFF]);
+        assert!(bau.memory_area.is_empty());
+    }
+
+    #[test]
+    fn add_object_overflow() {
+        let mut bau = handler_test_bau();
+        // BAU starts with 4 objects; fill up to 256
+        while bau.objects.len() < 256 {
+            let obj = InterfaceObject::new(crate::interface_object::ObjectType::Device);
+            assert!(bau.add_object(obj).is_some());
+        }
+        // 257th must fail
+        let obj = InterfaceObject::new(crate::interface_object::ObjectType::Device);
+        assert!(bau.add_object(obj).is_none());
     }
 }
