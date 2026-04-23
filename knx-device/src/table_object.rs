@@ -1,0 +1,400 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Fabian Schmieder
+
+//! KNX Table Object — base for Address Table, Association Table, Application Program.
+//!
+//! Implements the ETS Load State Machine (KNX 3/5/1 §4.10):
+//! `Unloaded → Loading → Loaded`, with `Error` as a terminal state.
+//!
+//! ETS programs a table object by:
+//! 1. Writing `LoadStateControl = LE_START_LOADING` → state becomes `Loading`
+//! 2. Sending `AdditionalLoadControls` with allocation size → memory is reserved
+//! 3. Writing table data via `MemoryWrite` at the allocated offset
+//! 4. Writing `LoadStateControl = LE_LOAD_COMPLETED` → state becomes `Loaded`
+
+use alloc::vec::Vec;
+
+// ── Load State ────────────────────────────────────────────────
+
+/// Load state of a table object (KNX 3/5/1 §4.10.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LoadState {
+    /// No data loaded. ETS must program the object.
+    Unloaded = 0,
+    /// ETS is currently downloading data.
+    Loaded = 1,
+    /// Data is loaded and valid.
+    Loading = 2,
+    /// An error occurred during loading.
+    Error = 3,
+    /// ETS is unloading the object.
+    Unloading = 4,
+    /// ETS is completing the load.
+    LoadCompleting = 5,
+}
+
+impl From<u8> for LoadState {
+    fn from(v: u8) -> Self {
+        match v {
+            1 => Self::Loaded,
+            2 => Self::Loading,
+            3 => Self::Error,
+            4 => Self::Unloading,
+            5 => Self::LoadCompleting,
+            _ => Self::Unloaded,
+        }
+    }
+}
+
+// ── Load Events (written to PID_LOAD_STATE_CONTROL) ───────────
+
+/// Load events sent by ETS via `PropertyWrite` to `PID_LOAD_STATE_CONTROL`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum LoadEvent {
+    Noop = 0,
+    StartLoading = 1,
+    LoadCompleted = 2,
+    AdditionalLoadControls = 3,
+    Unload = 4,
+}
+
+impl LoadEvent {
+    const fn from_byte(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Noop),
+            1 => Some(Self::StartLoading),
+            2 => Some(Self::LoadCompleted),
+            3 => Some(Self::AdditionalLoadControls),
+            4 => Some(Self::Unload),
+            _ => None,
+        }
+    }
+}
+
+// ── Error Codes ───────────────────────────────────────────────
+
+/// Error codes for table object load failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ErrorCode {
+    /// No error.
+    NoFault = 0,
+    /// Received an undefined load command.
+    UndefinedLoadCommand = 1,
+    /// Invalid opcode in additional load controls.
+    InvalidOpcode = 2,
+    /// Requested table size exceeds maximum.
+    MaxTableLengthExceeded = 3,
+}
+
+// ── Table Object ──────────────────────────────────────────────
+
+/// A table object that can be loaded by ETS via the Load State Machine.
+///
+/// The table data lives inside the BAU's `memory_area` at `data_offset`.
+/// The offset and size are determined by ETS during the download process.
+pub struct TableObject {
+    state: LoadState,
+    error: ErrorCode,
+    /// Offset into BAU `memory_area` where table data starts.
+    data_offset: u32,
+    /// Size of the allocated table data in bytes.
+    data_size: u32,
+}
+
+impl TableObject {
+    /// Create a new unloaded table object.
+    pub const fn new() -> Self {
+        Self {
+            state: LoadState::Unloaded,
+            error: ErrorCode::NoFault,
+            data_offset: 0,
+            data_size: 0,
+        }
+    }
+
+    /// Current load state.
+    pub const fn load_state(&self) -> LoadState {
+        self.state
+    }
+
+    /// Current error code.
+    pub const fn error_code(&self) -> ErrorCode {
+        self.error
+    }
+
+    /// Offset of table data in BAU memory area.
+    pub const fn data_offset(&self) -> u32 {
+        self.data_offset
+    }
+
+    /// Size of table data in bytes.
+    pub const fn data_size(&self) -> u32 {
+        self.data_size
+    }
+
+    /// Read the table data from the BAU memory area.
+    pub fn data<'a>(&self, memory_area: &'a [u8]) -> &'a [u8] {
+        if self.state != LoadState::Loaded || self.data_size == 0 {
+            return &[];
+        }
+        let start = self.data_offset as usize;
+        let end = start + self.data_size as usize;
+        if end <= memory_area.len() {
+            &memory_area[start..end]
+        } else {
+            &[]
+        }
+    }
+
+    /// Handle a write to `PID_LOAD_STATE_CONTROL`.
+    ///
+    /// `memory_area_len` is the current size of the BAU memory area,
+    /// used to determine the allocation offset for new table data.
+    ///
+    /// Returns `true` if the state changed to `Loaded` (caller should
+    /// parse the table data).
+    pub fn handle_load_event(&mut self, data: &[u8], memory_area_len: usize) -> bool {
+        if data.is_empty() {
+            return false;
+        }
+        let Some(event) = LoadEvent::from_byte(data[0]) else {
+            self.state = LoadState::Error;
+            self.error = ErrorCode::UndefinedLoadCommand;
+            return false;
+        };
+
+        match self.state {
+            LoadState::Unloaded => self.on_unloaded(event),
+            LoadState::Loading => self.on_loading(event, data, memory_area_len),
+            LoadState::Loaded => self.on_loaded(event),
+            LoadState::Error => self.on_error(event),
+            _ => false,
+        }
+    }
+
+    const fn on_unloaded(&mut self, event: LoadEvent) -> bool {
+        match event {
+            LoadEvent::StartLoading => {
+                self.state = LoadState::Loading;
+                self.data_offset = 0;
+                self.data_size = 0;
+                false
+            }
+            LoadEvent::Noop | LoadEvent::LoadCompleted | LoadEvent::Unload => false,
+            LoadEvent::AdditionalLoadControls => {
+                self.state = LoadState::Error;
+                self.error = ErrorCode::UndefinedLoadCommand;
+                false
+            }
+        }
+    }
+
+    fn on_loading(&mut self, event: LoadEvent, data: &[u8], memory_area_len: usize) -> bool {
+        match event {
+            LoadEvent::Noop | LoadEvent::StartLoading => false,
+            LoadEvent::LoadCompleted => {
+                self.state = LoadState::Loaded;
+                true // caller should parse table data
+            }
+            LoadEvent::Unload => {
+                self.state = LoadState::Unloaded;
+                self.data_offset = 0;
+                self.data_size = 0;
+                false
+            }
+            LoadEvent::AdditionalLoadControls => {
+                self.handle_additional_load_controls(data, memory_area_len);
+                false
+            }
+        }
+    }
+
+    const fn on_loaded(&mut self, event: LoadEvent) -> bool {
+        match event {
+            LoadEvent::Noop | LoadEvent::LoadCompleted => false,
+            LoadEvent::StartLoading => {
+                self.state = LoadState::Loading;
+                self.data_offset = 0;
+                self.data_size = 0;
+                false
+            }
+            LoadEvent::Unload => {
+                self.state = LoadState::Unloaded;
+                self.data_offset = 0;
+                self.data_size = 0;
+                false
+            }
+            LoadEvent::AdditionalLoadControls => {
+                self.state = LoadState::Error;
+                self.error = ErrorCode::InvalidOpcode;
+                false
+            }
+        }
+    }
+
+    const fn on_error(&mut self, event: LoadEvent) -> bool {
+        if matches!(event, LoadEvent::Unload) {
+            self.state = LoadState::Unloaded;
+            self.data_offset = 0;
+            self.data_size = 0;
+        }
+        false
+    }
+
+    /// Handle `AdditionalLoadControls` — allocate memory for table data.
+    ///
+    /// Data format: `[0x03] [0x0B] [size:4be] [fill_mode:1] [fill_byte:1]`
+    fn handle_additional_load_controls(&mut self, data: &[u8], memory_area_len: usize) {
+        if data.len() < 8 || data[1] != 0x0B {
+            self.state = LoadState::Error;
+            self.error = ErrorCode::InvalidOpcode;
+            return;
+        }
+        let size = u32::from_be_bytes([data[2], data[3], data[4], data[5]]);
+        // Allocate at the end of the current memory area
+        #[expect(clippy::cast_possible_truncation)]
+        let offset = memory_area_len as u32;
+        self.data_offset = offset;
+        self.data_size = size;
+    }
+
+    // ── Persistence ───────────────────────────────────────────
+
+    /// Serialized size in bytes: state(1) + offset(4) + size(4) = 9.
+    pub const SAVE_SIZE: usize = 9;
+
+    /// Serialize table object state for persistence.
+    pub fn save(&self, buf: &mut Vec<u8>) {
+        buf.push(self.state as u8);
+        buf.extend_from_slice(&self.data_offset.to_le_bytes());
+        buf.extend_from_slice(&self.data_size.to_le_bytes());
+    }
+
+    /// Restore table object state from persisted data.
+    ///
+    /// Returns the number of bytes consumed, or 0 on error.
+    pub fn restore(&mut self, data: &[u8]) -> usize {
+        if data.len() < Self::SAVE_SIZE {
+            return 0;
+        }
+        self.state = LoadState::from(data[0]);
+        self.data_offset = u32::from_le_bytes([data[1], data[2], data[3], data[4]]);
+        self.data_size = u32::from_le_bytes([data[5], data[6], data[7], data[8]]);
+        Self::SAVE_SIZE
+    }
+}
+
+impl Default for TableObject {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    #[test]
+    fn initial_state_is_unloaded() {
+        let to = TableObject::new();
+        assert_eq!(to.load_state(), LoadState::Unloaded);
+        assert_eq!(to.data_offset(), 0);
+        assert_eq!(to.data_size(), 0);
+    }
+
+    #[test]
+    fn load_state_machine_happy_path() {
+        let mut to = TableObject::new();
+
+        // Start loading
+        let became_loaded = to.handle_load_event(&[1], 0); // LE_START_LOADING
+        assert!(!became_loaded);
+        assert_eq!(to.load_state(), LoadState::Loading);
+
+        // Additional load controls: allocate 100 bytes
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x64, 0x01, 0x00];
+        let became_loaded = to.handle_load_event(&alc, 200);
+        assert!(!became_loaded);
+        assert_eq!(to.data_offset(), 200);
+        assert_eq!(to.data_size(), 100);
+
+        // Load completed
+        let became_loaded = to.handle_load_event(&[2], 300); // LE_LOAD_COMPLETED
+        assert!(became_loaded);
+        assert_eq!(to.load_state(), LoadState::Loaded);
+    }
+
+    #[test]
+    fn unload_from_loaded() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0);
+        to.handle_load_event(&[2], 0);
+        assert_eq!(to.load_state(), LoadState::Loaded);
+
+        to.handle_load_event(&[4], 0); // LE_UNLOAD
+        assert_eq!(to.load_state(), LoadState::Unloaded);
+        assert_eq!(to.data_offset(), 0);
+        assert_eq!(to.data_size(), 0);
+    }
+
+    #[test]
+    fn invalid_event_causes_error() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[0xFF], 0);
+        assert_eq!(to.load_state(), LoadState::Error);
+    }
+
+    #[test]
+    fn unload_from_error() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[0xFF], 0);
+        assert_eq!(to.load_state(), LoadState::Error);
+
+        to.handle_load_event(&[4], 0); // LE_UNLOAD
+        assert_eq!(to.load_state(), LoadState::Unloaded);
+    }
+
+    #[test]
+    fn save_restore_roundtrip() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0);
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x10, 0x01, 0x00];
+        to.handle_load_event(&alc, 50);
+        to.handle_load_event(&[2], 66);
+
+        let mut buf = Vec::new();
+        to.save(&mut buf);
+        assert_eq!(buf.len(), TableObject::SAVE_SIZE);
+
+        let mut restored = TableObject::new();
+        let consumed = restored.restore(&buf);
+        assert_eq!(consumed, TableObject::SAVE_SIZE);
+        assert_eq!(restored.load_state(), LoadState::Loaded);
+        assert_eq!(restored.data_offset(), 50);
+        assert_eq!(restored.data_size(), 16);
+    }
+
+    #[test]
+    fn data_returns_slice_when_loaded() {
+        let mut to = TableObject::new();
+        to.state = LoadState::Loaded;
+        to.data_offset = 2;
+        to.data_size = 3;
+
+        let mem = vec![0xAA, 0xBB, 0x01, 0x02, 0x03, 0xCC];
+        assert_eq!(to.data(&mem), &[0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn data_returns_empty_when_unloaded() {
+        let to = TableObject::new();
+        let mem = vec![0x01, 0x02, 0x03];
+        assert_eq!(to.data(&mem), &[] as &[u8]);
+    }
+}

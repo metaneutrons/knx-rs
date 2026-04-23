@@ -33,4 +33,5 @@ pub mod group_object_table;
 pub mod interface_object;
 pub mod memory;
 pub mod property;
+pub mod table_object;
 pub mod transport_layer;
