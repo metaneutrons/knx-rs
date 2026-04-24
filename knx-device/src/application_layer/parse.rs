@@ -68,7 +68,7 @@ pub fn parse_indication(apdu_type: ApduType, data: &[u8]) -> Result<AppIndicatio
         ApduType::FunctionPropertyCommand => parse_function_property_command(data),
         ApduType::FunctionPropertyState => parse_function_property_state(data),
         ApduType::SystemNetworkParameterRead => parse_system_network_parameter_read(data),
-        ApduType::AdcRead => Ok(parse_adc_read(data)),
+        ApduType::AdcRead => parse_adc_read(data),
         ApduType::PropertyValueExtRead => parse_property_value_ext_read(data),
         ApduType::PropertyValueExtWriteCon => parse_property_value_ext_write_con(data),
         ApduType::PropertyValueExtWriteUnCon => parse_property_value_ext_write_uncon(data),
@@ -96,12 +96,12 @@ const fn parse_group_value_read(_data: &[u8]) -> AppIndication {
 }
 
 fn parse_property_value_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
-    check_len(data, 3)?;
+    check_len(data, 4)?;
     Ok(AppIndication::PropertyValueRead {
         object_index: data[0],
         property_id: data[1],
         count: (data[2] >> 4) & MASK_4BIT,
-        start_index: u16::from(data[2] & MASK_4BIT) << 8 | u16::from(*data.get(3).unwrap_or(&0)),
+        start_index: u16::from(data[2] & MASK_4BIT) << 8 | u16::from(data[3]),
     })
 }
 
@@ -253,15 +253,16 @@ fn parse_system_network_parameter_read(data: &[u8]) -> Result<AppIndication, App
     })
 }
 
-fn parse_adc_read(data: &[u8]) -> AppIndication {
-    AppIndication::AdcRead {
-        channel: data.first().copied().unwrap_or(0) & MASK_6BIT,
-        count: data.get(1).copied().unwrap_or(1),
-    }
+fn parse_adc_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    check_len(data, 2)?;
+    Ok(AppIndication::AdcRead {
+        channel: data[0] & MASK_6BIT,
+        count: data[1],
+    })
 }
 
 fn parse_property_value_ext_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
-    check_len(data, 7)?;
+    check_len(data, 8)?;
     let (ot, oi, pid, count, si) = parse_ext_property_header(data);
     Ok(AppIndication::PropertyValueExtRead {
         object_type: ot,
@@ -273,7 +274,7 @@ fn parse_property_value_ext_read(data: &[u8]) -> Result<AppIndication, AppLayerE
 }
 
 fn parse_property_value_ext_write_con(data: &[u8]) -> Result<AppIndication, AppLayerError> {
-    check_len(data, 7)?;
+    check_len(data, 8)?;
     let (ot, oi, pid, count, si) = parse_ext_property_header(data);
     Ok(AppIndication::PropertyValueExtWriteCon {
         object_type: ot,
@@ -286,7 +287,7 @@ fn parse_property_value_ext_write_con(data: &[u8]) -> Result<AppIndication, AppL
 }
 
 fn parse_property_value_ext_write_uncon(data: &[u8]) -> Result<AppIndication, AppLayerError> {
-    check_len(data, 7)?;
+    check_len(data, 8)?;
     let (ot, oi, pid, count, si) = parse_ext_property_header(data);
     Ok(AppIndication::PropertyValueExtWriteUnCon {
         object_type: ot,
@@ -299,7 +300,7 @@ fn parse_property_value_ext_write_uncon(data: &[u8]) -> Result<AppIndication, Ap
 }
 
 fn parse_property_ext_description_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
-    check_len(data, 7)?;
+    check_len(data, 8)?;
     let object_type = u16::from_be_bytes([data[0], data[1]]);
     let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
     let property_id = (u16::from(data[3] & MASK_4BIT) << 8) | u16::from(data[4]);
@@ -321,7 +322,7 @@ fn parse_ext_property_header(data: &[u8]) -> (u16, u16, u16, u8, u16) {
     let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
     let property_id = (u16::from(data[3] & MASK_4BIT) << 8) | u16::from(data[4]);
     let count = data[5];
-    let start_index = u16::from_be_bytes([data[6], data.get(7).copied().unwrap_or(0)]);
+    let start_index = u16::from_be_bytes([data[6], data[7]]);
     (
         object_type,
         object_instance,
@@ -387,7 +388,7 @@ mod tests {
         assert!(matches!(
             err,
             AppLayerError::TruncatedPayload {
-                expected: 3,
+                expected: 4,
                 got: 2
             }
         ));
@@ -1089,7 +1090,7 @@ mod tests {
         assert!(matches!(
             err,
             AppLayerError::TruncatedPayload {
-                expected: 7,
+                expected: 8,
                 got: 6
             }
         ));
@@ -1128,7 +1129,7 @@ mod tests {
         assert!(matches!(
             err,
             AppLayerError::TruncatedPayload {
-                expected: 7,
+                expected: 8,
                 got: 5
             }
         ));
@@ -1167,7 +1168,7 @@ mod tests {
         assert!(matches!(
             err,
             AppLayerError::TruncatedPayload {
-                expected: 7,
+                expected: 8,
                 got: 3
             }
         ));
@@ -1177,7 +1178,7 @@ mod tests {
     fn parse_property_ext_description_read() {
         let ind = parse_indication(
             ApduType::PropertyExtDescriptionRead,
-            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x10, 0x05],
+            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x10, 0x05, 0x00],
         )
         .unwrap();
         assert!(matches!(
@@ -1202,7 +1203,7 @@ mod tests {
         assert!(matches!(
             err,
             AppLayerError::TruncatedPayload {
-                expected: 7,
+                expected: 8,
                 got: 4
             }
         ));
@@ -1212,5 +1213,45 @@ mod tests {
     fn parse_group_value_response() {
         let ind = parse_indication(ApduType::GroupValueResponse, &[0x01, 0x02]).unwrap();
         assert!(matches!(ind, AppIndication::GroupValueResponse { data, .. } if data == [0x01, 0x02]));
+    }
+
+    #[test]
+    fn parse_property_value_read_3bytes_is_error() {
+        let err = parse_indication(ApduType::PropertyValueRead, &[0x00, 0x01, 0x10]).unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 4,
+                got: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_adc_read_truncated() {
+        let err = parse_indication(ApduType::AdcRead, &[0x05]).unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 2,
+                got: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_ext_property_7bytes_is_error() {
+        let err = parse_indication(
+            ApduType::PropertyValueExtRead,
+            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x01, 0x00],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AppLayerError::TruncatedPayload {
+                expected: 8,
+                got: 7
+            }
+        ));
     }
 }
