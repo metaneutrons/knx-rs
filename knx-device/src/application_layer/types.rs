@@ -23,6 +23,20 @@ pub enum AppLayerError {
     MalformedData,
 }
 
+impl core::fmt::Display for AppLayerError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::UnsupportedApdu(t) => write!(f, "unsupported APDU type: {t:?}"),
+            Self::TruncatedPayload { expected, got } => {
+                write!(f, "truncated payload: expected {expected} bytes, got {got}")
+            }
+            Self::MalformedData => write!(f, "malformed APDU data"),
+        }
+    }
+}
+
+impl core::error::Error for AppLayerError {}
+
 /// An incoming application-layer indication to be processed by the BAU.
 #[derive(Debug, Clone)]
 pub enum AppIndication {

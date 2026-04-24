@@ -30,6 +30,18 @@ pub enum PersistenceError {
     MemoryTooLarge,
 }
 
+impl core::fmt::Display for PersistenceError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TruncatedData => write!(f, "persistence data truncated"),
+            Self::InvalidTableObject => write!(f, "invalid table object in persistence data"),
+            Self::MemoryTooLarge => write!(f, "memory area exceeds maximum size"),
+        }
+    }
+}
+
+impl core::error::Error for PersistenceError {}
+
 /// Serialize the full BAU device state for persistence.
 ///
 /// Format: `[addr_table_obj][assoc_table_obj][app_program_obj][prog_version:5][mem_len:4LE][memory_area]`
