@@ -269,26 +269,26 @@ async fn full_device_stack_group_read_response() {
     let mut bau = Bau::new(device, 2, 2);
     device_object::set_individual_address(bau.device_mut(), 0x1101);
 
-    bau.group_objects
+    bau.group_objects_mut()
         .get_mut(1)
         .unwrap()
         .set_dpt(DPT_VALUE_TEMP);
-    bau.group_objects.get_mut(2).unwrap().set_dpt(DPT_SWITCH);
+    bau.group_objects_mut().get_mut(2).unwrap().set_dpt(DPT_SWITCH);
 
     // Address table: own address + 2 group addresses
-    bau.address_table
+    bau.address_table_mut()
         .load(&[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]);
     // Association table: GA 1 → GO 1, GA 2 → GO 2
-    bau.association_table
+    bau.association_table_mut()
         .load(&[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02]);
 
     // Set initial temperature value
-    bau.group_objects
+    bau.group_objects_mut()
         .get_mut(1)
         .unwrap()
         .set_value(&DptValue::Float(21.5))
         .unwrap();
-    bau.group_objects
+    bau.group_objects_mut()
         .get_mut(1)
         .unwrap()
         .set_comm_flag(ComFlag::Ok);
