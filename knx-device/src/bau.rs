@@ -331,8 +331,21 @@ impl Bau {
             | AppIndication::IndividualAddressSerialNumberWrite { .. } => {
                 self.dispatch_ext_property_services(source, indication);
             }
-            AppIndication::PropertyExtDescriptionRead { .. } => {
-                // TODO: PropertyExtDescriptionRead not yet implemented — requires extended property description support
+            AppIndication::PropertyExtDescriptionRead {
+                object_type,
+                object_instance,
+                property_id,
+                description_type,
+                property_index,
+            } => {
+                self.handle_property_ext_description_read(
+                    source,
+                    *object_type,
+                    *object_instance,
+                    *property_id,
+                    *description_type,
+                    *property_index,
+                );
             }
         }
     }
@@ -948,6 +961,47 @@ impl Bau {
         } else {
             self.queue_property_description_error(source, object_index);
         }
+    }
+
+    fn handle_property_ext_description_read(
+        &mut self,
+        source: u16,
+        object_type: u16,
+        object_instance: u16,
+        property_id: u16,
+        description_type: u8,
+        property_index: u16,
+    ) {
+        // C++ ref: only descriptionType 0 is supported
+        if description_type != 0 {
+            return;
+        }
+        // C++ ref: propertyId and propertyIndex must fit in u8
+        let Ok(prop_id) = u8::try_from(property_id) else { return };
+        let Ok(prop_idx) = u8::try_from(property_index) else { return };
+
+        let desc = self
+            .find_object_by_type(object_type, object_instance)
+            .and_then(|idx| self.objects.get(idx as usize))
+            .and_then(|obj| obj.read_property_description(prop_id, prop_idx));
+
+        let (write_enable, pdt, max_elements, access) = desc.map_or(
+            (false, 0, 0, 0),
+            |(_, d)| (d.write_enable, d.data_type as u8, d.max_elements, d.access),
+        );
+
+        let payload = application_layer::encode_property_ext_description_response(
+            object_type,
+            object_instance,
+            property_id,
+            property_index,
+            description_type,
+            write_enable,
+            pdt,
+            max_elements,
+            access,
+        );
+        self.queue_individual_frame(source, Priority::System, &payload);
     }
 
     fn handle_memory_ext_read(&mut self, source: u16, count: u8, address: u32) {

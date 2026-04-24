@@ -276,6 +276,41 @@ fn encode_group_value(tpci: u8, apci: u8, data: &[u8]) -> Vec<u8> {
     payload
 }
 
+/// Encode a `PropertyExtDescriptionResponse` APDU payload.
+#[expect(clippy::too_many_arguments, reason = "each parameter maps to a KNX wire format field")]
+#[expect(clippy::cast_possible_truncation, reason = "property_index is 12-bit, description_type is 4-bit")]
+pub fn encode_property_ext_description_response(
+    object_type: u16,
+    object_instance: u16,
+    property_id: u16,
+    property_index: u16,
+    description_type: u8,
+    write_enable: bool,
+    pdt: u8,
+    max_elements: u16,
+    access: u8,
+) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::PropertyExtDescriptionResponse);
+    let ot = object_type.to_be_bytes();
+    let oi_pid_hi = ((object_instance >> 4) & 0xFF) as u8;
+    let oi_pid_mid = (((object_instance & u16::from(MASK_4BIT)) << 4)
+        | ((property_id >> 8) & u16::from(MASK_4BIT))) as u8;
+    let pid_lo = (property_id & 0xFF) as u8;
+    let desc_idx = ((description_type & MASK_4BIT) << 4) | ((property_index >> 8) as u8 & MASK_4BIT);
+    let idx_lo = (property_index & 0xFF) as u8;
+    let type_byte = if write_enable {
+        WRITE_ENABLE_FLAG | (pdt & MASK_6BIT)
+    } else {
+        pdt & MASK_6BIT
+    };
+    let max_hi = ((max_elements >> 8) & u16::from(MASK_4BIT)) as u8;
+    let max_lo = (max_elements & 0xFF) as u8;
+    alloc::vec![
+        hi, lo, ot[0], ot[1], oi_pid_hi, oi_pid_mid, pid_lo,
+        desc_idx, idx_lo, type_byte, max_hi, max_lo, access
+    ]
+}
+
 /// Encode an APDU into raw bytes (for transport layer connected-mode).
 pub fn encode_raw_apdu(apdu: &knx_core::apdu::Apdu) -> Vec<u8> {
     let [hi, lo] = apci_bytes(apdu.apdu_type);
