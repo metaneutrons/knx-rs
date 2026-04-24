@@ -334,7 +334,9 @@ impl Bau {
             | AppIndication::IndividualAddressSerialNumberWrite { .. } => {
                 self.dispatch_ext_property_services(source, indication);
             }
-            AppIndication::PropertyExtDescriptionRead { .. } => {}
+            AppIndication::PropertyExtDescriptionRead { .. } => {
+                // TODO: not yet implemented — requires extended property description support.
+            }
         }
     }
 
@@ -386,6 +388,7 @@ impl Bau {
             AppIndication::KeyWrite { level, key: _ } => {
                 self.queue_key_response(source, level);
             }
+            // Restart (non-master-reset) is handled at the transport level, not here.
             _ => {}
         }
     }
@@ -1836,5 +1839,127 @@ mod tests {
         assert_eq!(bau2.address_table.get_tsap(0x0802), Some(2));
         assert_eq!(bau2.memory_area[0x10], 0xCA);
         assert_eq!(bau2.memory_area[0x11], 0xFE);
+    }
+
+    #[test]
+    fn authorize_request_responds_with_level() {
+        let mut bau = test_bau();
+        // Build AuthorizeRequest APDU: APCI 0x3D1, data=[reserved, key(4)]
+        let apdu_payload = &[0x03, 0xD1, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let src = IndividualAddress::from_raw(0x1102);
+        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(0x1101));
+        let frame = CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::System, apdu_payload);
+        bau.process_frame(&frame, 0);
+        let resp = bau.next_outgoing_frame().expect("expected AuthorizeResponse");
+        assert_eq!(resp.destination_address_raw(), 0x1102);
+        // AuthorizeResponse APCI = 0x3D2, payload[2] = level
+        let p = resp.payload();
+        assert_eq!(p[0] & 0x03, 0x03);
+        assert_eq!(p[1], 0xD2);
+        assert_eq!(p[2], 0); // AUTH_LEVEL_FULL
+    }
+
+    #[test]
+    fn key_write_responds_with_level() {
+        let mut bau = test_bau();
+        // KeyWrite APCI 0x3D3, data=[level, key(4)]
+        let apdu_payload = &[0x03, 0xD3, 0x02, 0x00, 0x00, 0x00, 0xFF];
+        let src = IndividualAddress::from_raw(0x1102);
+        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(0x1101));
+        let frame = CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::System, apdu_payload);
+        bau.process_frame(&frame, 0);
+        let resp = bau.next_outgoing_frame().expect("expected KeyResponse");
+        assert_eq!(resp.destination_address_raw(), 0x1102);
+        let p = resp.payload();
+        assert_eq!(p[0] & 0x03, 0x03);
+        assert_eq!(p[1], 0xD4); // KeyResponse APCI low
+        assert_eq!(p[2], 0x02); // echoed level
+    }
+
+    #[test]
+    fn function_property_command_responds() {
+        let mut bau = test_bau();
+        // FunctionPropertyCommand APCI 0x2C7, data=[obj_idx, pid, ...]
+        let apdu_payload = &[0x02, 0xC7, 0x00, 0x01];
+        let src = IndividualAddress::from_raw(0x1102);
+        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(0x1101));
+        let frame = CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::System, apdu_payload);
+        bau.process_frame(&frame, 0);
+        let resp = bau.next_outgoing_frame().expect("expected FunctionPropertyStateResponse");
+        assert_eq!(resp.destination_address_raw(), 0x1102);
+        let p = resp.payload();
+        assert_eq!(p[0] & 0x03, 0x02);
+        assert_eq!(p[1], 0xC9); // FunctionPropertyStateResponse APCI low
+        assert_eq!(p[2], 0x00); // object_index
+        assert_eq!(p[3], 0x01); // property_id
+    }
+
+    #[test]
+    fn adc_read_responds_with_zero() {
+        let mut bau = test_bau();
+        // AdcRead APCI 0x180 (short APCI, but needs long encoding for channel+count)
+        let apdu_payload = &[0x01, 0x80, 0x03, 0x01]; // APCI=0x180, channel=3, count=1
+        let src = IndividualAddress::from_raw(0x1102);
+        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(0x1101));
+        let frame = CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::System, apdu_payload);
+        bau.process_frame(&frame, 0);
+        let resp = bau.next_outgoing_frame().expect("expected AdcResponse");
+        assert_eq!(resp.destination_address_raw(), 0x1102);
+        let p = resp.payload();
+        // AdcResponse APCI 0x1C0, value should be 0
+        assert_eq!(p[0] & 0x03, 0x01);
+        assert_eq!(p[1] & 0xC0, 0xC0); // AdcResponse APCI low high bits
+        assert_eq!(p[3], 0x00); // value high
+        assert_eq!(p[4], 0x00); // value low
+    }
+
+    #[test]
+    fn poll_processes_read_requests() {
+        let mut bau = test_bau();
+        // Mark tables as loaded
+        bau.addr_table_object.handle_load_event(&[1], 0);
+        bau.addr_table_object.handle_load_event(&[2], 0);
+        bau.assoc_table_object.handle_load_event(&[1], 0);
+        bau.assoc_table_object.handle_load_event(&[2], 0);
+
+        bau.group_objects.get_mut(1).unwrap().request_object_read();
+        assert_eq!(bau.group_objects.get(1).unwrap().comm_flag(), ComFlag::ReadRequest);
+
+        bau.poll(0);
+        let frame = bau.next_outgoing_frame().expect("expected GroupValueRead");
+        assert_eq!(frame.destination_address_raw(), 0x0801);
+        // GroupValueRead APCI = 0x000
+        let p = frame.payload();
+        assert_eq!(p[0], 0x00);
+        assert_eq!(p[1], 0x00);
+        assert_eq!(
+            bau.group_objects.get(1).unwrap().comm_flag(),
+            ComFlag::Transmitting
+        );
+    }
+
+    #[test]
+    fn load_tables_from_memory_loads_addr_and_assoc() {
+        let mut bau = test_bau();
+        // Clear pre-loaded tables
+        bau.address_table = AddressTable::new();
+        bau.association_table = AssociationTable::new();
+        assert_eq!(bau.address_table.entry_count(), 0);
+        assert_eq!(bau.association_table.entry_count(), 0);
+
+        // Set up memory: addr table at offset 0 (6 bytes), assoc table at offset 6 (10 bytes)
+        let mut mem = Vec::new();
+        mem.extend_from_slice(&[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]); // addr: 2 entries
+        mem.extend_from_slice(&[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02]); // assoc: 2 entries
+        bau.set_memory_area(mem);
+
+        bau.load_tables_from_memory(0, 6, 6, 10);
+
+        assert_eq!(bau.address_table.entry_count(), 2);
+        assert_eq!(bau.address_table.get_tsap(0x0801), Some(1));
+        assert_eq!(bau.address_table.get_tsap(0x0802), Some(2));
+        assert_eq!(bau.association_table.entry_count(), 2);
+        assert_eq!(bau.association_table.translate_asap(1), Some(1));
+        assert_eq!(bau.association_table.translate_asap(2), Some(2));
     }
 }

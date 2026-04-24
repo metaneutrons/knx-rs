@@ -871,4 +871,37 @@ mod tests {
             Action::SendDataConnected { seq_no: 0, .. }
         ));
     }
+
+    #[test]
+    fn connect_confirm_failure_returns_to_closed() {
+        let mut tl = TransportLayer::new();
+        tl.connect_request(0x1001, 0);
+        assert_eq!(tl.state(), State::Connecting);
+        tl.take_actions();
+
+        tl.connect_confirm(false);
+        assert_eq!(tl.state(), State::Closed);
+        let actions = tl.take_actions();
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, Action::DisconnectIndication { address: 0x1001 }))
+        );
+    }
+
+    #[test]
+    fn foreign_data_in_open_idle_triggers_disconnect() {
+        let mut tl = TransportLayer::new();
+        // Establish connection with addr A
+        tl.connect_indication(0x1001, 0);
+        tl.take_actions();
+        assert_eq!(tl.state(), State::OpenIdle);
+
+        // Receive data from addr B — should be ignored (no disconnect for OpenIdle foreign data)
+        tl.data_connected_indication(0x2002, 0, Priority::Low, alloc::vec![0xAA], 100);
+        // Foreign data in OpenIdle is silently dropped (source != connection_address)
+        let actions = tl.take_actions();
+        assert!(actions.is_empty());
+        assert_eq!(tl.state(), State::OpenIdle);
+    }
 }

@@ -295,3 +295,41 @@ pub struct PropertyDescription {
     /// Access level.
     pub access: u8,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn property_data_type_sizes() {
+        assert_eq!(PropertyDataType::UnsignedChar.size(), 1);
+        assert_eq!(PropertyDataType::UnsignedInt.size(), 2);
+        assert_eq!(PropertyDataType::UnsignedLong.size(), 4);
+        assert_eq!(PropertyDataType::Generic05.size(), 5);
+        assert_eq!(PropertyDataType::Generic10.size(), 10);
+    }
+
+    #[test]
+    fn load_state_from_u8_roundtrip() {
+        assert_eq!(LoadState::from(0), LoadState::Unloaded);
+        assert_eq!(LoadState::from(1), LoadState::Loaded);
+        assert_eq!(LoadState::from(2), LoadState::Loading);
+        assert_eq!(LoadState::from(3), LoadState::Error);
+        assert_eq!(LoadState::from(4), LoadState::Unloading);
+        assert_eq!(LoadState::from(5), LoadState::LoadCompleting);
+        // Unknown values map to Unloaded
+        assert_eq!(LoadState::from(6), LoadState::Unloaded);
+        assert_eq!(LoadState::from(255), LoadState::Unloaded);
+    }
+
+    #[test]
+    fn load_event_from_byte() {
+        assert_eq!(LoadEvent::from_byte(0), Some(LoadEvent::Noop));
+        assert_eq!(LoadEvent::from_byte(1), Some(LoadEvent::StartLoading));
+        assert_eq!(LoadEvent::from_byte(2), Some(LoadEvent::LoadCompleted));
+        assert_eq!(LoadEvent::from_byte(3), Some(LoadEvent::AdditionalLoadControls));
+        assert_eq!(LoadEvent::from_byte(4), Some(LoadEvent::Unload));
+        assert_eq!(LoadEvent::from_byte(5), None);
+        assert_eq!(LoadEvent::from_byte(255), None);
+    }
+}
