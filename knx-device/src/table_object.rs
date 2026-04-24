@@ -38,6 +38,11 @@ pub enum LoadError {
 /// Maximum allowed table/memory size (256 KiB).
 pub const MAX_MEMORY_SIZE: usize = 256 * 1024;
 
+/// MCB CRC control byte: CRC is valid.
+const MCB_CRC_CONTROL: u8 = 0x00;
+/// MCB access byte: full read/write access (read=0xF, write=0xF).
+const MCB_ACCESS: u8 = 0xFF;
+
 /// Minimum data length for `AdditionalLoadControls` (opcode + size + fill mode + fill byte).
 const ALC_MIN_LENGTH: usize = 8;
 /// Opcode for `AllocAbsDataSeg` in `AdditionalLoadControls`.
@@ -270,7 +275,7 @@ impl TableObject {
         let size = self.data_size.to_be_bytes();
         let crc_be = crc.to_be_bytes();
         [
-            size[0], size[1], size[2], size[3], 0x00, 0xFF, crc_be[0], crc_be[1],
+            size[0], size[1], size[2], size[3], MCB_CRC_CONTROL, MCB_ACCESS, crc_be[0], crc_be[1],
         ]
     }
 
