@@ -278,10 +278,10 @@ fn encode_group_value(tpci: u8, apci: u8, data: &[u8]) -> Vec<u8> {
 
 /// Encode an APDU into raw bytes (for transport layer connected-mode).
 pub fn encode_raw_apdu(apdu: &knx_core::apdu::Apdu) -> Vec<u8> {
-    let apci = apdu.apdu_type as u16;
+    let [hi, lo] = apci_bytes(apdu.apdu_type);
     let mut buf = Vec::with_capacity(2 + apdu.data.len());
-    buf.push((apci >> 8) as u8);
-    buf.push((apci & 0xFF) as u8);
+    buf.push(hi);
+    buf.push(lo);
     buf.extend_from_slice(&apdu.data);
     buf
 }

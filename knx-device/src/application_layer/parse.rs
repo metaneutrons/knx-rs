@@ -301,9 +301,7 @@ fn parse_property_value_ext_write_uncon(data: &[u8]) -> Result<AppIndication, Ap
 
 fn parse_property_ext_description_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
     check_len(data, 8)?;
-    let object_type = u16::from_be_bytes([data[0], data[1]]);
-    let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
-    let property_id = (u16::from(data[3] & MASK_4BIT) << 8) | u16::from(data[4]);
+    let (object_type, object_instance, property_id) = parse_ext_ot_oi_pid(data);
     let description_type = data[5] >> 4;
     let property_index = (u16::from(data[5] & MASK_4BIT) << 8) | u16::from(data[6]);
     Ok(AppIndication::PropertyExtDescriptionRead {
@@ -315,12 +313,18 @@ fn parse_property_ext_description_read(data: &[u8]) -> Result<AppIndication, App
     })
 }
 
-/// Parse the common header for extended property services.
-/// Returns `(object_type, object_instance, property_id, count, start_index)`.
-fn parse_ext_property_header(data: &[u8]) -> (u16, u16, u16, u8, u16) {
+/// Parse the common 3-field extended header: `(object_type, object_instance, property_id)`.
+fn parse_ext_ot_oi_pid(data: &[u8]) -> (u16, u16, u16) {
     let object_type = u16::from_be_bytes([data[0], data[1]]);
     let object_instance = (u16::from(data[2]) << 4) | (u16::from(data[3]) >> 4);
     let property_id = (u16::from(data[3] & MASK_4BIT) << 8) | u16::from(data[4]);
+    (object_type, object_instance, property_id)
+}
+
+/// Parse the common header for extended property services.
+/// Returns `(object_type, object_instance, property_id, count, start_index)`.
+fn parse_ext_property_header(data: &[u8]) -> (u16, u16, u16, u8, u16) {
+    let (object_type, object_instance, property_id) = parse_ext_ot_oi_pid(data);
     let count = data[5];
     let start_index = u16::from_be_bytes([data[6], data[7]]);
     (
