@@ -231,8 +231,7 @@ impl TableObject {
         }
         let do_fill = data[6] == 0x01;
         let fill_byte = data[7];
-        #[expect(clippy::cast_possible_truncation)]
-        let offset = memory_area_len as u32;
+        let offset = u32::try_from(memory_area_len).unwrap_or(u32::MAX);
         self.data_offset = offset;
         self.data_size = size;
         if do_fill {

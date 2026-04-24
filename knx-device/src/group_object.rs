@@ -123,19 +123,16 @@ impl GroupObject {
     }
 
     /// Raw value bytes.
-    #[allow(clippy::missing_const_for_fn)] // clippy false positive: Vec deref not const
     pub fn value_ref(&self) -> &[u8] {
         &self.data
     }
 
     /// Mutable raw value bytes.
-    #[allow(clippy::missing_const_for_fn)]
     pub fn value_mut(&mut self) -> &mut [u8] {
         &mut self.data
     }
 
     /// Size of the value in bytes.
-    #[allow(clippy::missing_const_for_fn)]
     pub fn value_size(&self) -> usize {
         self.data.len()
     }
@@ -230,7 +227,6 @@ impl GroupObjectStore {
     }
 
     /// Get a group object by ASAP (1-based).
-    #[allow(clippy::missing_const_for_fn)]
     pub fn get(&self, asap: u16) -> Option<&GroupObject> {
         if asap == 0 {
             return None;
@@ -247,9 +243,13 @@ impl GroupObjectStore {
     }
 
     /// Number of group objects.
-    #[expect(clippy::cast_possible_truncation)]
     pub fn count(&self) -> u16 {
-        self.objects.len() as u16
+        if self.objects.len() > u16::MAX as usize {
+            return 0;
+        }
+        #[expect(clippy::cast_possible_truncation, reason = "guarded by bounds check above")]
+        let count = self.objects.len() as u16;
+        count
     }
 
     /// Find the next group object with `WriteRequest` or `ReadRequest` flag.

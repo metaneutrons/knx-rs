@@ -61,8 +61,7 @@ pub fn save_bau_state(bau: &Bau) -> Vec<u8> {
     ver.resize(PROGRAM_VERSION_SIZE, 0);
     buf.extend_from_slice(&ver);
 
-    #[expect(clippy::cast_possible_truncation)]
-    let mem_len = memory.len() as u32;
+    let mem_len = u32::try_from(memory.len()).unwrap_or(u32::MAX);
     buf.extend_from_slice(&mem_len.to_le_bytes());
     buf.extend_from_slice(memory);
     buf

@@ -78,13 +78,12 @@ impl DataProperty {
     }
 
     /// Direct access to the underlying data.
-    #[allow(clippy::missing_const_for_fn)]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
 
     /// Direct mutable access to the underlying data.
-    #[allow(clippy::missing_const_for_fn)]
+    #[expect(clippy::missing_const_for_fn, reason = "returns &mut Vec which requires non-const deref")]
     pub fn data_mut(&mut self) -> &mut Vec<u8> {
         &mut self.data
     }
