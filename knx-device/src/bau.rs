@@ -62,6 +62,15 @@ const ADC_VALUE_DEFAULT: u16 = 0;
 /// Maximum allowed memory area size (256 KiB).
 const MAX_MEMORY_SIZE: usize = 256 * 1024;
 
+/// Parameters for extended property value services (read/write).
+struct ExtPropertyParams {
+    object_type: u16,
+    object_instance: u16,
+    property_id: u16,
+    count: u8,
+    start_index: u16,
+}
+
 /// The Bus Access Unit — main device controller.
 pub struct Bau {
     /// Interface objects indexed by object index (0=device, 1=address table, etc.).
@@ -466,16 +475,14 @@ impl Bau {
                 start_index,
                 data,
             } => {
-                self.handle_property_value_ext_write(
-                    source,
+                let params = ExtPropertyParams {
                     object_type,
                     object_instance,
                     property_id,
                     count,
                     start_index,
-                    &data,
-                    true,
-                );
+                };
+                self.handle_property_value_ext_write(source, &params, &data, true);
             }
             AppIndication::PropertyValueExtWriteUnCon {
                 object_type,
@@ -485,16 +492,14 @@ impl Bau {
                 start_index,
                 data,
             } => {
-                self.handle_property_value_ext_write(
-                    source,
+                let params = ExtPropertyParams {
                     object_type,
                     object_instance,
                     property_id,
                     count,
                     start_index,
-                    &data,
-                    false,
-                );
+                };
+                self.handle_property_value_ext_write(source, &params, &data, false);
             }
             AppIndication::FunctionPropertyCommand {
                 object_index,
@@ -1109,8 +1114,19 @@ impl Bau {
         let obj_idx = self.find_object_by_type(object_type, object_instance);
         if let Some(idx) = obj_idx {
             // Delegate to standard property read logic
-            #[expect(clippy::cast_possible_truncation)]
-            let pid = property_id as u8;
+            let Ok(pid) = u8::try_from(property_id) else {
+                // Property ID too large for standard services — send error response
+                let payload = application_layer::encode_property_value_ext_response(
+                    object_type,
+                    object_instance,
+                    property_id,
+                    0,
+                    start_index,
+                    &[],
+                );
+                self.queue_individual_frame(source, Priority::System, &payload);
+                return;
+            };
             let Ok(pid_enum) = PropertyId::try_from(pid) else {
                 let payload = application_layer::encode_property_value_ext_response(
                     object_type,
@@ -1150,36 +1166,44 @@ impl Bau {
         self.queue_individual_frame(source, Priority::System, &payload);
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn handle_property_value_ext_write(
         &mut self,
         source: u16,
-        object_type: u16,
-        object_instance: u16,
-        property_id: u16,
-        count: u8,
-        start_index: u16,
+        params: &ExtPropertyParams,
         data: &[u8],
         confirmed: bool,
     ) {
-        let obj_idx = self.find_object_by_type(object_type, object_instance);
+        let obj_idx = self.find_object_by_type(params.object_type, params.object_instance);
         if let Some(idx) = obj_idx {
-            #[expect(clippy::cast_possible_truncation)]
-            let pid = property_id as u8;
+            let Ok(pid) = u8::try_from(params.property_id) else {
+                // Property ID too large for standard services — send error response
+                if confirmed {
+                    let payload = application_layer::encode_property_value_ext_response(
+                        params.object_type,
+                        params.object_instance,
+                        params.property_id,
+                        0,
+                        params.start_index,
+                        &[],
+                    );
+                    self.queue_individual_frame(source, Priority::System, &payload);
+                }
+                return;
+            };
             if let Ok(pid_enum) = PropertyId::try_from(pid) {
                 if let Some(obj) = self.objects.get_mut(idx as usize) {
-                    obj.write_property(pid_enum, start_index, count, data);
+                    obj.write_property(pid_enum, params.start_index, params.count, data);
                 }
             }
         }
         if confirmed {
             // Send write confirmation response
             let payload = application_layer::encode_property_value_ext_response(
-                object_type,
-                object_instance,
-                property_id,
-                count,
-                start_index,
+                params.object_type,
+                params.object_instance,
+                params.property_id,
+                params.count,
+                params.start_index,
                 &[],
             );
             self.queue_individual_frame(source, Priority::System, &payload);
@@ -1435,7 +1459,7 @@ mod tests {
         // Object 0 is device, should have ObjectType = 0x0000
         // Simulate a PropertyValueRead for object 0, PID 1 (ObjectType)
         let frame = CemiFrame::parse(&[
-            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x04, 0x03, 0xD5, 0x00, 0x01, 0x10,
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x05, 0x03, 0xD5, 0x00, 0x01, 0x10,
             0x01,
         ])
         .unwrap();
@@ -1676,7 +1700,10 @@ mod tests {
         ])
         .unwrap();
         bau.process_frame(&frame, 0);
-        assert_eq!(bau.group_objects.get(1).unwrap().comm_flag(), ComFlag::Updated);
+        assert_eq!(
+            bau.group_objects.get(1).unwrap().comm_flag(),
+            ComFlag::Updated
+        );
         assert_eq!(bau.group_objects.get(1).unwrap().value_ref(), &[0x01]);
 
         // GroupValueResponse to GA 0x0802 (tsap=2 → asap=2): GO2 has no A-flag → should NOT update
@@ -1725,7 +1752,9 @@ mod tests {
         bau.next_outgoing_frame().unwrap();
 
         bau.handle_memory_ext_read(0x1102, 4, 0x0010);
-        let resp = bau.next_outgoing_frame().expect("expected ext read response");
+        let resp = bau
+            .next_outgoing_frame()
+            .expect("expected ext read response");
         let payload = resp.payload();
         // MemoryExtReadResponse: [apci_hi, apci_lo, return_code, addr(3 bytes), data...]
         assert_eq!(payload[2], 0, "return_code should be 0 (success)");
