@@ -251,15 +251,7 @@ impl GroupObjectStore {
 
     /// Number of group objects.
     pub fn count(&self) -> u16 {
-        if self.objects.len() > u16::MAX as usize {
-            return 0;
-        }
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "guarded by bounds check above"
-        )]
-        let count = self.objects.len() as u16;
-        count
+        u16::try_from(self.objects.len()).unwrap_or(0)
     }
 
     /// Find the next group object with `WriteRequest` or `ReadRequest` flag.
@@ -287,11 +279,7 @@ impl GroupObjectStore {
     pub fn reinitialize_from_table(&mut self, table: &GroupObjectTable) {
         let count = table.entry_count();
         while self.objects.len() < count as usize {
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "GO count bounded by u16 entry_count"
-            )]
-            let asap = self.objects.len() as u16 + 1;
+            let asap = u16::try_from(self.objects.len()).unwrap_or(0) + 1;
             self.objects.push(GroupObject::new(asap, 1));
         }
         self.objects.truncate(count as usize);

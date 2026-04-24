@@ -198,11 +198,7 @@ impl Bau {
 
     /// Add an interface object. Returns its index, or `None` if full.
     pub fn add_object(&mut self, obj: InterfaceObject) -> Option<u8> {
-        if self.objects.len() >= 256 {
-            return None;
-        }
-        #[expect(clippy::cast_possible_truncation)]
-        let idx = self.objects.len() as u8;
+        let idx = u8::try_from(self.objects.len()).ok()?;
         self.objects.push(obj);
         Some(idx)
     }
@@ -1161,11 +1157,11 @@ impl Bau {
     fn find_object_by_type(&self, object_type: u16, instance: u16) -> Option<u8> {
         let target = crate::interface_object::ObjectType::try_from(object_type).ok()?;
         let mut instance_count = 0u16;
-        #[expect(clippy::cast_possible_truncation)]
         for (i, obj) in self.objects.iter().enumerate() {
+            let Ok(idx) = u8::try_from(i) else { break };
             if obj.object_type() == target {
                 if instance_count == instance {
-                    return Some(i as u8);
+                    return Some(idx);
                 }
                 instance_count += 1;
             }

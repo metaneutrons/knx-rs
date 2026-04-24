@@ -124,8 +124,8 @@ impl InterfaceObject {
                 .iter()
                 .enumerate()
                 .find(|(_, p)| p.id() == pid)?;
-            #[expect(clippy::cast_possible_truncation)]
-            Some((idx as u8, prop.description()))
+            let idx = u8::try_from(idx).ok()?;
+            Some((idx, prop.description()))
         } else {
             let prop = self.properties.get(property_index as usize)?;
             Some((property_index, prop.description()))

@@ -69,16 +69,13 @@ pub fn encode_property_response(
 }
 
 /// Encode a `MemoryResponse` APDU payload.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "data.len() is always <= 15"
-)]
 pub fn encode_memory_response(address: u16, data: &[u8]) -> Vec<u8> {
     debug_assert!(data.len() <= 15, "MemoryResponse data must be <= 15 bytes");
     let [hi, lo] = apci_bytes(ApduType::MemoryResponse);
+    let len_nibble = u8::try_from(data.len()).unwrap_or(MASK_4BIT) & MASK_4BIT;
     let mut payload = Vec::with_capacity(5 + data.len());
     payload.push(hi);
-    payload.push(lo | (data.len() as u8 & MASK_4BIT));
+    payload.push(lo | len_nibble);
     payload.extend_from_slice(&address.to_be_bytes());
     payload.extend_from_slice(data);
     payload
