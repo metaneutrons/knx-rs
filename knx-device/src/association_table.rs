@@ -49,7 +49,10 @@ impl AssociationTable {
         if offset + 2 > self.data.len() {
             return None;
         }
-        Some(u16::from_be_bytes([self.data[offset], self.data[offset + 1]]))
+        Some(u16::from_be_bytes([
+            self.data[offset],
+            self.data[offset + 1],
+        ]))
     }
 
     /// Get the ASAP for entry at `idx` (0-based).
@@ -58,7 +61,10 @@ impl AssociationTable {
         if offset + 2 > self.data.len() {
             return None;
         }
-        Some(u16::from_be_bytes([self.data[offset], self.data[offset + 1]]))
+        Some(u16::from_be_bytes([
+            self.data[offset],
+            self.data[offset + 1],
+        ]))
     }
 
     /// Translate an ASAP to its TSAP. Returns `None` if not found.

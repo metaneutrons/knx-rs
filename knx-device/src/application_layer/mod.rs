@@ -13,7 +13,9 @@
 //! - [`encode`] — outgoing APDU encoding functions
 //! - [`parse`] — incoming APDU parsing functions
 
+/// Outgoing APDU encoding functions for all KNX application-layer services.
 pub mod encode;
+/// Incoming APDU parsing — converts raw bytes into [`AppIndication`] variants.
 pub mod parse;
 mod types;
 

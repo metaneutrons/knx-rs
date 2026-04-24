@@ -11,7 +11,7 @@ mod types;
 
 pub use data::DataProperty;
 pub use types::{
-    AccessLevel, ErrorCode, LoadEvent, LoadState, PropertyDataType, PropertyDescription, PropertyId,
+    AccessLevel, LoadEvent, LoadState, PropertyDataType, PropertyDescription, PropertyId,
 };
 
 use alloc::boxed::Box;

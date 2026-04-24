@@ -36,8 +36,12 @@ pub fn new_application_program_object() -> InterfaceObject {
 
     // PEI type (always 0 for IP devices)
     obj.add_property(
-        DataProperty::read_only(PropertyId::PeiType, PropertyDataType::UnsignedChar, &[PEI_TYPE_IP])
-            .into(),
+        DataProperty::read_only(
+            PropertyId::PeiType,
+            PropertyDataType::UnsignedChar,
+            &[PEI_TYPE_IP],
+        )
+        .into(),
     );
 
     // Load state control
@@ -62,8 +66,12 @@ pub fn new_application_program_object() -> InterfaceObject {
 
     // MCB table (memory control block)
     obj.add_property(
-        DataProperty::read_write(PropertyId::McbTable, PropertyDataType::Generic08, &MCB_TABLE_DEFAULT)
-            .into(),
+        DataProperty::read_write(
+            PropertyId::McbTable,
+            PropertyDataType::Generic08,
+            &MCB_TABLE_DEFAULT,
+        )
+        .into(),
     );
 
     // Error code

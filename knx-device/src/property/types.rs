@@ -160,6 +160,7 @@ impl TryFrom<u8> for PropertyId {
             14 => Ok(Self::DeviceControl),
             15 => Ok(Self::OrderInfo),
             16 => Ok(Self::PeiType),
+            17 => Ok(Self::PortConfiguration),
             23 => Ok(Self::Table),
             25 => Ok(Self::Version),
             27 => Ok(Self::McbTable),
@@ -240,30 +241,6 @@ impl LoadEvent {
     }
 }
 
-/// Error code for table object load failures.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum ErrorCode {
-    /// No fault.
-    NoFault = 0,
-    /// General device fault.
-    GeneralDeviceFault = 1,
-    /// Communication fault.
-    CommunicationFault = 2,
-    /// Configuration fault.
-    ConfigurationFault = 3,
-    /// Hardware fault.
-    HardwareFault = 4,
-    /// Software fault.
-    SoftwareFault = 5,
-    /// Insufficient non-volatile memory.
-    InsufficientNonVolatileMemory = 6,
-    /// Insufficient volatile memory.
-    InsufficientVolatileMemory = 7,
-    /// CRC error.
-    CrcError = 9,
-}
-
 /// Access level for property read/write.
 ///
 /// Encodes both read and write access in a single byte:
@@ -327,7 +304,10 @@ mod tests {
         assert_eq!(LoadEvent::from_byte(0), Some(LoadEvent::Noop));
         assert_eq!(LoadEvent::from_byte(1), Some(LoadEvent::StartLoading));
         assert_eq!(LoadEvent::from_byte(2), Some(LoadEvent::LoadCompleted));
-        assert_eq!(LoadEvent::from_byte(3), Some(LoadEvent::AdditionalLoadControls));
+        assert_eq!(
+            LoadEvent::from_byte(3),
+            Some(LoadEvent::AdditionalLoadControls)
+        );
         assert_eq!(LoadEvent::from_byte(4), Some(LoadEvent::Unload));
         assert_eq!(LoadEvent::from_byte(5), None);
         assert_eq!(LoadEvent::from_byte(255), None);

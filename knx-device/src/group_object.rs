@@ -13,6 +13,8 @@ use alloc::vec::Vec;
 
 use knx_core::dpt::{self, Dpt, DptError, DptValue};
 
+use crate::group_object_table::GroupObjectTable;
+
 /// Callback invoked when a group object is updated from the bus.
 pub type GroupObjectCallback = Box<dyn Fn(&GroupObject) + Send>;
 
@@ -137,6 +139,11 @@ impl GroupObject {
         self.data.len()
     }
 
+    /// Resize the data buffer (called during GO table initialization).
+    pub fn resize_data(&mut self, new_size: usize) {
+        self.data.resize(new_size, 0);
+    }
+
     /// Write a value and mark as `WriteRequest` (triggers bus send).
     pub fn write_value(&mut self, data: &[u8]) {
         let len = data.len().min(self.data.len());
@@ -247,7 +254,10 @@ impl GroupObjectStore {
         if self.objects.len() > u16::MAX as usize {
             return 0;
         }
-        #[expect(clippy::cast_possible_truncation, reason = "guarded by bounds check above")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "guarded by bounds check above"
+        )]
         let count = self.objects.len() as u16;
         count
     }
@@ -270,6 +280,31 @@ impl GroupObjectStore {
             .iter()
             .find(|go| go.comm_flag == ComFlag::Updated)
             .map(|go| go.asap)
+    }
+
+    /// Re-initialize group objects from the loaded GO table.
+    /// Resizes each GO's data buffer to match the `value_type` from the descriptor.
+    pub fn reinitialize_from_table(&mut self, table: &GroupObjectTable) {
+        let count = table.entry_count();
+        while self.objects.len() < count as usize {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "GO count bounded by u16 entry_count"
+            )]
+            let asap = self.objects.len() as u16 + 1;
+            self.objects.push(GroupObject::new(asap, 1));
+        }
+        self.objects.truncate(count as usize);
+        for asap in 1..=count {
+            if let Some(desc) = table.get_descriptor(asap) {
+                let size = desc.go_size();
+                if let Some(go) = self.get_mut(asap) {
+                    if go.value_size() != size {
+                        go.resize_data(size);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -439,5 +474,79 @@ mod tests {
         // Updated → Ok (app acknowledges)
         go.set_comm_flag(ComFlag::Ok);
         assert_eq!(go.comm_flag(), ComFlag::Ok);
+    }
+
+    #[test]
+    fn resize_data() {
+        let mut go = GroupObject::new(1, 1);
+        assert_eq!(go.value_size(), 1);
+        go.resize_data(4);
+        assert_eq!(go.value_size(), 4);
+        assert_eq!(go.value_ref(), &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn reinitialize_from_table_resizes_gos() {
+        use crate::group_object_table::GroupObjectTable;
+
+        let mut store = GroupObjectStore::new(2, 1);
+        assert_eq!(store.get(1).unwrap().value_size(), 1);
+        assert_eq!(store.get(2).unwrap().value_size(), 1);
+
+        // Build GO table: GO1 value_type=8 (2 bytes), GO2 value_type=14 (14 bytes)
+        let go1: u16 = (1 << 10) | 8; // comm + value_type=8
+        let go2: u16 = (1 << 10) | 14; // comm + value_type=14
+        let mut data = Vec::new();
+        data.extend_from_slice(&2u16.to_be_bytes());
+        data.extend_from_slice(&go1.to_be_bytes());
+        data.extend_from_slice(&go2.to_be_bytes());
+        let mut table = GroupObjectTable::new();
+        table.load(&data);
+
+        store.reinitialize_from_table(&table);
+        assert_eq!(store.get(1).unwrap().value_size(), 2);
+        assert_eq!(store.get(2).unwrap().value_size(), 14);
+    }
+
+    #[test]
+    fn reinitialize_from_table_grows_store() {
+        use crate::group_object_table::GroupObjectTable;
+
+        let mut store = GroupObjectStore::new(1, 1);
+        assert_eq!(store.count(), 1);
+
+        // Table has 3 GOs
+        let go: u16 = (1 << 10) | 7; // comm + value_type=7 (1 byte)
+        let mut data = Vec::new();
+        data.extend_from_slice(&3u16.to_be_bytes());
+        for _ in 0..3 {
+            data.extend_from_slice(&go.to_be_bytes());
+        }
+        let mut table = GroupObjectTable::new();
+        table.load(&data);
+
+        store.reinitialize_from_table(&table);
+        assert_eq!(store.count(), 3);
+        assert_eq!(store.get(3).unwrap().asap(), 3);
+    }
+
+    #[test]
+    fn reinitialize_from_table_truncates_store() {
+        use crate::group_object_table::GroupObjectTable;
+
+        let mut store = GroupObjectStore::new(5, 1);
+        assert_eq!(store.count(), 5);
+
+        // Table has only 2 GOs
+        let go: u16 = (1 << 10) | 7;
+        let mut data = Vec::new();
+        data.extend_from_slice(&2u16.to_be_bytes());
+        data.extend_from_slice(&go.to_be_bytes());
+        data.extend_from_slice(&go.to_be_bytes());
+        let mut table = GroupObjectTable::new();
+        table.load(&data);
+
+        store.reinitialize_from_table(&table);
+        assert_eq!(store.count(), 2);
     }
 }

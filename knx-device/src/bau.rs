@@ -335,7 +335,7 @@ impl Bau {
                 self.dispatch_ext_property_services(source, indication);
             }
             AppIndication::PropertyExtDescriptionRead { .. } => {
-                // TODO: not yet implemented — requires extended property description support.
+                // TODO: PropertyExtDescriptionRead not yet implemented — requires extended property description support
             }
         }
     }
@@ -590,6 +590,14 @@ impl Bau {
         }
     }
 
+    /// Load the group object table and reinitialize GO data buffers.
+    /// C++ ref: `GroupObjectTableObject::initGroupObjects`.
+    pub fn load_group_object_table(&mut self, data: &[u8]) {
+        self.group_object_table.load(data);
+        self.group_objects
+            .reinitialize_from_table(&self.group_object_table);
+    }
+
     /// Queue read requests for all group objects with the I-flag (read on init) set.
     /// Should be called after tables are loaded (ETS programming or restore).
     pub fn init_read_requests(&mut self) {
@@ -771,6 +779,27 @@ impl Bau {
         }
     }
 
+    /// Try to intercept a table-object property read (`LoadStateControl`, `TableReference`, `McbTable`).
+    ///
+    /// Returns `Some(data)` if the property was intercepted, `None` otherwise.
+    fn try_intercept_table_property(
+        &self,
+        object_index: u8,
+        pid: PropertyId,
+        start_index: u16,
+    ) -> Option<Vec<u8>> {
+        if start_index != 1 {
+            return None;
+        }
+        let to = self.table_object(object_index)?;
+        match pid {
+            PropertyId::LoadStateControl => Some(vec![to.load_state() as u8]),
+            PropertyId::TableReference => Some(to.table_reference().to_be_bytes().to_vec()),
+            PropertyId::McbTable => Some(to.mcb_table(&self.memory_area).to_vec()),
+            _ => None,
+        }
+    }
+
     fn handle_property_read(
         &mut self,
         source: u16,
@@ -784,52 +813,10 @@ impl Bau {
             return;
         };
 
-        // Intercept LoadStateControl reads for table objects
-        if pid == PropertyId::LoadStateControl && start_index == 1 {
-            if let Some(to) = self.table_object(object_index) {
-                let state = to.load_state() as u8;
-                self.queue_property_response(
-                    source,
-                    object_index,
-                    property_id,
-                    1,
-                    start_index,
-                    &[state],
-                );
-                return;
-            }
-        }
-
-        // Intercept TableReference reads for table objects
-        if pid == PropertyId::TableReference && start_index == 1 {
-            if let Some(to) = self.table_object(object_index) {
-                let table_ref = to.table_reference();
-                self.queue_property_response(
-                    source,
-                    object_index,
-                    property_id,
-                    1,
-                    start_index,
-                    &table_ref.to_be_bytes(),
-                );
-                return;
-            }
-        }
-
-        // Intercept McbTable reads for table objects
-        if pid == PropertyId::McbTable && start_index == 1 {
-            if let Some(to) = self.table_object(object_index) {
-                let mcb = to.mcb_table(&self.memory_area);
-                self.queue_property_response(
-                    source,
-                    object_index,
-                    property_id,
-                    1,
-                    start_index,
-                    &mcb,
-                );
-                return;
-            }
+        // Intercept table-object properties (LoadStateControl, TableReference, McbTable)
+        if let Some(data) = self.try_intercept_table_property(object_index, pid, start_index) {
+            self.queue_property_response(source, object_index, property_id, 1, start_index, &data);
+            return;
         }
 
         let Some(obj) = self.objects.get(object_index as usize) else {
@@ -939,17 +926,7 @@ impl Bau {
         property_index: u8,
     ) {
         let Some(obj) = self.objects.get(object_index as usize) else {
-            // Unknown object — send error (property_id=0)
-            let payload = application_layer::encode_property_description_response(
-                object_index,
-                0,
-                0,
-                false,
-                0,
-                0,
-                0,
-            );
-            self.queue_individual_frame(source, Priority::System, &payload);
+            self.queue_property_description_error(source, object_index);
             return;
         };
 
@@ -965,17 +942,7 @@ impl Bau {
             );
             self.queue_individual_frame(source, Priority::System, &payload);
         } else {
-            // Property not found
-            let payload = application_layer::encode_property_description_response(
-                object_index,
-                0,
-                0,
-                false,
-                0,
-                0,
-                0,
-            );
-            self.queue_individual_frame(source, Priority::System, &payload);
+            self.queue_property_description_error(source, object_index);
         }
     }
 
@@ -983,7 +950,10 @@ impl Bau {
         let addr = address as usize;
         let len = count as usize;
         let (return_code, data) = if addr + len <= self.memory_area.len() {
-            (MEM_EXT_RETURN_OK, self.memory_area[addr..addr + len].to_vec())
+            (
+                MEM_EXT_RETURN_OK,
+                self.memory_area[addr..addr + len].to_vec(),
+            )
         } else {
             (MEM_EXT_RETURN_ERROR, Vec::new()) // out of range
         };
@@ -996,7 +966,8 @@ impl Bau {
         if !self.write_to_memory(address as usize, data) {
             return;
         }
-        let payload = application_layer::encode_memory_ext_write_response(MEM_EXT_RETURN_OK, address);
+        let payload =
+            application_layer::encode_memory_ext_write_response(MEM_EXT_RETURN_OK, address);
         self.queue_individual_frame(source, Priority::System, &payload);
     }
 
@@ -1097,28 +1068,23 @@ impl Bau {
         if let Some(idx) = obj_idx {
             // Delegate to standard property read logic
             let Ok(pid) = u8::try_from(property_id) else {
-                // Property ID too large for standard services — send error response
-                let payload = application_layer::encode_property_value_ext_response(
+                self.queue_ext_property_error(
+                    source,
                     object_type,
                     object_instance,
                     property_id,
-                    0,
                     start_index,
-                    &[],
                 );
-                self.queue_individual_frame(source, Priority::System, &payload);
                 return;
             };
             let Ok(pid_enum) = PropertyId::try_from(pid) else {
-                let payload = application_layer::encode_property_value_ext_response(
+                self.queue_ext_property_error(
+                    source,
                     object_type,
                     object_instance,
                     property_id,
-                    0,
                     start_index,
-                    &[],
                 );
-                self.queue_individual_frame(source, Priority::System, &payload);
                 return;
             };
             if let Some(obj) = self.objects.get(idx as usize) {
@@ -1137,15 +1103,13 @@ impl Bau {
             }
         }
         // Object not found — respond with count=0
-        let payload = application_layer::encode_property_value_ext_response(
+        self.queue_ext_property_error(
+            source,
             object_type,
             object_instance,
             property_id,
-            0,
             start_index,
-            &[],
         );
-        self.queue_individual_frame(source, Priority::System, &payload);
     }
 
     fn handle_property_value_ext_write(
@@ -1158,17 +1122,14 @@ impl Bau {
         let obj_idx = self.find_object_by_type(params.object_type, params.object_instance);
         if let Some(idx) = obj_idx {
             let Ok(pid) = u8::try_from(params.property_id) else {
-                // Property ID too large for standard services — send error response
                 if confirmed {
-                    let payload = application_layer::encode_property_value_ext_response(
+                    self.queue_ext_property_error(
+                        source,
                         params.object_type,
                         params.object_instance,
                         params.property_id,
-                        0,
                         params.start_index,
-                        &[],
                     );
-                    self.queue_individual_frame(source, Priority::System, &payload);
                 }
                 return;
             };
@@ -1277,6 +1238,40 @@ impl Bau {
     fn queue_memory_response(&mut self, destination: u16, address: u16, data: &[u8]) {
         let payload = application_layer::encode_memory_response(address, data);
         self.queue_individual_frame(destination, Priority::System, &payload);
+    }
+
+    /// Send a property description error response (`property_id=0` signals error).
+    fn queue_property_description_error(&mut self, source: u16, object_index: u8) {
+        let payload = application_layer::encode_property_description_response(
+            object_index,
+            0,
+            0,
+            false,
+            0,
+            0,
+            0,
+        );
+        self.queue_individual_frame(source, Priority::System, &payload);
+    }
+
+    /// Send an extended property value error response (count=0 signals error).
+    fn queue_ext_property_error(
+        &mut self,
+        source: u16,
+        object_type: u16,
+        object_instance: u16,
+        property_id: u16,
+        start_index: u16,
+    ) {
+        let payload = application_layer::encode_property_value_ext_response(
+            object_type,
+            object_instance,
+            property_id,
+            0,
+            start_index,
+            &[],
+        );
+        self.queue_individual_frame(source, Priority::System, &payload);
     }
 
     // ── Shared helpers ─────────────────────────────────────────
@@ -1848,9 +1843,17 @@ mod tests {
         let apdu_payload = &[0x03, 0xD1, 0x00, 0x00, 0x00, 0x00, 0x00];
         let src = IndividualAddress::from_raw(0x1102);
         let dst = DestinationAddress::Individual(IndividualAddress::from_raw(0x1101));
-        let frame = CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::System, apdu_payload);
+        let frame = CemiFrame::new_l_data(
+            MessageCode::LDataInd,
+            src,
+            dst,
+            Priority::System,
+            apdu_payload,
+        );
         bau.process_frame(&frame, 0);
-        let resp = bau.next_outgoing_frame().expect("expected AuthorizeResponse");
+        let resp = bau
+            .next_outgoing_frame()
+            .expect("expected AuthorizeResponse");
         assert_eq!(resp.destination_address_raw(), 0x1102);
         // AuthorizeResponse APCI = 0x3D2, payload[2] = level
         let p = resp.payload();
@@ -1866,7 +1869,13 @@ mod tests {
         let apdu_payload = &[0x03, 0xD3, 0x02, 0x00, 0x00, 0x00, 0xFF];
         let src = IndividualAddress::from_raw(0x1102);
         let dst = DestinationAddress::Individual(IndividualAddress::from_raw(0x1101));
-        let frame = CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::System, apdu_payload);
+        let frame = CemiFrame::new_l_data(
+            MessageCode::LDataInd,
+            src,
+            dst,
+            Priority::System,
+            apdu_payload,
+        );
         bau.process_frame(&frame, 0);
         let resp = bau.next_outgoing_frame().expect("expected KeyResponse");
         assert_eq!(resp.destination_address_raw(), 0x1102);
@@ -1883,9 +1892,17 @@ mod tests {
         let apdu_payload = &[0x02, 0xC7, 0x00, 0x01];
         let src = IndividualAddress::from_raw(0x1102);
         let dst = DestinationAddress::Individual(IndividualAddress::from_raw(0x1101));
-        let frame = CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::System, apdu_payload);
+        let frame = CemiFrame::new_l_data(
+            MessageCode::LDataInd,
+            src,
+            dst,
+            Priority::System,
+            apdu_payload,
+        );
         bau.process_frame(&frame, 0);
-        let resp = bau.next_outgoing_frame().expect("expected FunctionPropertyStateResponse");
+        let resp = bau
+            .next_outgoing_frame()
+            .expect("expected FunctionPropertyStateResponse");
         assert_eq!(resp.destination_address_raw(), 0x1102);
         let p = resp.payload();
         assert_eq!(p[0] & 0x03, 0x02);
@@ -1901,7 +1918,13 @@ mod tests {
         let apdu_payload = &[0x01, 0x80, 0x03, 0x01]; // APCI=0x180, channel=3, count=1
         let src = IndividualAddress::from_raw(0x1102);
         let dst = DestinationAddress::Individual(IndividualAddress::from_raw(0x1101));
-        let frame = CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::System, apdu_payload);
+        let frame = CemiFrame::new_l_data(
+            MessageCode::LDataInd,
+            src,
+            dst,
+            Priority::System,
+            apdu_payload,
+        );
         bau.process_frame(&frame, 0);
         let resp = bau.next_outgoing_frame().expect("expected AdcResponse");
         assert_eq!(resp.destination_address_raw(), 0x1102);
@@ -1923,7 +1946,10 @@ mod tests {
         bau.assoc_table_object.handle_load_event(&[2], 0);
 
         bau.group_objects.get_mut(1).unwrap().request_object_read();
-        assert_eq!(bau.group_objects.get(1).unwrap().comm_flag(), ComFlag::ReadRequest);
+        assert_eq!(
+            bau.group_objects.get(1).unwrap().comm_flag(),
+            ComFlag::ReadRequest
+        );
 
         bau.poll(0);
         let frame = bau.next_outgoing_frame().expect("expected GroupValueRead");
@@ -1961,5 +1987,52 @@ mod tests {
         assert_eq!(bau.association_table.entry_count(), 2);
         assert_eq!(bau.association_table.translate_asap(1), Some(1));
         assert_eq!(bau.association_table.translate_asap(2), Some(2));
+    }
+
+    #[test]
+    fn load_group_object_table_reinitializes_gos() {
+        let mut bau = test_bau();
+        // All GOs start with size 1
+        assert_eq!(bau.group_objects.get(1).unwrap().value_size(), 1);
+
+        // Load GO table: GO1=value_type 8 (2 bytes), GO2=value_type 14 (14 bytes)
+        let go1: u16 = (1 << 10) | 8;
+        let go2: u16 = (1 << 10) | 14;
+        let mut tbl = Vec::new();
+        tbl.extend_from_slice(&2u16.to_be_bytes());
+        tbl.extend_from_slice(&go1.to_be_bytes());
+        tbl.extend_from_slice(&go2.to_be_bytes());
+        bau.load_group_object_table(&tbl);
+
+        assert_eq!(bau.group_objects.get(1).unwrap().value_size(), 2);
+        assert_eq!(bau.group_objects.get(2).unwrap().value_size(), 14);
+    }
+
+    #[test]
+    fn uninitialized_go_does_not_respond_to_read() {
+        let mut bau = test_bau();
+        // Load GO table with read_enable + comm_enable
+        let go1: u16 = (1 << 11) | (1 << 10) | 7; // L + K + value_type=7
+        let mut tbl = Vec::new();
+        tbl.extend_from_slice(&2u16.to_be_bytes());
+        tbl.extend_from_slice(&go1.to_be_bytes());
+        tbl.extend_from_slice(&go1.to_be_bytes());
+        bau.load_group_object_table(&tbl);
+
+        // GO1 is uninitialized — GroupValueRead should NOT produce a response
+        let frame = CemiFrame::parse(&[
+            0x29, 0x00, 0xBC, 0xE0, 0x11, 0x02, 0x08, 0x01, 0x01, 0x00, 0x00,
+        ])
+        .unwrap();
+        bau.process_frame(&frame, 0);
+        assert!(bau.next_outgoing_frame().is_none());
+
+        // Initialize GO1, then read should produce a response
+        bau.group_objects
+            .get_mut(1)
+            .unwrap()
+            .write_value_no_send(&[42]);
+        bau.process_frame(&frame, 0);
+        assert!(bau.next_outgoing_frame().is_some());
     }
 }

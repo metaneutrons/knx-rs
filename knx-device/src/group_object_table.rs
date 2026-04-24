@@ -74,6 +74,35 @@ impl GroupObjectDescriptor {
     pub const fn value_type(self) -> u8 {
         (self.raw & VALUE_TYPE_MASK) as u8
     }
+
+    /// Compute the data length in bytes for this GO's value type code.
+    /// Returns 0 for codes < 7 (sub-byte types like DPT 1-6).
+    /// Port of C++ `GroupObjectTableObject::asapValueSize()`.
+    pub const fn value_size_bytes(self) -> usize {
+        let code = self.value_type();
+        match code {
+            0..=6 => 0,
+            7 => 1,
+            8..=10 | 21..=254 => (code - 6) as usize,
+            11 => 6,
+            12 => 8,
+            13 => 10,
+            14 => 14,
+            15 => 5,
+            16 => 7,
+            17 => 9,
+            18 => 11,
+            19 => 12,
+            20 => 13,
+            255 => 252,
+        }
+    }
+
+    /// The GO data size for memory allocation (minimum 1 byte).
+    pub const fn go_size(self) -> usize {
+        let s = self.value_size_bytes();
+        if s == 0 { 1 } else { s }
+    }
 }
 
 /// Group object table: defines the communication objects.
@@ -171,5 +200,50 @@ mod tests {
         let t = sample_table();
         assert!(t.get_descriptor(0).is_none());
         assert!(t.get_descriptor(3).is_none());
+    }
+
+    #[test]
+    fn value_size_bytes_known_codes() {
+        let desc = |code: u8| GroupObjectDescriptor {
+            raw: u16::from(code),
+        };
+        // Sub-byte types return 0
+        assert_eq!(desc(0).value_size_bytes(), 0);
+        assert_eq!(desc(6).value_size_bytes(), 0);
+        // 1 byte
+        assert_eq!(desc(7).value_size_bytes(), 1);
+        // 2, 3, 4 bytes
+        assert_eq!(desc(8).value_size_bytes(), 2);
+        assert_eq!(desc(9).value_size_bytes(), 3);
+        assert_eq!(desc(10).value_size_bytes(), 4);
+        // Special mappings
+        assert_eq!(desc(11).value_size_bytes(), 6);
+        assert_eq!(desc(12).value_size_bytes(), 8);
+        assert_eq!(desc(13).value_size_bytes(), 10);
+        assert_eq!(desc(14).value_size_bytes(), 14);
+        assert_eq!(desc(15).value_size_bytes(), 5);
+        assert_eq!(desc(16).value_size_bytes(), 7);
+        assert_eq!(desc(17).value_size_bytes(), 9);
+        assert_eq!(desc(18).value_size_bytes(), 11);
+        assert_eq!(desc(19).value_size_bytes(), 12);
+        assert_eq!(desc(20).value_size_bytes(), 13);
+        // General formula for 21..=254
+        assert_eq!(desc(21).value_size_bytes(), 15);
+        assert_eq!(desc(100).value_size_bytes(), 94);
+        // Max
+        assert_eq!(desc(255).value_size_bytes(), 252);
+    }
+
+    #[test]
+    fn go_size_minimum_one() {
+        let desc = |code: u8| GroupObjectDescriptor {
+            raw: u16::from(code),
+        };
+        // Sub-byte types get minimum 1 byte
+        assert_eq!(desc(0).go_size(), 1);
+        assert_eq!(desc(6).go_size(), 1);
+        // Larger types use actual size
+        assert_eq!(desc(7).go_size(), 1);
+        assert_eq!(desc(14).go_size(), 14);
     }
 }

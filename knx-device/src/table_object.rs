@@ -37,6 +37,13 @@ pub enum LoadError {
 /// Maximum allowed table size (256 KiB).
 const MAX_TABLE_SIZE: u32 = 256 * 1024;
 
+/// Minimum data length for `AdditionalLoadControls` (opcode + size + fill mode + fill byte).
+const ALC_MIN_LENGTH: usize = 8;
+/// Opcode for `AllocAbsDataSeg` in `AdditionalLoadControls`.
+const ALC_OPCODE_ALLOC: u8 = 0x0B;
+/// Fill mode value indicating memory should be filled.
+const ALC_FILL_ENABLED: u8 = 0x01;
+
 /// A table object that can be loaded by ETS via the Load State Machine.
 ///
 /// The table data lives inside the BAU's `memory_area` at `data_offset`.
@@ -209,7 +216,7 @@ impl TableObject {
 
     /// Handle `AdditionalLoadControls` — allocate memory for table data.
     ///
-    /// Data format: `[0x03] [0x0B] [size:4be] [fill_mode:1] [fill_byte:1]`
+    /// Data format: `[0x03] [ALC_OPCODE_ALLOC] [size:4be] [fill_mode:1] [fill_byte:1]`
     ///
     /// Returns `Some((offset, size, fill_byte))` if memory should be filled,
     /// `None` if no fill is needed or on error.
@@ -218,7 +225,7 @@ impl TableObject {
         data: &[u8],
         memory_area_len: usize,
     ) -> Option<(u32, u32, u8)> {
-        if data.len() < 8 || data[1] != 0x0B {
+        if data.len() < ALC_MIN_LENGTH || data[1] != ALC_OPCODE_ALLOC {
             self.state = LoadState::Error;
             self.error = LoadError::InvalidOpcode;
             return None;
@@ -229,7 +236,7 @@ impl TableObject {
             self.error = LoadError::MaxTableLengthExceeded;
             return None;
         }
-        let do_fill = data[6] == 0x01;
+        let do_fill = data[6] == ALC_FILL_ENABLED;
         let fill_byte = data[7];
         let offset = u32::try_from(memory_area_len).unwrap_or(u32::MAX);
         self.data_offset = offset;

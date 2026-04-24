@@ -790,8 +790,7 @@ mod tests {
 
     #[test]
     fn parse_property_description_read() {
-        let ind =
-            parse_indication(ApduType::PropertyDescriptionRead, &[0x01, 0x36, 0x03]).unwrap();
+        let ind = parse_indication(ApduType::PropertyDescriptionRead, &[0x01, 0x36, 0x03]).unwrap();
         assert!(matches!(
             ind,
             AppIndication::PropertyDescriptionRead {
@@ -840,9 +839,11 @@ mod tests {
 
     #[test]
     fn parse_memory_ext_write() {
-        let ind =
-            parse_indication(ApduType::MemoryExtWrite, &[0x02, 0xAB, 0xCD, 0xEF, 0xDE, 0xAD])
-                .unwrap();
+        let ind = parse_indication(
+            ApduType::MemoryExtWrite,
+            &[0x02, 0xAB, 0xCD, 0xEF, 0xDE, 0xAD],
+        )
+        .unwrap();
         assert!(matches!(
             ind,
             AppIndication::MemoryExtWrite {
@@ -933,8 +934,7 @@ mod tests {
 
     #[test]
     fn parse_key_write() {
-        let ind =
-            parse_indication(ApduType::KeyWrite, &[0x03, 0x00, 0x00, 0x00, 0xFF]).unwrap();
+        let ind = parse_indication(ApduType::KeyWrite, &[0x03, 0x00, 0x00, 0x00, 0xFF]).unwrap();
         assert!(matches!(
             ind,
             AppIndication::KeyWrite {
@@ -958,11 +958,8 @@ mod tests {
 
     #[test]
     fn parse_function_property_command() {
-        let ind = parse_indication(
-            ApduType::FunctionPropertyCommand,
-            &[0x01, 0x02, 0xAA, 0xBB],
-        )
-        .unwrap();
+        let ind =
+            parse_indication(ApduType::FunctionPropertyCommand, &[0x01, 0x02, 0xAA, 0xBB]).unwrap();
         assert!(matches!(
             ind,
             AppIndication::FunctionPropertyCommand {
@@ -990,8 +987,7 @@ mod tests {
 
     #[test]
     fn parse_function_property_state() {
-        let ind =
-            parse_indication(ApduType::FunctionPropertyState, &[0x03, 0x04, 0xCC]).unwrap();
+        let ind = parse_indication(ApduType::FunctionPropertyState, &[0x03, 0x04, 0xCC]).unwrap();
         assert!(matches!(
             ind,
             AppIndication::FunctionPropertyState {
@@ -1039,11 +1035,8 @@ mod tests {
 
     #[test]
     fn parse_system_network_parameter_read_truncated() {
-        let err = parse_indication(
-            ApduType::SystemNetworkParameterRead,
-            &[0x00, 0x07, 0x01],
-        )
-        .unwrap_err();
+        let err = parse_indication(ApduType::SystemNetworkParameterRead, &[0x00, 0x07, 0x01])
+            .unwrap_err();
         assert!(matches!(
             err,
             AppLayerError::TruncatedPayload {
@@ -1164,11 +1157,8 @@ mod tests {
 
     #[test]
     fn parse_property_value_ext_write_uncon_truncated() {
-        let err = parse_indication(
-            ApduType::PropertyValueExtWriteUnCon,
-            &[0x00, 0x01, 0x01],
-        )
-        .unwrap_err();
+        let err = parse_indication(ApduType::PropertyValueExtWriteUnCon, &[0x00, 0x01, 0x01])
+            .unwrap_err();
         assert!(matches!(
             err,
             AppLayerError::TruncatedPayload {
@@ -1216,7 +1206,9 @@ mod tests {
     #[test]
     fn parse_group_value_response() {
         let ind = parse_indication(ApduType::GroupValueResponse, &[0x01, 0x02]).unwrap();
-        assert!(matches!(ind, AppIndication::GroupValueResponse { data, .. } if data == [0x01, 0x02]));
+        assert!(
+            matches!(ind, AppIndication::GroupValueResponse { data, .. } if data == [0x01, 0x02])
+        );
     }
 
     #[test]
