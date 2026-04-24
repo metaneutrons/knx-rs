@@ -14,71 +14,14 @@
 
 use alloc::vec::Vec;
 
-// ── Load State ────────────────────────────────────────────────
+use crate::property::{LoadEvent, LoadState};
 
-/// Load state of a table object (KNX 3/5/1 §4.10.1).
+// ── Load Error ────────────────────────────────────────────────
+
+/// Load error codes specific to table object operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum LoadState {
-    /// No data loaded. ETS must program the object.
-    Unloaded = 0,
-    /// Data is loaded and valid.
-    Loaded = 1,
-    /// ETS is currently downloading data.
-    Loading = 2,
-    /// An error occurred during loading.
-    Error = 3,
-    /// ETS is unloading the object.
-    Unloading = 4,
-    /// ETS is completing the load.
-    LoadCompleting = 5,
-}
-
-impl From<u8> for LoadState {
-    fn from(v: u8) -> Self {
-        match v {
-            1 => Self::Loaded,
-            2 => Self::Loading,
-            3 => Self::Error,
-            4 => Self::Unloading,
-            5 => Self::LoadCompleting,
-            _ => Self::Unloaded,
-        }
-    }
-}
-
-// ── Load Events (written to PID_LOAD_STATE_CONTROL) ───────────
-
-/// Load events sent by ETS via `PropertyWrite` to `PID_LOAD_STATE_CONTROL`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum LoadEvent {
-    Noop = 0,
-    StartLoading = 1,
-    LoadCompleted = 2,
-    AdditionalLoadControls = 3,
-    Unload = 4,
-}
-
-impl LoadEvent {
-    const fn from_byte(v: u8) -> Option<Self> {
-        match v {
-            0 => Some(Self::Noop),
-            1 => Some(Self::StartLoading),
-            2 => Some(Self::LoadCompleted),
-            3 => Some(Self::AdditionalLoadControls),
-            4 => Some(Self::Unload),
-            _ => None,
-        }
-    }
-}
-
-// ── Error Codes ───────────────────────────────────────────────
-
-/// Error codes for table object load failures.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ErrorCode {
+pub enum LoadError {
     /// No error.
     NoFault = 0,
     /// Received an undefined load command.
@@ -100,7 +43,7 @@ const MAX_TABLE_SIZE: u32 = 256 * 1024;
 /// The offset and size are determined by ETS during the download process.
 pub struct TableObject {
     state: LoadState,
-    error: ErrorCode,
+    error: LoadError,
     /// Offset into BAU `memory_area` where table data starts.
     data_offset: u32,
     /// Size of the allocated table data in bytes.
@@ -112,7 +55,7 @@ impl TableObject {
     pub const fn new() -> Self {
         Self {
             state: LoadState::Unloaded,
-            error: ErrorCode::NoFault,
+            error: LoadError::NoFault,
             data_offset: 0,
             data_size: 0,
         }
@@ -130,7 +73,7 @@ impl TableObject {
     }
 
     /// Current error code.
-    pub const fn error_code(&self) -> ErrorCode {
+    pub const fn error_code(&self) -> LoadError {
         self.error
     }
 
@@ -175,7 +118,7 @@ impl TableObject {
         }
         let Some(event) = LoadEvent::from_byte(data[0]) else {
             self.state = LoadState::Error;
-            self.error = ErrorCode::UndefinedLoadCommand;
+            self.error = LoadError::UndefinedLoadCommand;
             return (false, None);
         };
 
@@ -250,7 +193,7 @@ impl TableObject {
             }
             LoadEvent::AdditionalLoadControls => {
                 self.state = LoadState::Error;
-                self.error = ErrorCode::InvalidOpcode;
+                self.error = LoadError::InvalidOpcode;
                 false
             }
         }
@@ -277,13 +220,13 @@ impl TableObject {
     ) -> Option<(u32, u32, u8)> {
         if data.len() < 8 || data[1] != 0x0B {
             self.state = LoadState::Error;
-            self.error = ErrorCode::InvalidOpcode;
+            self.error = LoadError::InvalidOpcode;
             return None;
         }
         let size = u32::from_be_bytes([data[2], data[3], data[4], data[5]]);
         if size > MAX_TABLE_SIZE {
             self.state = LoadState::Error;
-            self.error = ErrorCode::MaxTableLengthExceeded;
+            self.error = LoadError::MaxTableLengthExceeded;
             return None;
         }
         let do_fill = data[6] == 0x01;
@@ -533,7 +476,7 @@ mod tests {
         let alc = [0x03, 0xFF, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00];
         to.handle_load_event(&alc, 0);
         assert_eq!(to.load_state(), LoadState::Error);
-        assert_eq!(to.error_code(), ErrorCode::InvalidOpcode);
+        assert_eq!(to.error_code(), LoadError::InvalidOpcode);
     }
 
     #[test]
@@ -594,6 +537,6 @@ mod tests {
         let alc = [0x03, 0x0B, 0x00, 0x10, 0x00, 0x00, 0x01, 0x00];
         to.handle_load_event(&alc, 0);
         assert_eq!(to.load_state(), LoadState::Error);
-        assert_eq!(to.error_code(), ErrorCode::MaxTableLengthExceeded);
+        assert_eq!(to.error_code(), LoadError::MaxTableLengthExceeded);
     }
 }

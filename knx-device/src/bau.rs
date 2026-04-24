@@ -595,7 +595,7 @@ impl Bau {
 
     /// Check if the device is fully configured (all tables loaded).
     pub fn configured(&self) -> bool {
-        use crate::table_object::LoadState;
+        use crate::property::LoadState;
         self.addr_table_object.load_state() == LoadState::Loaded
             && self.assoc_table_object.load_state() == LoadState::Loaded
     }
@@ -1342,7 +1342,7 @@ impl Bau {
 mod tests {
     use super::*;
     use crate::device_object;
-    use crate::table_object::LoadState;
+    use crate::property::LoadState;
 
     fn test_bau() -> Bau {
         let device =

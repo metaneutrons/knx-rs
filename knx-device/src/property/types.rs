@@ -144,6 +144,41 @@ pub enum PropertyId {
     DeviceDescriptor = 83,
 }
 
+impl TryFrom<u8> for PropertyId {
+    type Error = u8;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            1 => Ok(Self::ObjectType),
+            5 => Ok(Self::LoadStateControl),
+            6 => Ok(Self::RunStateControl),
+            7 => Ok(Self::TableReference),
+            8 => Ok(Self::ServiceControl),
+            9 => Ok(Self::FirmwareRevision),
+            11 => Ok(Self::SerialNumber),
+            12 => Ok(Self::ManufacturerId),
+            13 => Ok(Self::ProgramVersion),
+            14 => Ok(Self::DeviceControl),
+            15 => Ok(Self::OrderInfo),
+            16 => Ok(Self::PeiType),
+            23 => Ok(Self::Table),
+            25 => Ok(Self::Version),
+            27 => Ok(Self::McbTable),
+            28 => Ok(Self::ErrorCode),
+            29 => Ok(Self::ObjectIndex),
+            30 => Ok(Self::DownloadCounter),
+            51 => Ok(Self::RoutingCount),
+            54 => Ok(Self::ProgMode),
+            56 => Ok(Self::MaxApduLength),
+            57 => Ok(Self::SubnetAddr),
+            58 => Ok(Self::DeviceAddr),
+            71 => Ok(Self::IoList),
+            78 => Ok(Self::HardwareType),
+            83 => Ok(Self::DeviceDescriptor),
+            _ => Err(v),
+        }
+    }
+}
+
 /// Load state of a table object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -162,6 +197,19 @@ pub enum LoadState {
     LoadCompleting = 5,
 }
 
+impl From<u8> for LoadState {
+    fn from(v: u8) -> Self {
+        match v {
+            1 => Self::Loaded,
+            2 => Self::Loading,
+            3 => Self::Error,
+            4 => Self::Unloading,
+            5 => Self::LoadCompleting,
+            _ => Self::Unloaded,
+        }
+    }
+}
+
 /// Load events that trigger state transitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -176,6 +224,20 @@ pub enum LoadEvent {
     AdditionalLoadControls = 3,
     /// Unload.
     Unload = 4,
+}
+
+impl LoadEvent {
+    /// Parse a load event from a raw byte value.
+    pub const fn from_byte(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Noop),
+            1 => Some(Self::StartLoading),
+            2 => Some(Self::LoadCompleted),
+            3 => Some(Self::AdditionalLoadControls),
+            4 => Some(Self::Unload),
+            _ => None,
+        }
+    }
 }
 
 /// Error code for table object load failures.

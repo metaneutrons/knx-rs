@@ -138,41 +138,6 @@ impl InterfaceObject {
     }
 }
 
-impl TryFrom<u8> for PropertyId {
-    type Error = u8;
-    fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v {
-            1 => Ok(Self::ObjectType),
-            5 => Ok(Self::LoadStateControl),
-            6 => Ok(Self::RunStateControl),
-            7 => Ok(Self::TableReference),
-            8 => Ok(Self::ServiceControl),
-            9 => Ok(Self::FirmwareRevision),
-            11 => Ok(Self::SerialNumber),
-            12 => Ok(Self::ManufacturerId),
-            13 => Ok(Self::ProgramVersion),
-            14 => Ok(Self::DeviceControl),
-            15 => Ok(Self::OrderInfo),
-            16 => Ok(Self::PeiType),
-            23 => Ok(Self::Table),
-            25 => Ok(Self::Version),
-            27 => Ok(Self::McbTable),
-            28 => Ok(Self::ErrorCode),
-            29 => Ok(Self::ObjectIndex),
-            30 => Ok(Self::DownloadCounter),
-            51 => Ok(Self::RoutingCount),
-            54 => Ok(Self::ProgMode),
-            56 => Ok(Self::MaxApduLength),
-            57 => Ok(Self::SubnetAddr),
-            58 => Ok(Self::DeviceAddr),
-            71 => Ok(Self::IoList),
-            78 => Ok(Self::HardwareType),
-            83 => Ok(Self::DeviceDescriptor),
-            _ => Err(v),
-        }
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {

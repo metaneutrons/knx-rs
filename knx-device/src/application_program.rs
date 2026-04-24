@@ -77,14 +77,7 @@ pub fn new_application_program_object() -> InterfaceObject {
 pub fn load_state(obj: &InterfaceObject) -> LoadState {
     let mut buf = Vec::new();
     obj.read_property(PropertyId::LoadStateControl, 1, 1, &mut buf);
-    match buf.first().copied().unwrap_or(0) {
-        1 => LoadState::Loaded,
-        2 => LoadState::Loading,
-        3 => LoadState::Error,
-        4 => LoadState::Unloading,
-        5 => LoadState::LoadCompleting,
-        _ => LoadState::Unloaded,
-    }
+    LoadState::from(buf.first().copied().unwrap_or(0))
 }
 
 #[cfg(test)]
