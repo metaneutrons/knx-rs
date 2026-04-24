@@ -23,7 +23,7 @@ use crate::group_object::{ComFlag, GroupObjectStore};
 use crate::group_object_table::{GroupObjectDescriptor, GroupObjectTable};
 use crate::interface_object::InterfaceObject;
 use crate::property::{Property, PropertyId};
-use crate::table_object::TableObject;
+use crate::table_object::{TableObject, MAX_MEMORY_SIZE};
 use crate::transport_layer::TransportLayer;
 
 /// Mask version for IP devices (System B).
@@ -59,9 +59,6 @@ const RESTART_ERROR_CODE_OK: u8 = 0;
 const RESTART_PROCESS_TIME_ZERO: u16 = 0;
 /// Default ADC value (no ADC hardware).
 const ADC_VALUE_DEFAULT: u16 = 0;
-/// Maximum allowed memory area size (256 KiB).
-const MAX_MEMORY_SIZE: usize = 256 * 1024;
-
 /// Authorization level: full access (no restrictions).
 const AUTH_LEVEL_FULL: u8 = 0;
 /// Memory extended read/write return code: success.

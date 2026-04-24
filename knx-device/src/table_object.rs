@@ -35,7 +35,8 @@ pub enum LoadError {
 // ── Table Object ──────────────────────────────────────────────
 
 /// Maximum allowed table size (256 KiB).
-const MAX_TABLE_SIZE: u32 = 256 * 1024;
+/// Maximum allowed table/memory size (256 KiB).
+pub const MAX_MEMORY_SIZE: usize = 256 * 1024;
 
 /// Minimum data length for `AdditionalLoadControls` (opcode + size + fill mode + fill byte).
 const ALC_MIN_LENGTH: usize = 8;
@@ -231,7 +232,7 @@ impl TableObject {
             return None;
         }
         let size = u32::from_be_bytes([data[2], data[3], data[4], data[5]]);
-        if size > MAX_TABLE_SIZE {
+        if size as usize > MAX_MEMORY_SIZE {
             self.state = LoadState::Error;
             self.error = LoadError::MaxTableLengthExceeded;
             return None;
