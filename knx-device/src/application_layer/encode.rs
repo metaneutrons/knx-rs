@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 
 use knx_core::message::ApduType;
 
+use crate::property::PropertyDescription;
 use super::{
     DESCRIPTOR_TYPE_UNSUPPORTED, MASK_4BIT, MASK_6BIT, MASK_12BIT, WRITE_ENABLE_FLAG, apci_bytes,
 };
@@ -285,45 +286,41 @@ fn encode_group_value(tpci: u8, apci: u8, data: &[u8]) -> Vec<u8> {
 ///
 /// Uses the shared extended property header for `object_type`/`object_instance`/`property_id`,
 /// then appends `description_type`, `property_index`, and the property description fields.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "each parameter maps to a KNX wire format field"
-)]
 pub fn encode_property_ext_description_response(
     object_type: u16,
     object_instance: u16,
     property_id: u16,
     property_index: u16,
     description_type: u8,
-    write_enable: bool,
-    pdt: u8,
-    max_elements: u16,
-    access: u8,
+    desc: PropertyDescription,
 ) -> Vec<u8> {
     let [hi, lo] = apci_bytes(ApduType::PropertyExtDescriptionResponse);
     let mut payload = Vec::with_capacity(13);
     payload.push(hi);
     payload.push(lo);
-    // Reuse shared header for ot/oi/pid (first 5 bytes)
     encode_ext_ot_oi_pid(&mut payload, object_type, object_instance, property_id);
     // description_type (4 bits) + property_index (12 bits)
     let desc_idx =
         ((description_type & MASK_4BIT) << 4) | ((property_index >> 8) as u8 & MASK_4BIT);
     payload.push(desc_idx);
     payload.push((property_index & 0xFF) as u8);
-    // Property description fields (same as standard PropertyDescriptionResponse)
-    let type_byte = if write_enable {
-        WRITE_ENABLE_FLAG | (pdt & MASK_6BIT)
-    } else {
-        pdt & MASK_6BIT
-    };
-    let max_hi = ((max_elements >> 8) & u16::from(MASK_4BIT)) as u8;
-    let max_lo = (max_elements & 0xFF) as u8;
-    payload.push(type_byte);
-    payload.push(max_hi);
-    payload.push(max_lo);
-    payload.push(access);
+    encode_property_description_fields(&mut payload, desc);
     payload
+}
+
+/// Encode the 4 property description fields shared between standard and extended responses.
+fn encode_property_description_fields(buf: &mut Vec<u8>, desc: PropertyDescription) {
+    let type_byte = if desc.write_enable {
+        WRITE_ENABLE_FLAG | (desc.data_type as u8 & MASK_6BIT)
+    } else {
+        desc.data_type as u8 & MASK_6BIT
+    };
+    let max_hi = ((desc.max_elements >> 8) & u16::from(MASK_4BIT)) as u8;
+    let max_lo = (desc.max_elements & 0xFF) as u8;
+    buf.push(type_byte);
+    buf.push(max_hi);
+    buf.push(max_lo);
+    buf.push(desc.access as u8);
 }
 
 /// Encode an APDU into raw bytes (for transport layer connected-mode).

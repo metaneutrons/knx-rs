@@ -4,10 +4,11 @@
 //! Property type definitions matching the KNX specification.
 
 /// Property data type (PDT). Determines the wire encoding size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum PropertyDataType {
     /// Control (1 byte read, 10 bytes write).
+    #[default]
     Control = 0x00,
     /// Signed 8-bit character.
     Char = 0x01,
@@ -85,10 +86,11 @@ impl PropertyDataType {
 }
 
 /// Property identifier. Values match the KNX specification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum PropertyId {
     /// Object type identifier.
+    #[default]
     ObjectType = 1,
     /// Load state control.
     LoadStateControl = 5,
@@ -245,10 +247,11 @@ impl LoadEvent {
 ///
 /// Encodes both read and write access in a single byte:
 /// high nibble = read level, low nibble = write level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum AccessLevel {
     /// No restriction on read or write.
+    #[default]
     None = 0x00,
     /// Free read, low write restriction.
     WriteLow = 0x01,
@@ -270,7 +273,7 @@ impl From<u8> for AccessLevel {
 }
 
 /// Description of a property, returned to ETS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PropertyDescription {
     /// Property identifier (KNX PID).
     pub id: PropertyId,

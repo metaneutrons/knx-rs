@@ -1037,14 +1037,7 @@ impl Bau {
             .and_then(|idx| self.objects.get(idx as usize))
             .and_then(|obj| obj.read_property_description(prop_id, prop_idx));
 
-        let (write_enable, pdt, max_elements, access) = desc.map_or((false, 0, 0, 0), |(_, d)| {
-            (
-                d.write_enable,
-                d.data_type as u8,
-                d.max_elements,
-                d.access as u8,
-            )
-        });
+        let desc = desc.map(|(_, d)| d).unwrap_or_default();
 
         let payload = application_layer::encode_property_ext_description_response(
             object_type,
@@ -1052,10 +1045,7 @@ impl Bau {
             property_id,
             property_index,
             description_type,
-            write_enable,
-            pdt,
-            max_elements,
-            access,
+            desc,
         );
         self.queue_individual_frame(source, Priority::System, &payload);
     }
