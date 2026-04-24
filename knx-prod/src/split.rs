@@ -276,10 +276,14 @@ fn filter_translations(
 
     while let Some(lang_start) = content[search_from..].find("<Language ") {
         let lang_abs = search_from + lang_start;
-        let Some(lang_tag_end) = content[lang_abs..].find('>') else { break };
+        let Some(lang_tag_end) = content[lang_abs..].find('>') else {
+            break;
+        };
         let lang_tag = &content[lang_abs..=(lang_abs + lang_tag_end)];
 
-        let Some(lang_close) = content[lang_abs..].find("</Language>") else { break };
+        let Some(lang_close) = content[lang_abs..].find("</Language>") else {
+            break;
+        };
         let lang_inner = &content[lang_abs + lang_tag_end + 1..lang_abs + lang_close];
 
         let filtered_units = filter_units_in_language(lang_inner, category);
@@ -477,7 +481,10 @@ mod tests {
         let lang_range = find_child_element_range(&xml, &manu_range, "Languages").unwrap();
 
         let result = filter_translations(&xml, &lang_range, TranslationCategory::Application);
-        assert!(!result.is_empty(), "Application translations should not be empty");
+        assert!(
+            !result.is_empty(),
+            "Application translations should not be empty"
+        );
         assert!(result.contains("<Languages>"));
         assert!(result.contains("TranslationUnit"));
         assert!(result.contains("_A-")); // Application program RefId
@@ -491,7 +498,10 @@ mod tests {
 
         let result = filter_translations(&xml, &lang_range, TranslationCategory::Catalog);
         // gira_small_app.xml only has _A- translation units, no catalog ones
-        assert!(result.is_empty(), "Catalog translations should be empty for app-only fixture");
+        assert!(
+            result.is_empty(),
+            "Catalog translations should be empty for app-only fixture"
+        );
     }
 
     #[test]
@@ -505,5 +515,4 @@ mod tests {
         let catalog = fs::read_to_string(&result.catalog).unwrap();
         assert!(!catalog.contains("<Languages>"));
     }
-
 }

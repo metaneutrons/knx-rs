@@ -240,13 +240,18 @@ pub fn encode_property_value_ext_response(
 
 /// Encode the common 3-field extended header: `object_type` (2) + `object_instance`/`property_id` (3).
 #[expect(clippy::cast_possible_truncation)]
-fn encode_ext_ot_oi_pid(buf: &mut Vec<u8>, object_type: u16, object_instance: u16, property_id: u16) {
+fn encode_ext_ot_oi_pid(
+    buf: &mut Vec<u8>,
+    object_type: u16,
+    object_instance: u16,
+    property_id: u16,
+) {
     let ot = object_type.to_be_bytes();
     buf.extend_from_slice(&ot);
     buf.push(((object_instance >> 4) & 0xFF) as u8);
     buf.push(
-        ((object_instance & u16::from(MASK_4BIT)) << 4
-            | (property_id >> 8) & u16::from(MASK_4BIT)) as u8,
+        ((object_instance & u16::from(MASK_4BIT)) << 4 | (property_id >> 8) & u16::from(MASK_4BIT))
+            as u8,
     );
     buf.push((property_id & 0xFF) as u8);
 }
@@ -283,7 +288,10 @@ fn encode_group_value(tpci: u8, apci: u8, data: &[u8]) -> Vec<u8> {
 ///
 /// Uses the shared extended property header for `object_type`/`object_instance`/`property_id`,
 /// then appends `description_type`, `property_index`, and the property description fields.
-#[expect(clippy::too_many_arguments, reason = "each parameter maps to a KNX wire format field")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each parameter maps to a KNX wire format field"
+)]
 pub fn encode_property_ext_description_response(
     object_type: u16,
     object_instance: u16,
@@ -302,7 +310,8 @@ pub fn encode_property_ext_description_response(
     // Reuse shared header for ot/oi/pid (first 5 bytes)
     encode_ext_ot_oi_pid(&mut payload, object_type, object_instance, property_id);
     // description_type (4 bits) + property_index (12 bits)
-    let desc_idx = ((description_type & MASK_4BIT) << 4) | ((property_index >> 8) as u8 & MASK_4BIT);
+    let desc_idx =
+        ((description_type & MASK_4BIT) << 4) | ((property_index >> 8) as u8 & MASK_4BIT);
     payload.push(desc_idx);
     payload.push((property_index & 0xFF) as u8);
     // Property description fields (same as standard PropertyDescriptionResponse)

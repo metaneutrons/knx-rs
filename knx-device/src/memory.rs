@@ -17,7 +17,7 @@ pub trait MemoryBackend {
     fn write_all(&mut self, data: &[u8]);
 
     /// Commit pending writes to storage.
-    fn commit(&mut self) {}
+    fn commit(&mut self);
 }
 
 /// RAM-only memory backend (no persistence across restarts).
@@ -46,6 +46,8 @@ impl MemoryBackend for RamBackend {
     fn write_all(&mut self, data: &[u8]) {
         self.data = data.to_vec();
     }
+
+    fn commit(&mut self) {}
 }
 
 /// Header size: `manufacturer_id`(2) + `hardware_type`(6) + `api_version`(2) + `firmware_version`(2).

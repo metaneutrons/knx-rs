@@ -147,6 +147,8 @@ fn add_config_properties(obj: &mut InterfaceObject, hw_type: [u8; 6]) {
 }
 
 /// Read the individual address from a device object.
+///
+/// Only valid for device-type interface objects (index 0).
 pub fn individual_address(obj: &InterfaceObject) -> IndividualAddress {
     let mut subnet = Vec::new();
     let mut device = Vec::new();
@@ -158,6 +160,8 @@ pub fn individual_address(obj: &InterfaceObject) -> IndividualAddress {
 }
 
 /// Set the individual address on a device object.
+///
+/// Only valid for device-type interface objects (index 0).
 pub fn set_individual_address(obj: &mut InterfaceObject, addr: u16) {
     let subnet = (addr >> 8) as u8;
     let device = (addr & 0xFF) as u8;
@@ -166,6 +170,8 @@ pub fn set_individual_address(obj: &mut InterfaceObject, addr: u16) {
 }
 
 /// Check if programming mode is active.
+///
+/// Only valid for device-type interface objects (index 0).
 pub fn prog_mode(obj: &InterfaceObject) -> bool {
     let mut buf = Vec::new();
     obj.read_property(PropertyId::ProgMode, 1, 1, &mut buf);
@@ -173,11 +179,15 @@ pub fn prog_mode(obj: &InterfaceObject) -> bool {
 }
 
 /// Set programming mode.
+///
+/// Only valid for device-type interface objects (index 0).
 pub fn set_prog_mode(obj: &mut InterfaceObject, enabled: bool) {
     obj.write_property(PropertyId::ProgMode, 1, 1, &[u8::from(enabled)]);
 }
 
 /// Read the device serial number (6 bytes).
+///
+/// Only valid for device-type interface objects (index 0).
 pub fn serial_number(obj: &InterfaceObject) -> [u8; 6] {
     let mut buf = Vec::new();
     obj.read_property(PropertyId::SerialNumber, 1, 1, &mut buf);

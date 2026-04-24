@@ -13,6 +13,7 @@
 
 use alloc::vec::Vec;
 
+use knx_core::address::IndividualAddress;
 use knx_core::message::TpduType;
 use knx_core::types::Priority;
 
@@ -51,7 +52,7 @@ pub enum Action {
     /// Send a control telegram (ACK, NACK, Connect, Disconnect).
     SendControl {
         /// Destination individual address.
-        destination: u16,
+        destination: IndividualAddress,
         /// TPDU type to send.
         tpdu_type: TpduType,
         /// Sequence number.
@@ -60,7 +61,7 @@ pub enum Action {
     /// Send a data-connected frame (with sequence number, ACK requested).
     SendDataConnected {
         /// Destination individual address.
-        destination: u16,
+        destination: IndividualAddress,
         /// Sequence number.
         seq_no: u8,
         /// Frame priority.
@@ -71,22 +72,22 @@ pub enum Action {
     /// Notify application layer: connection established (incoming).
     ConnectIndication {
         /// Source individual address.
-        source: u16,
+        source: IndividualAddress,
     },
     /// Notify application layer: connection established (outgoing confirmed).
     ConnectConfirm {
         /// Destination individual address.
-        destination: u16,
+        destination: IndividualAddress,
     },
     /// Notify application layer: connection closed.
     DisconnectIndication {
         /// Address of the disconnected remote.
-        address: u16,
+        address: IndividualAddress,
     },
     /// Notify application layer: received connected data.
     DataConnectedIndication {
         /// Source individual address.
-        source: u16,
+        source: IndividualAddress,
         /// Frame priority.
         priority: Priority,
         /// APDU payload.
@@ -100,7 +101,7 @@ pub enum Action {
 pub struct TransportLayer {
     state: State,
     /// Individual address of the connected remote device.
-    connection_address: u16,
+    connection_address: IndividualAddress,
     /// Send sequence counter (0–15).
     seq_no_send: u8,
     /// Receive sequence counter (0–15).
@@ -123,7 +124,7 @@ pub struct TransportLayer {
 
 /// Saved frame for retransmission when waiting for ACK.
 struct SavedFrame {
-    destination: u16,
+    destination: IndividualAddress,
     seq_no: u8,
     priority: Priority,
     apdu: Vec<u8>,
@@ -140,7 +141,7 @@ impl TransportLayer {
     pub const fn new() -> Self {
         Self {
             state: State::Closed,
-            connection_address: 0,
+            connection_address: IndividualAddress::from_raw(0),
             seq_no_send: 0,
             seq_no_recv: 0,
             rep_count: 0,
@@ -158,7 +159,7 @@ impl TransportLayer {
     }
 
     /// Address of the connected remote, or 0 if not connected.
-    pub const fn connection_address(&self) -> u16 {
+    pub const fn connection_address(&self) -> IndividualAddress {
         self.connection_address
     }
 
@@ -170,7 +171,7 @@ impl TransportLayer {
     // ── Incoming frame processing ─────────────────────────────
 
     /// Process an incoming Connect control telegram.
-    pub fn connect_indication(&mut self, source: u16, now_ms: u64) {
+    pub fn connect_indication(&mut self, source: IndividualAddress, now_ms: u64) {
         if self.state == State::Closed {
             // E0/E1: accept in Closed regardless of source
             self.a1_accept_connection(source, now_ms);
@@ -183,7 +184,7 @@ impl TransportLayer {
     }
 
     /// Process an incoming Disconnect control telegram.
-    pub fn disconnect_indication(&mut self, source: u16) {
+    pub fn disconnect_indication(&mut self, source: IndividualAddress) {
         if source != self.connection_address || self.state == State::Closed {
             return; // E3: from other address or already closed — ignore
         }
@@ -195,7 +196,7 @@ impl TransportLayer {
     /// Process an incoming `DataConnected` frame.
     pub fn data_connected_indication(
         &mut self,
-        source: u16,
+        source: IndividualAddress,
         seq_no: u8,
         priority: Priority,
         apdu: Vec<u8>,
@@ -234,7 +235,7 @@ impl TransportLayer {
     }
 
     /// Process an incoming ACK.
-    pub fn ack_indication(&mut self, source: u16, seq_no: u8, now_ms: u64) {
+    pub fn ack_indication(&mut self, source: IndividualAddress, seq_no: u8, now_ms: u64) {
         if source != self.connection_address {
             // E10/E14: from other address
             if self.state == State::Connecting {
@@ -265,7 +266,7 @@ impl TransportLayer {
     }
 
     /// Process an incoming NACK.
-    pub fn nack_indication(&mut self, source: u16, seq_no: u8, now_ms: u64) {
+    pub fn nack_indication(&mut self, source: IndividualAddress, seq_no: u8, now_ms: u64) {
         if source != self.connection_address {
             // E14: from other address
             if self.state == State::Connecting {
@@ -334,7 +335,7 @@ impl TransportLayer {
     }
 
     /// Application wants to open a connection.
-    pub fn connect_request(&mut self, destination: u16, now_ms: u64) {
+    pub fn connect_request(&mut self, destination: IndividualAddress, now_ms: u64) {
         if self.state == State::Closed {
             self.a12_initiate_connection(destination, now_ms);
             self.state = State::Connecting;
@@ -404,7 +405,7 @@ impl TransportLayer {
     // ── Actions ───────────────────────────────────────────────
 
     /// A1: Accept incoming connection.
-    fn a1_accept_connection(&mut self, source: u16, now_ms: u64) {
+    fn a1_accept_connection(&mut self, source: IndividualAddress, now_ms: u64) {
         self.connection_address = source;
         self.seq_no_send = 0;
         self.seq_no_recv = 0;
@@ -414,7 +415,13 @@ impl TransportLayer {
     }
 
     /// A2: Receive valid connected data.
-    fn a2_receive_data(&mut self, source: u16, priority: Priority, apdu: Vec<u8>, now_ms: u64) {
+    fn a2_receive_data(
+        &mut self,
+        source: IndividualAddress,
+        priority: Priority,
+        apdu: Vec<u8>,
+        now_ms: u64,
+    ) {
         // Send ACK
         self.actions.push(Action::SendControl {
             destination: source,
@@ -431,7 +438,7 @@ impl TransportLayer {
     }
 
     /// A3: ACK repeated frame (previous sequence).
-    fn a3_ack_repeated(&mut self, source: u16, seq_no: u8, now_ms: u64) {
+    fn a3_ack_repeated(&mut self, source: IndividualAddress, seq_no: u8, now_ms: u64) {
         self.actions.push(Action::SendControl {
             destination: source,
             tpdu_type: TpduType::Ack,
@@ -441,7 +448,7 @@ impl TransportLayer {
     }
 
     /// A4: NACK wrong sequence.
-    fn a4_nack_wrong_seq(&mut self, source: u16, seq_no: u8, now_ms: u64) {
+    fn a4_nack_wrong_seq(&mut self, source: IndividualAddress, seq_no: u8, now_ms: u64) {
         self.actions.push(Action::SendControl {
             destination: source,
             tpdu_type: TpduType::Nack,
@@ -451,7 +458,7 @@ impl TransportLayer {
     }
 
     /// A5: Passive disconnect (remote initiated).
-    fn a5_passive_disconnect(&mut self, address: u16) {
+    fn a5_passive_disconnect(&mut self, address: IndividualAddress) {
         self.connection_timeout_deadline = None;
         self.ack_timeout_deadline = None;
         self.actions.push(Action::DisconnectIndication { address });
@@ -515,7 +522,7 @@ impl TransportLayer {
     }
 
     /// A10: Reject foreign connection attempt.
-    fn a10_reject_foreign(&mut self, source: u16) {
+    fn a10_reject_foreign(&mut self, source: IndividualAddress) {
         self.actions.push(Action::SendControl {
             destination: source,
             tpdu_type: TpduType::Disconnect,
@@ -524,7 +531,7 @@ impl TransportLayer {
     }
 
     /// A12: Initiate outgoing connection.
-    fn a12_initiate_connection(&mut self, destination: u16, now_ms: u64) {
+    fn a12_initiate_connection(&mut self, destination: IndividualAddress, now_ms: u64) {
         self.connection_address = destination;
         self.seq_no_send = 0;
         self.seq_no_recv = 0;
@@ -558,52 +565,55 @@ impl Default for TransportLayer {
 mod tests {
     use super::*;
 
+    const ADDR_1001: IndividualAddress = IndividualAddress::from_raw(0x1001);
+    const ADDR_2002: IndividualAddress = IndividualAddress::from_raw(0x2002);
+
     #[test]
     fn initial_state_is_closed() {
         let tl = TransportLayer::new();
         assert_eq!(tl.state(), State::Closed);
-        assert_eq!(tl.connection_address(), 0);
+        assert_eq!(tl.connection_address().raw(), 0);
     }
 
     #[test]
     fn accept_incoming_connection() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         assert_eq!(tl.state(), State::OpenIdle);
-        assert_eq!(tl.connection_address(), 0x1001);
+        assert_eq!(tl.connection_address(), ADDR_1001);
 
         let actions = tl.take_actions();
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             actions[0],
-            Action::ConnectIndication { source: 0x1001 }
+            Action::ConnectIndication { source } if source == ADDR_1001
         ));
     }
 
     #[test]
     fn reject_foreign_connection_when_connected() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
-        tl.connect_indication(0x2002, 100);
+        tl.connect_indication(ADDR_2002, 100);
         assert_eq!(tl.state(), State::OpenIdle);
         let actions = tl.take_actions();
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             actions[0],
             Action::SendControl {
-                destination: 0x2002,
+                destination,
                 tpdu_type: TpduType::Disconnect,
                 ..
-            }
+            } if destination == ADDR_2002
         ));
     }
 
     #[test]
     fn send_and_ack_data() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
         // Send data
@@ -617,7 +627,7 @@ mod tests {
         ));
 
         // Receive ACK
-        tl.ack_indication(0x1001, 0, 200);
+        tl.ack_indication(ADDR_1001, 0, 200);
         assert_eq!(tl.state(), State::OpenIdle);
         let actions = tl.take_actions();
         assert!(
@@ -630,10 +640,10 @@ mod tests {
     #[test]
     fn receive_data_sends_ack() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
-        tl.data_connected_indication(0x1001, 0, Priority::Low, alloc::vec![0xAA], 100);
+        tl.data_connected_indication(ADDR_1001, 0, Priority::Low, alloc::vec![0xAA], 100);
         let actions = tl.take_actions();
         assert!(actions.iter().any(|a| matches!(
             a,
@@ -653,14 +663,14 @@ mod tests {
     #[test]
     fn nack_triggers_retransmit() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
         tl.data_connected_request(Priority::Low, alloc::vec![0x01], 100);
         tl.take_actions();
 
         // NACK with correct seq
-        tl.nack_indication(0x1001, 0, 200);
+        tl.nack_indication(ADDR_1001, 0, 200);
         assert_eq!(tl.state(), State::OpenWait);
         let actions = tl.take_actions();
         assert_eq!(actions.len(), 1);
@@ -673,7 +683,7 @@ mod tests {
     #[test]
     fn max_retries_disconnects() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
         tl.data_connected_request(Priority::Low, alloc::vec![0x01], 100);
@@ -681,20 +691,20 @@ mod tests {
 
         // 3 NACKs
         for i in 0..MAX_REP_COUNT {
-            tl.nack_indication(0x1001, 0, 200 + u64::from(i) * 100);
+            tl.nack_indication(ADDR_1001, 0, 200 + u64::from(i) * 100);
             tl.take_actions();
         }
         assert_eq!(tl.state(), State::OpenWait);
 
         // 4th NACK → disconnect
-        tl.nack_indication(0x1001, 0, 600);
+        tl.nack_indication(ADDR_1001, 0, 600);
         assert_eq!(tl.state(), State::Closed);
     }
 
     #[test]
     fn connection_timeout_disconnects() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
         // Poll after timeout
@@ -713,7 +723,7 @@ mod tests {
     #[test]
     fn ack_timeout_retransmits() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
         tl.data_connected_request(Priority::Low, alloc::vec![0x01], 100);
@@ -730,7 +740,7 @@ mod tests {
     #[test]
     fn buffered_request_sent_after_ack() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
         // Send first frame
@@ -743,7 +753,7 @@ mod tests {
         assert!(actions.is_empty()); // buffered, not sent
 
         // ACK first frame
-        tl.ack_indication(0x1001, 0, 200);
+        tl.ack_indication(ADDR_1001, 0, 200);
         tl.take_actions();
         assert_eq!(tl.state(), State::OpenIdle);
 
@@ -760,54 +770,52 @@ mod tests {
     #[test]
     fn disconnect_from_remote() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
-        tl.disconnect_indication(0x1001);
+        tl.disconnect_indication(ADDR_1001);
         assert_eq!(tl.state(), State::Closed);
         let actions = tl.take_actions();
-        assert!(
-            actions
-                .iter()
-                .any(|a| matches!(a, Action::DisconnectIndication { address: 0x1001 }))
-        );
+        assert!(actions.iter().any(
+            |a| matches!(a, Action::DisconnectIndication { address } if *address == ADDR_1001)
+        ));
     }
 
     #[test]
     fn wrong_ack_seq_disconnects() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
         tl.data_connected_request(Priority::Low, alloc::vec![0x01], 100);
         tl.take_actions();
 
         // ACK with wrong sequence
-        tl.ack_indication(0x1001, 5, 200);
+        tl.ack_indication(ADDR_1001, 5, 200);
         assert_eq!(tl.state(), State::Closed);
     }
 
     #[test]
     fn connect_request_transitions_to_connecting() {
         let mut tl = TransportLayer::new();
-        tl.connect_request(0x1001, 0);
+        tl.connect_request(ADDR_1001, 0);
         assert_eq!(tl.state(), State::Connecting);
-        assert_eq!(tl.connection_address(), 0x1001);
+        assert_eq!(tl.connection_address(), ADDR_1001);
         let actions = tl.take_actions();
         assert!(actions.iter().any(|a| matches!(
             a,
             Action::SendControl {
-                destination: 0x1001,
+                destination,
                 tpdu_type: TpduType::Connect,
                 ..
-            }
+            } if *destination == ADDR_1001
         )));
     }
 
     #[test]
     fn disconnect_request_from_open_idle() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
         assert_eq!(tl.state(), State::OpenIdle);
 
@@ -826,7 +834,7 @@ mod tests {
     #[test]
     fn data_in_connecting_state_is_buffered() {
         let mut tl = TransportLayer::new();
-        tl.connect_request(0x1001, 0);
+        tl.connect_request(ADDR_1001, 0);
         tl.take_actions();
         assert_eq!(tl.state(), State::Connecting);
 
@@ -852,14 +860,14 @@ mod tests {
     #[test]
     fn sequence_numbers_wrap() {
         let mut tl = TransportLayer::new();
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
 
         // Send and ACK 16 frames to wrap sequence numbers
         for i in 0u8..16 {
             tl.data_connected_request(Priority::Low, alloc::vec![i], u64::from(i) * 100);
             tl.take_actions();
-            tl.ack_indication(0x1001, i & SEQ_NO_MASK, u64::from(i) * 100 + 50);
+            tl.ack_indication(ADDR_1001, i & SEQ_NO_MASK, u64::from(i) * 100 + 50);
             tl.take_actions();
         }
 
@@ -875,30 +883,28 @@ mod tests {
     #[test]
     fn connect_confirm_failure_returns_to_closed() {
         let mut tl = TransportLayer::new();
-        tl.connect_request(0x1001, 0);
+        tl.connect_request(ADDR_1001, 0);
         assert_eq!(tl.state(), State::Connecting);
         tl.take_actions();
 
         tl.connect_confirm(false);
         assert_eq!(tl.state(), State::Closed);
         let actions = tl.take_actions();
-        assert!(
-            actions
-                .iter()
-                .any(|a| matches!(a, Action::DisconnectIndication { address: 0x1001 }))
-        );
+        assert!(actions.iter().any(
+            |a| matches!(a, Action::DisconnectIndication { address } if *address == ADDR_1001)
+        ));
     }
 
     #[test]
     fn foreign_data_in_open_idle_triggers_disconnect() {
         let mut tl = TransportLayer::new();
         // Establish connection with addr A
-        tl.connect_indication(0x1001, 0);
+        tl.connect_indication(ADDR_1001, 0);
         tl.take_actions();
         assert_eq!(tl.state(), State::OpenIdle);
 
         // Receive data from addr B — should be ignored (no disconnect for OpenIdle foreign data)
-        tl.data_connected_indication(0x2002, 0, Priority::Low, alloc::vec![0xAA], 100);
+        tl.data_connected_indication(ADDR_2002, 0, Priority::Low, alloc::vec![0xAA], 100);
         // Foreign data in OpenIdle is silently dropped (source != connection_address)
         let actions = tl.take_actions();
         assert!(actions.is_empty());

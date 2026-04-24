@@ -23,7 +23,7 @@ use crate::group_object::{ComFlag, GroupObjectStore};
 use crate::group_object_table::{GroupObjectDescriptor, GroupObjectTable};
 use crate::interface_object::InterfaceObject;
 use crate::property::{Property, PropertyId};
-use crate::table_object::{TableObject, MAX_MEMORY_SIZE};
+use crate::table_object::{MAX_MEMORY_SIZE, TableObject};
 use crate::transport_layer::TransportLayer;
 
 /// Mask version for IP devices (System B).
@@ -82,19 +82,19 @@ pub struct Bau {
     /// Interface objects indexed by object index (0=device, 1=address table, etc.).
     objects: Vec<InterfaceObject>,
     /// Address table.
-    pub address_table: AddressTable,
+    pub(crate) address_table: AddressTable,
     /// Association table.
-    pub association_table: AssociationTable,
+    pub(crate) association_table: AssociationTable,
     /// Address table object (Load State Machine for ETS programming).
-    pub addr_table_object: TableObject,
+    pub(crate) addr_table_object: TableObject,
     /// Association table object (Load State Machine for ETS programming).
-    pub assoc_table_object: TableObject,
+    pub(crate) assoc_table_object: TableObject,
     /// Application program table object (Load State Machine for ETS programming).
-    pub app_program_object: TableObject,
+    pub(crate) app_program_object: TableObject,
     /// Group object table.
-    pub group_object_table: GroupObjectTable,
+    pub(crate) group_object_table: GroupObjectTable,
     /// Group objects.
-    pub group_objects: GroupObjectStore,
+    pub(crate) group_objects: GroupObjectStore,
     /// Transport layer.
     transport: TransportLayer,
     /// Memory area for MemoryRead/Write (table data loaded by ETS).
@@ -154,6 +154,46 @@ impl Bau {
         self.objects
             .first_mut()
             .expect("BAU invariant: device object at index 0")
+    }
+
+    /// The group object store.
+    pub const fn group_objects(&self) -> &GroupObjectStore {
+        &self.group_objects
+    }
+
+    /// Mutable group object store.
+    pub const fn group_objects_mut(&mut self) -> &mut GroupObjectStore {
+        &mut self.group_objects
+    }
+
+    /// The address table object.
+    pub const fn addr_table_object(&self) -> &TableObject {
+        &self.addr_table_object
+    }
+
+    /// The association table object.
+    pub const fn assoc_table_object(&self) -> &TableObject {
+        &self.assoc_table_object
+    }
+
+    /// The address table (read-only).
+    pub const fn address_table(&self) -> &AddressTable {
+        &self.address_table
+    }
+
+    /// The address table (mutable, for loading from config).
+    pub const fn address_table_mut(&mut self) -> &mut AddressTable {
+        &mut self.address_table
+    }
+
+    /// The association table (read-only).
+    pub const fn association_table(&self) -> &AssociationTable {
+        &self.association_table
+    }
+
+    /// The association table (mutable, for loading from config).
+    pub const fn association_table_mut(&mut self) -> &mut AssociationTable {
+        &mut self.association_table
     }
 
     /// Add an interface object. Returns its index, or `None` if full.
@@ -244,19 +284,18 @@ impl Bau {
         match tpdu_type {
             TpduType::Connect => {
                 self.transport
-                    .connect_indication(frame.source_address().raw(), now_ms);
+                    .connect_indication(frame.source_address(), now_ms);
             }
             TpduType::Disconnect => {
-                self.transport
-                    .disconnect_indication(frame.source_address().raw());
+                self.transport.disconnect_indication(frame.source_address());
             }
             TpduType::Ack => {
                 self.transport
-                    .ack_indication(frame.source_address().raw(), seq_no, now_ms);
+                    .ack_indication(frame.source_address(), seq_no, now_ms);
             }
             TpduType::Nack => {
                 self.transport
-                    .nack_indication(frame.source_address().raw(), seq_no, now_ms);
+                    .nack_indication(frame.source_address(), seq_no, now_ms);
             }
             _ => {}
         }
@@ -271,7 +310,7 @@ impl Bau {
         now_ms: u64,
     ) {
         use knx_core::message::TpduType;
-        let source = frame.source_address().raw();
+        let source = frame.source_address();
 
         if tpdu_type == TpduType::DataConnected {
             // Route through transport layer — it handles ACK/NACK and sequence validation.
@@ -293,7 +332,12 @@ impl Bau {
         }
     }
 
-    fn dispatch_indication(&mut self, frame: &CemiFrame, source: u16, indication: AppIndication) {
+    fn dispatch_indication(
+        &mut self,
+        frame: &CemiFrame,
+        source: IndividualAddress,
+        indication: AppIndication,
+    ) {
         match &indication {
             AppIndication::GroupValueWrite { .. }
             | AppIndication::GroupValueResponse { .. }
@@ -353,7 +397,7 @@ impl Bau {
     fn dispatch_group_services(
         &mut self,
         frame: &CemiFrame,
-        _source: u16,
+        _source: IndividualAddress,
         indication: AppIndication,
     ) {
         match indication {
@@ -370,7 +414,11 @@ impl Bau {
         }
     }
 
-    fn dispatch_device_management(&mut self, source: u16, indication: &AppIndication) {
+    fn dispatch_device_management(
+        &mut self,
+        source: IndividualAddress,
+        indication: &AppIndication,
+    ) {
         match *indication {
             AppIndication::DeviceDescriptorRead { descriptor_type: 0 } => {
                 self.queue_device_descriptor_response(source);
@@ -403,7 +451,7 @@ impl Bau {
         }
     }
 
-    fn dispatch_property_services(&mut self, source: u16, indication: AppIndication) {
+    fn dispatch_property_services(&mut self, source: IndividualAddress, indication: AppIndication) {
         match indication {
             AppIndication::PropertyValueRead {
                 object_index,
@@ -445,7 +493,7 @@ impl Bau {
         }
     }
 
-    fn dispatch_memory_services(&mut self, source: u16, indication: AppIndication) {
+    fn dispatch_memory_services(&mut self, source: IndividualAddress, indication: AppIndication) {
         match indication {
             AppIndication::MemoryRead { count, address } => {
                 self.handle_memory_read(source, count, address);
@@ -471,7 +519,11 @@ impl Bau {
         }
     }
 
-    fn dispatch_ext_property_services(&mut self, source: u16, indication: AppIndication) {
+    fn dispatch_ext_property_services(
+        &mut self,
+        source: IndividualAddress,
+        indication: AppIndication,
+    ) {
         match indication {
             AppIndication::PropertyValueExtRead {
                 object_type,
@@ -675,13 +727,16 @@ impl Bau {
     }
 
     /// Dispatch a connected-mode indication (from transport layer).
-    fn dispatch_connected_indication(&mut self, source: u16, indication: AppIndication) {
+    fn dispatch_connected_indication(
+        &mut self,
+        source: IndividualAddress,
+        indication: AppIndication,
+    ) {
         // Connected indications don't have a CemiFrame, so we create a dummy
         // for handlers that need the source address.
-        let src = IndividualAddress::from_raw(source);
         let dst = DestinationAddress::Individual(self.individual_address());
         let dummy_frame =
-            CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::System, &[]);
+            CemiFrame::new_l_data(MessageCode::LDataInd, source, dst, Priority::System, &[]);
         self.dispatch_indication(&dummy_frame, source, indication);
     }
 
@@ -712,10 +767,7 @@ impl Bau {
     /// Returns [`PersistenceError`](crate::bau_persistence::PersistenceError) if
     /// the data is truncated, a table object is invalid, or the declared memory
     /// length exceeds the available data.
-    pub fn restore(
-        &mut self,
-        data: &[u8],
-    ) -> Result<(), crate::bau_persistence::PersistenceError> {
+    pub fn restore(&mut self, data: &[u8]) -> Result<(), crate::bau_persistence::PersistenceError> {
         crate::bau_persistence::restore_bau_state(self, data)
     }
 
@@ -819,7 +871,7 @@ impl Bau {
 
     fn handle_property_read(
         &mut self,
-        source: u16,
+        source: IndividualAddress,
         object_index: u8,
         property_id: u8,
         count: u8,
@@ -870,7 +922,7 @@ impl Bau {
 
     fn handle_property_write(
         &mut self,
-        source: u16,
+        source: IndividualAddress,
         object_index: u8,
         property_id: u8,
         count: u8,
@@ -903,7 +955,7 @@ impl Bau {
         self.handle_property_read(source, object_index, property_id, count, start_index);
     }
 
-    fn handle_memory_read(&mut self, source: u16, count: u8, address: u16) {
+    fn handle_memory_read(&mut self, source: IndividualAddress, count: u8, address: u16) {
         let addr = address as usize;
         let len = count as usize;
         // Always send response — empty data on out-of-bounds (C++ ref behavior)
@@ -919,7 +971,7 @@ impl Bau {
         self.write_to_memory(address as usize, data);
     }
 
-    fn handle_restart_master_reset(&mut self, source: u16, erase_code: u8) {
+    fn handle_restart_master_reset(&mut self, source: IndividualAddress, erase_code: u8) {
         if let ERASE_CONFIRMED_RESTART..=ERASE_FACTORY_RESET_MAX = erase_code {
             self.addr_table_object = TableObject::new();
             self.assoc_table_object = TableObject::new();
@@ -937,7 +989,7 @@ impl Bau {
 
     fn handle_property_description_read(
         &mut self,
-        source: u16,
+        source: IndividualAddress,
         object_index: u8,
         property_id: u8,
         property_index: u8,
@@ -955,7 +1007,7 @@ impl Bau {
                 desc.write_enable,
                 desc.data_type as u8,
                 desc.max_elements,
-                desc.access,
+                desc.access as u8,
             );
             self.queue_individual_frame(source, Priority::System, &payload);
         } else {
@@ -965,7 +1017,7 @@ impl Bau {
 
     fn handle_property_ext_description_read(
         &mut self,
-        source: u16,
+        source: IndividualAddress,
         object_type: u16,
         object_instance: u16,
         property_id: u16,
@@ -977,18 +1029,26 @@ impl Bau {
             return;
         }
         // C++ ref: propertyId and propertyIndex must fit in u8
-        let Ok(prop_id) = u8::try_from(property_id) else { return };
-        let Ok(prop_idx) = u8::try_from(property_index) else { return };
+        let Ok(prop_id) = u8::try_from(property_id) else {
+            return;
+        };
+        let Ok(prop_idx) = u8::try_from(property_index) else {
+            return;
+        };
 
         let desc = self
             .find_object_by_type(object_type, object_instance)
             .and_then(|idx| self.objects.get(idx as usize))
             .and_then(|obj| obj.read_property_description(prop_id, prop_idx));
 
-        let (write_enable, pdt, max_elements, access) = desc.map_or(
-            (false, 0, 0, 0),
-            |(_, d)| (d.write_enable, d.data_type as u8, d.max_elements, d.access),
-        );
+        let (write_enable, pdt, max_elements, access) = desc.map_or((false, 0, 0, 0), |(_, d)| {
+            (
+                d.write_enable,
+                d.data_type as u8,
+                d.max_elements,
+                d.access as u8,
+            )
+        });
 
         let payload = application_layer::encode_property_ext_description_response(
             object_type,
@@ -1004,7 +1064,7 @@ impl Bau {
         self.queue_individual_frame(source, Priority::System, &payload);
     }
 
-    fn handle_memory_ext_read(&mut self, source: u16, count: u8, address: u32) {
+    fn handle_memory_ext_read(&mut self, source: IndividualAddress, count: u8, address: u32) {
         let addr = address as usize;
         let len = count as usize;
         let (return_code, data) = if addr + len <= self.memory_area.len() {
@@ -1020,7 +1080,7 @@ impl Bau {
         self.queue_individual_frame(source, Priority::System, &payload);
     }
 
-    fn handle_memory_ext_write(&mut self, source: u16, address: u32, data: &[u8]) {
+    fn handle_memory_ext_write(&mut self, source: IndividualAddress, address: u32, data: &[u8]) {
         if !self.write_to_memory(address as usize, data) {
             return;
         }
@@ -1067,19 +1127,19 @@ impl Bau {
         }
     }
 
-    fn queue_authorize_response(&mut self, destination: u16, level: u8) {
+    fn queue_authorize_response(&mut self, destination: IndividualAddress, level: u8) {
         let payload = application_layer::encode_authorize_response(level);
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
-    fn queue_key_response(&mut self, destination: u16, level: u8) {
+    fn queue_key_response(&mut self, destination: IndividualAddress, level: u8) {
         let payload = application_layer::encode_key_response(level);
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
     fn queue_function_property_state_response(
         &mut self,
-        destination: u16,
+        destination: IndividualAddress,
         object_index: u8,
         property_id: u8,
         result: &[u8],
@@ -1092,7 +1152,7 @@ impl Bau {
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
-    fn queue_adc_response(&mut self, destination: u16, channel: u8, count: u8) {
+    fn queue_adc_response(&mut self, destination: IndividualAddress, channel: u8, count: u8) {
         let payload = application_layer::encode_adc_response(channel, count, ADC_VALUE_DEFAULT);
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
@@ -1115,7 +1175,7 @@ impl Bau {
 
     fn handle_property_value_ext_read(
         &mut self,
-        source: u16,
+        source: IndividualAddress,
         object_type: u16,
         object_instance: u16,
         property_id: u16,
@@ -1172,7 +1232,7 @@ impl Bau {
 
     fn handle_property_value_ext_write(
         &mut self,
-        source: u16,
+        source: IndividualAddress,
         params: &ExtPropertyParams,
         data: &[u8],
         confirmed: bool,
@@ -1263,20 +1323,20 @@ impl Bau {
         self.queue_group_frame(BROADCAST_GA, Priority::System, &payload);
     }
 
-    fn queue_device_descriptor_response(&mut self, destination: u16) {
+    fn queue_device_descriptor_response(&mut self, destination: IndividualAddress) {
         let payload = application_layer::encode_device_descriptor_response(MASK_VERSION_IP);
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
     /// Respond to unsupported `DeviceDescriptorRead` with type 0x3F (C++ ref behavior).
-    fn queue_device_descriptor_unsupported(&mut self, destination: u16) {
+    fn queue_device_descriptor_unsupported(&mut self, destination: IndividualAddress) {
         let payload = application_layer::encode_device_descriptor_unsupported();
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
     fn queue_property_response(
         &mut self,
-        destination: u16,
+        destination: IndividualAddress,
         object_index: u8,
         property_id: u8,
         count: u8,
@@ -1293,13 +1353,13 @@ impl Bau {
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
-    fn queue_memory_response(&mut self, destination: u16, address: u16, data: &[u8]) {
+    fn queue_memory_response(&mut self, destination: IndividualAddress, address: u16, data: &[u8]) {
         let payload = application_layer::encode_memory_response(address, data);
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
     /// Send a property description error response (`property_id=0` signals error).
-    fn queue_property_description_error(&mut self, source: u16, object_index: u8) {
+    fn queue_property_description_error(&mut self, source: IndividualAddress, object_index: u8) {
         let payload = application_layer::encode_property_description_response(
             object_index,
             0,
@@ -1315,7 +1375,7 @@ impl Bau {
     /// Send an extended property value error response (count=0 signals error).
     fn queue_ext_property_error(
         &mut self,
-        source: u16,
+        source: IndividualAddress,
         object_type: u16,
         object_instance: u16,
         property_id: u16,
@@ -1366,9 +1426,14 @@ impl Bau {
         self.queue_group_frame(BROADCAST_GA, Priority::System, payload);
     }
 
-    fn queue_individual_frame(&mut self, destination: u16, priority: Priority, payload: &[u8]) {
+    fn queue_individual_frame(
+        &mut self,
+        destination: IndividualAddress,
+        priority: Priority,
+        payload: &[u8],
+    ) {
         let src = self.individual_address();
-        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
+        let dst = DestinationAddress::Individual(destination);
         self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
             src,
@@ -1380,12 +1445,12 @@ impl Bau {
 
     fn queue_control_frame(
         &mut self,
-        destination: u16,
+        destination: IndividualAddress,
         tpdu_type: knx_core::message::TpduType,
         seq_no: u8,
     ) {
         let src = self.individual_address();
-        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
+        let dst = DestinationAddress::Individual(destination);
         let payload = knx_core::tpdu::encode_control(tpdu_type, seq_no);
         self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
@@ -1398,13 +1463,13 @@ impl Bau {
 
     fn queue_data_connected_frame(
         &mut self,
-        destination: u16,
+        destination: IndividualAddress,
         seq_no: u8,
         priority: Priority,
         apdu: &[u8],
     ) {
         let src = self.individual_address();
-        let dst = DestinationAddress::Individual(IndividualAddress::from_raw(destination));
+        let dst = DestinationAddress::Individual(destination);
         let payload = knx_core::tpdu::encode_data_connected(seq_no, apdu);
         self.outbox.push_back(CemiFrame::new_l_data(
             MessageCode::LDataReq,
@@ -1435,6 +1500,9 @@ mod tests {
             .load(&[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02]);
         bau
     }
+
+    const SRC_1102: IndividualAddress = IndividualAddress::from_raw(0x1102);
+    const SRC_1101: IndividualAddress = IndividualAddress::from_raw(0x1101);
 
     #[test]
     fn group_value_write_updates_go() {
@@ -1544,7 +1612,7 @@ mod tests {
         bau.process_frame(&connect, 0);
         assert!(
             bau.transport.state() == crate::transport_layer::State::OpenIdle
-                && bau.transport.connection_address() == 0x1102
+                && bau.transport.connection_address() == IndividualAddress::from_raw(0x1102)
         );
 
         // T_Disconnect
@@ -1555,7 +1623,7 @@ mod tests {
         bau.process_frame(&disconnect, 0);
         assert!(
             bau.transport.state() == crate::transport_layer::State::Closed
-                && bau.transport.connection_address() == 0x1102
+                && bau.transport.connection_address() == IndividualAddress::from_raw(0x1102)
         );
     }
 
@@ -1570,7 +1638,7 @@ mod tests {
     #[test]
     fn property_write_via_bau() {
         let mut bau = test_bau();
-        bau.handle_property_write(0x1101, 0, 54, 1, 1, &[0x01]); // PID_PROG_MODE
+        bau.handle_property_write(SRC_1101, 0, 54, 1, 1, &[0x01]); // PID_PROG_MODE
         assert!(device_object::prog_mode(bau.device()));
         // BAU-2: write should produce a read-back response
         assert!(bau.next_outgoing_frame().is_some());
@@ -1581,14 +1649,14 @@ mod tests {
         use crate::application_program::new_application_program_object;
         let mut bau = test_bau();
         let app_idx = bau.add_object(new_application_program_object()).unwrap();
-        bau.handle_property_read(0x1102, app_idx, 1, 1, 1); // PID_OBJECT_TYPE
+        bau.handle_property_read(SRC_1102, app_idx, 1, 1, 1); // PID_OBJECT_TYPE
         assert!(bau.next_outgoing_frame().is_some());
     }
 
     #[test]
     fn device_descriptor_response_to_source() {
         let mut bau = test_bau();
-        bau.queue_device_descriptor_response(0x1102);
+        bau.queue_device_descriptor_response(SRC_1102);
         let resp = bau.next_outgoing_frame().unwrap();
         assert_eq!(resp.destination_address_raw(), 0x1102);
     }
@@ -1647,7 +1715,7 @@ mod tests {
         bau.handle_memory_write(0x0000, &[0xDE, 0xAD, 0xBE, 0xEF]);
         assert_eq!(bau.memory_area.len(), 4);
 
-        bau.handle_restart_master_reset(0x1102, 1);
+        bau.handle_restart_master_reset(SRC_1102, 1);
         assert!(bau.memory_area.is_empty());
     }
 
@@ -1662,7 +1730,7 @@ mod tests {
         assert_eq!(bau.addr_table_object.load_state(), LoadState::Loaded);
         assert_eq!(bau.assoc_table_object.load_state(), LoadState::Loaded);
 
-        bau.handle_restart_master_reset(0x1102, 1);
+        bau.handle_restart_master_reset(SRC_1102, 1);
         assert_eq!(bau.addr_table_object.load_state(), LoadState::Unloaded);
         assert_eq!(bau.assoc_table_object.load_state(), LoadState::Unloaded);
         assert_eq!(bau.app_program_object.load_state(), LoadState::Unloaded);
@@ -1671,7 +1739,7 @@ mod tests {
     #[test]
     fn restart_master_reset_sends_response() {
         let mut bau = handler_test_bau();
-        bau.handle_restart_master_reset(0x1102, 1);
+        bau.handle_restart_master_reset(SRC_1102, 1);
         let resp = bau
             .next_outgoing_frame()
             .expect("expected restart response");
@@ -1683,7 +1751,7 @@ mod tests {
         let mut bau = handler_test_bau();
         let data = [0x01, 0x02, 0x03, 0x04];
         bau.handle_memory_write(0x0010, &data);
-        bau.handle_memory_read(0x1102, 4, 0x0010);
+        bau.handle_memory_read(SRC_1102, 4, 0x0010);
 
         let resp = bau
             .next_outgoing_frame()
@@ -1706,7 +1774,7 @@ mod tests {
     fn memory_read_out_of_bounds() {
         let mut bau = handler_test_bau();
         // Memory is empty, reading should return empty data
-        bau.handle_memory_read(0x1102, 4, 0x0000);
+        bau.handle_memory_read(SRC_1102, 4, 0x0000);
         let resp = bau
             .next_outgoing_frame()
             .expect("expected memory read response");
@@ -1720,7 +1788,7 @@ mod tests {
     fn memory_write_rejects_oversized() {
         let mut bau = handler_test_bau();
         // ext write beyond MAX_MEMORY_SIZE must be rejected
-        bau.handle_memory_ext_write(0x1102, MAX_MEMORY_SIZE as u32, &[0xFF]);
+        bau.handle_memory_ext_write(SRC_1102, MAX_MEMORY_SIZE as u32, &[0xFF]);
         assert!(bau.memory_area.is_empty());
     }
 
@@ -1777,7 +1845,7 @@ mod tests {
     fn handle_property_description_read_known_property() {
         let mut bau = test_bau();
         // Object 0 (device) has PID_OBJECT_TYPE (1) — read its description
-        bau.handle_property_description_read(0x1102, 0, 1, 0);
+        bau.handle_property_description_read(SRC_1102, 0, 1, 0);
         let resp = bau.next_outgoing_frame().expect("expected response");
         assert_eq!(resp.destination_address_raw(), 0x1102);
         // Payload should contain property_id=1 (not 0, which signals error)
@@ -1790,7 +1858,7 @@ mod tests {
     fn handle_property_description_read_unknown_object() {
         let mut bau = test_bau();
         // Object index 99 doesn't exist
-        bau.handle_property_description_read(0x1102, 99, 1, 0);
+        bau.handle_property_description_read(SRC_1102, 99, 1, 0);
         let resp = bau.next_outgoing_frame().expect("expected error response");
         assert_eq!(resp.destination_address_raw(), 0x1102);
         // Error response has property_id=0
@@ -1802,11 +1870,11 @@ mod tests {
     fn handle_memory_ext_read_roundtrip() {
         let mut bau = test_bau();
         let data = [0xDE, 0xAD, 0xBE, 0xEF];
-        bau.handle_memory_ext_write(0x1102, 0x0010, &data);
+        bau.handle_memory_ext_write(SRC_1102, 0x0010, &data);
         // Drain the write response
         bau.next_outgoing_frame().unwrap();
 
-        bau.handle_memory_ext_read(0x1102, 4, 0x0010);
+        bau.handle_memory_ext_read(SRC_1102, 4, 0x0010);
         let resp = bau
             .next_outgoing_frame()
             .expect("expected ext read response");
@@ -1819,7 +1887,7 @@ mod tests {
     #[test]
     fn handle_memory_ext_write_roundtrip() {
         let mut bau = test_bau();
-        bau.handle_memory_ext_write(0x1102, 0x0020, &[0xCA, 0xFE]);
+        bau.handle_memory_ext_write(SRC_1102, 0x0020, &[0xCA, 0xFE]);
         assert_eq!(bau.memory_area[0x20], 0xCA);
         assert_eq!(bau.memory_area[0x21], 0xFE);
     }
@@ -2100,7 +2168,7 @@ mod tests {
         device_object::set_individual_address(bau.device_mut(), 0x1101);
 
         // Request description of ObjectType property (PID 1) on device object (type 0, instance 0)
-        bau.handle_property_ext_description_read(0x1102, 0, 0, 1, 0, 0);
+        bau.handle_property_ext_description_read(SRC_1102, 0, 0, 1, 0, 0);
 
         let frame = bau.next_outgoing_frame();
         assert!(frame.is_some(), "should send ext description response");
@@ -2112,8 +2180,11 @@ mod tests {
         device_object::set_individual_address(bau.device_mut(), 0x1101);
 
         // descriptionType != 0 should be silently ignored
-        bau.handle_property_ext_description_read(0x1102, 0, 0, 1, 1, 0);
+        bau.handle_property_ext_description_read(SRC_1102, 0, 0, 1, 1, 0);
 
-        assert!(bau.next_outgoing_frame().is_none(), "unsupported descriptionType should not respond");
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "unsupported descriptionType should not respond"
+        );
     }
 }

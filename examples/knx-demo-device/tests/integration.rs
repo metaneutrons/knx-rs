@@ -121,7 +121,7 @@ async fn demo_device_full_flow() {
     }
 
     // GO 2 should be updated with value 1
-    let go2 = bau.group_objects.get(2).unwrap();
+    let go2 = bau.group_objects().get(2).unwrap();
     assert_eq!(go2.comm_flag(), ComFlag::Updated);
     assert_eq!(go2.value_ref()[0], 0x01);
 

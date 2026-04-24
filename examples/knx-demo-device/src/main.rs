@@ -21,8 +21,8 @@ use knx_ip::tunnel_server::{DeviceServer, ServerEvent};
 use knx_demo_device::create_demo_bau;
 
 fn log_updated_group_objects(bau: &mut Bau) {
-    while let Some(asap) = bau.group_objects.next_updated() {
-        if let Some(go) = bau.group_objects.get(asap) {
+    while let Some(asap) = bau.group_objects_mut().next_updated() {
+        if let Some(go) = bau.group_objects().get(asap) {
             match asap {
                 1 => {
                     if let Some(temp) = go.value().ok().and_then(|v| v.as_f64()) {
@@ -59,7 +59,7 @@ fn log_updated_group_objects(bau: &mut Bau) {
                 _ => {}
             }
         }
-        if let Some(go) = bau.group_objects.get_mut(asap) {
+        if let Some(go) = bau.group_objects_mut().get_mut(asap) {
             go.set_comm_flag(ComFlag::Ok);
         }
     }
@@ -139,7 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ = temp_interval.tick() => {
                 let temp = 22.0 + 4.0 * libm::sin(tick as f64 * 0.2);
                 tick += 1;
-                if let Some(go) = bau.group_objects.get_mut(1) {
+                if let Some(go) = bau.group_objects_mut().get_mut(1) {
                     let _ = go.set_value(&DptValue::Float(temp));
                 }
                 flush_outgoing(&mut bau, &server).await;

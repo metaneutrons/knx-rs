@@ -13,7 +13,7 @@ pub struct DataProperty {
     write_enable: bool,
     data_type: PropertyDataType,
     max_elements: u16,
-    access: u8,
+    access: AccessLevel,
     data: Vec<u8>,
 }
 
@@ -32,7 +32,7 @@ impl DataProperty {
             write_enable,
             data_type,
             max_elements,
-            access: access as u8,
+            access,
             data: initial_data.to_vec(),
         }
     }
@@ -69,6 +69,11 @@ impl DataProperty {
 
     /// Access level.
     pub const fn access(&self) -> u8 {
+        self.access as u8
+    }
+
+    /// Access level as `AccessLevel`.
+    pub const fn access_level(&self) -> AccessLevel {
         self.access
     }
 

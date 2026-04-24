@@ -31,10 +31,15 @@ const VALUE_TYPE_MASK: u16 = 0xFF;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroupObjectDescriptor {
     /// Raw 16-bit descriptor value.
-    pub raw: u16,
+    pub(crate) raw: u16,
 }
 
 impl GroupObjectDescriptor {
+    /// The raw 16-bit descriptor value.
+    pub const fn raw(self) -> u16 {
+        self.raw
+    }
+
     /// Communication enabled (K-flag, bit 10).
     pub const fn communication_enable(self) -> bool {
         self.raw & FLAG_COMM_ENABLE != 0

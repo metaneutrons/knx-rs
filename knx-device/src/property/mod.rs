@@ -31,7 +31,7 @@ pub struct Property {
     write_enable: bool,
     data_type: PropertyDataType,
     max_elements: u16,
-    access: u8,
+    access: AccessLevel,
     storage: PropertyStorage,
 }
 
@@ -51,7 +51,7 @@ impl Property {
             write_enable: prop.write_enable(),
             data_type: prop.data_type(),
             max_elements: prop.max_elements(),
-            access: prop.access(),
+            access: prop.access_level(),
             storage: PropertyStorage::Data(prop),
         }
     }
@@ -71,7 +71,7 @@ impl Property {
             write_enable,
             data_type,
             max_elements,
-            access: access as u8,
+            access,
             storage: PropertyStorage::Callback {
                 read_fn: Box::new(read_fn),
                 write_fn,
@@ -100,7 +100,7 @@ impl Property {
     }
 
     /// Access level.
-    pub const fn access(&self) -> u8 {
+    pub const fn access(&self) -> AccessLevel {
         self.access
     }
 

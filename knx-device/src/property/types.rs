@@ -258,19 +258,30 @@ pub enum AccessLevel {
     WriteHigh = 0x03,
 }
 
+impl From<u8> for AccessLevel {
+    fn from(v: u8) -> Self {
+        match v {
+            0x01 => Self::WriteLow,
+            0x02 => Self::WriteMedium,
+            0x03 => Self::WriteHigh,
+            _ => Self::None,
+        }
+    }
+}
+
 /// Description of a property, returned to ETS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PropertyDescription {
-    /// Property identifier.
+    /// Property identifier (KNX PID).
     pub id: PropertyId,
-    /// Whether the property can be written.
+    /// Whether the property can be written by ETS.
     pub write_enable: bool,
-    /// Data type.
+    /// Wire-format data type (determines element size).
     pub data_type: PropertyDataType,
-    /// Maximum number of elements.
+    /// Maximum number of elements this property can hold.
     pub max_elements: u16,
-    /// Access level.
-    pub access: u8,
+    /// Read/write access level (high nibble = read, low nibble = write).
+    pub access: AccessLevel,
 }
 
 #[cfg(test)]
