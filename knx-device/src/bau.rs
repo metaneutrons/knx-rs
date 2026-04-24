@@ -697,9 +697,16 @@ impl Bau {
     /// After restoring, the address and association tables are automatically
     /// parsed from the memory area if their table objects are in `Loaded` state.
     ///
-    /// Returns `true` if restore succeeded.
-    pub fn restore(&mut self, data: &[u8]) -> bool {
-        crate::bau_persistence::restore_bau_state(self, data).is_ok()
+    /// # Errors
+    ///
+    /// Returns [`PersistenceError`](crate::bau_persistence::PersistenceError) if
+    /// the data is truncated, a table object is invalid, or the declared memory
+    /// length exceeds the available data.
+    pub fn restore(
+        &mut self,
+        data: &[u8],
+    ) -> Result<(), crate::bau_persistence::PersistenceError> {
+        crate::bau_persistence::restore_bau_state(self, data)
     }
 
     /// Load tables from the memory area at the given offsets.
@@ -1562,7 +1569,7 @@ mod tests {
 
         // Restore into a fresh BAU
         let mut bau2 = test_bau();
-        assert!(bau2.restore(&saved));
+        bau2.restore(&saved).unwrap();
 
         // Verify tables are restored
         assert_eq!(bau2.address_table.get_tsap(0x0801), Some(1));
@@ -1827,7 +1834,7 @@ mod tests {
         // Restore into fresh BAU
         let mut bau2 = test_bau();
         assert!(!bau2.configured());
-        assert!(bau2.restore(&saved));
+        bau2.restore(&saved).unwrap();
 
         assert!(bau2.configured());
         assert_eq!(bau2.address_table.get_tsap(0x0801), Some(1));

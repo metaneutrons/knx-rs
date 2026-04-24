@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 /// Address table: maps TSAP indices to group addresses.
 ///
-/// Wire format: `[count:u16be] [ga_1:u16be] [ga_2:u16be] ...`
+/// Table wire format: `[count:u16be] [entries...]`
 pub struct AddressTable {
     data: Vec<u8>,
 }

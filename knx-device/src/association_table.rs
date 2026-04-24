@@ -14,6 +14,8 @@ const ENTRY_SIZE: usize = 4;
 const TSAP_OFFSET: usize = 2;
 
 /// Association table: maps TSAPs to ASAPs.
+///
+/// Table wire format: `[count:u16be] [entries...]`
 pub struct AssociationTable {
     data: Vec<u8>,
 }

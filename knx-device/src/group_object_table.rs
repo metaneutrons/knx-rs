@@ -106,6 +106,8 @@ impl GroupObjectDescriptor {
 }
 
 /// Group object table: defines the communication objects.
+///
+/// Table wire format: `[count:u16be] [entries...]`
 pub struct GroupObjectTable {
     data: Vec<u8>,
 }

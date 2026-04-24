@@ -12,6 +12,7 @@ use crate::property::{AccessLevel, DataProperty, PropertyDataType, PropertyId};
 
 const DEVICE_VERSION: [u8; 2] = [0x00, 0x03];
 const FIRMWARE_REVISION: u8 = 0x01;
+/// Default routing hop count (6 hops, encoded in upper nibble per KNX 3/3/7).
 const DEFAULT_ROUTING_COUNT: u8 = 6 << 4;
 const MAX_APDU_LENGTH: [u8; 2] = [0x00, 0xFE];
 const DEFAULT_SUBNET_ADDR: u8 = 0xFF;
