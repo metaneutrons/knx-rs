@@ -44,28 +44,28 @@ impl AssociationTable {
     }
 
     /// Get the TSAP for entry at `idx` (0-based).
-    fn get_tsap(&self, idx: u16) -> u16 {
+    fn get_tsap(&self, idx: u16) -> Option<u16> {
         let offset = TSAP_OFFSET + (idx as usize) * ENTRY_SIZE;
         if offset + 2 > self.data.len() {
-            return 0;
+            return None;
         }
-        u16::from_be_bytes([self.data[offset], self.data[offset + 1]])
+        Some(u16::from_be_bytes([self.data[offset], self.data[offset + 1]]))
     }
 
     /// Get the ASAP for entry at `idx` (0-based).
-    fn get_asap(&self, idx: u16) -> u16 {
+    fn get_asap(&self, idx: u16) -> Option<u16> {
         let offset = TSAP_OFFSET + (idx as usize) * ENTRY_SIZE + TSAP_OFFSET;
         if offset + 2 > self.data.len() {
-            return 0;
+            return None;
         }
-        u16::from_be_bytes([self.data[offset], self.data[offset + 1]])
+        Some(u16::from_be_bytes([self.data[offset], self.data[offset + 1]]))
     }
 
     /// Translate an ASAP to its TSAP. Returns `None` if not found.
     pub fn translate_asap(&self, asap: u16) -> Option<u16> {
         for i in 0..self.entry_count() {
-            if self.get_asap(i) == asap {
-                return Some(self.get_tsap(i));
+            if self.get_asap(i) == Some(asap) {
+                return self.get_tsap(i);
             }
         }
         None
@@ -76,8 +76,8 @@ impl AssociationTable {
     /// Returns `(asap, next_start_idx)` or `None` if no more entries.
     pub fn next_asap(&self, tsap: u16, start_idx: u16) -> Option<(u16, u16)> {
         for i in start_idx..self.entry_count() {
-            if self.get_tsap(i) == tsap {
-                return Some((self.get_asap(i), i + 1));
+            if self.get_tsap(i) == Some(tsap) {
+                return Some((self.get_asap(i)?, i + 1));
             }
         }
         None

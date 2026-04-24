@@ -48,7 +48,7 @@ impl MemoryBackend for RamBackend {
     }
 }
 
-/// Header size: `manufacturer_id`(2) + `hardware_type`(6) + `api_version`(2).
+/// Header size: `manufacturer_id`(2) + `hardware_type`(6) + `api_version`(2) + `firmware_version`(2).
 const HEADER_SIZE: usize = 12;
 
 /// Device memory manager — serializes/deserializes device state.
