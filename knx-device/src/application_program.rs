@@ -11,6 +11,12 @@ use alloc::vec::Vec;
 use crate::interface_object::{InterfaceObject, ObjectType};
 use crate::property::{AccessLevel, DataProperty, LoadState, PropertyDataType, PropertyId};
 
+const PROGRAM_VERSION_DEFAULT: [u8; 5] = [0u8; 5];
+const TABLE_REFERENCE_DEFAULT: [u8; 4] = [0u8; 4];
+const MCB_TABLE_DEFAULT: [u8; 8] = [0u8; 8];
+const PEI_TYPE_IP: u8 = 0x00;
+const ERROR_CODE_NONE: u8 = 0x00;
+
 /// Create a new application program object.
 pub fn new_application_program_object() -> InterfaceObject {
     let mut obj = InterfaceObject::new(ObjectType::ApplicationProgram);
@@ -23,14 +29,14 @@ pub fn new_application_program_object() -> InterfaceObject {
             PropertyDataType::Generic05,
             1,
             AccessLevel::WriteHigh,
-            &[0u8; 5],
+            &PROGRAM_VERSION_DEFAULT,
         )
         .into(),
     );
 
     // PEI type (always 0 for IP devices)
     obj.add_property(
-        DataProperty::read_only(PropertyId::PeiType, PropertyDataType::UnsignedChar, &[0x00])
+        DataProperty::read_only(PropertyId::PeiType, PropertyDataType::UnsignedChar, &[PEI_TYPE_IP])
             .into(),
     );
 
@@ -49,14 +55,14 @@ pub fn new_application_program_object() -> InterfaceObject {
         DataProperty::read_write(
             PropertyId::TableReference,
             PropertyDataType::UnsignedLong,
-            &[0u8; 4],
+            &TABLE_REFERENCE_DEFAULT,
         )
         .into(),
     );
 
     // MCB table (memory control block)
     obj.add_property(
-        DataProperty::read_write(PropertyId::McbTable, PropertyDataType::Generic08, &[0u8; 8])
+        DataProperty::read_write(PropertyId::McbTable, PropertyDataType::Generic08, &MCB_TABLE_DEFAULT)
             .into(),
     );
 
@@ -65,7 +71,7 @@ pub fn new_application_program_object() -> InterfaceObject {
         DataProperty::read_only(
             PropertyId::ErrorCode,
             PropertyDataType::UnsignedChar,
-            &[0x00],
+            &[ERROR_CODE_NONE],
         )
         .into(),
     );

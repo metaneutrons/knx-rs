@@ -10,6 +10,13 @@ use knx_core::address::IndividualAddress;
 use crate::interface_object::{InterfaceObject, ObjectType};
 use crate::property::{AccessLevel, DataProperty, PropertyDataType, PropertyId};
 
+const DEVICE_VERSION: [u8; 2] = [0x00, 0x03];
+const FIRMWARE_REVISION: u8 = 0x01;
+const DEFAULT_ROUTING_COUNT: u8 = 6 << 4;
+const MAX_APDU_LENGTH: [u8; 2] = [0x00, 0xFE];
+const DEFAULT_SUBNET_ADDR: u8 = 0xFF;
+const DEFAULT_DEVICE_ADDR: u8 = 0xFF;
+
 /// Create a new device object with standard KNX properties.
 pub fn new_device_object(serial_number: [u8; 6], hardware_type: [u8; 6]) -> InterfaceObject {
     let mut obj = InterfaceObject::new(ObjectType::Device);
@@ -61,7 +68,7 @@ fn add_identity_properties(obj: &mut InterfaceObject, serial: [u8; 6]) {
         DataProperty::read_only(
             PropertyId::Version,
             PropertyDataType::UnsignedInt,
-            &[0x00, 0x03],
+            &DEVICE_VERSION,
         )
         .into(),
     );
@@ -69,7 +76,7 @@ fn add_identity_properties(obj: &mut InterfaceObject, serial: [u8; 6]) {
         DataProperty::read_only(
             PropertyId::FirmwareRevision,
             PropertyDataType::UnsignedChar,
-            &[0x01],
+            &[FIRMWARE_REVISION],
         )
         .into(),
     );
@@ -80,7 +87,7 @@ fn add_config_properties(obj: &mut InterfaceObject, hw_type: [u8; 6]) {
         DataProperty::read_write(
             PropertyId::RoutingCount,
             PropertyDataType::UnsignedChar,
-            &[6 << 4],
+            &[DEFAULT_ROUTING_COUNT],
         )
         .into(),
     );
@@ -96,7 +103,7 @@ fn add_config_properties(obj: &mut InterfaceObject, hw_type: [u8; 6]) {
         DataProperty::read_only(
             PropertyId::MaxApduLength,
             PropertyDataType::UnsignedInt,
-            &[0x00, 0xFE],
+            &MAX_APDU_LENGTH,
         )
         .into(),
     );
@@ -104,7 +111,7 @@ fn add_config_properties(obj: &mut InterfaceObject, hw_type: [u8; 6]) {
         DataProperty::read_write(
             PropertyId::SubnetAddr,
             PropertyDataType::UnsignedChar,
-            &[0xFF],
+            &[DEFAULT_SUBNET_ADDR],
         )
         .into(),
     );
@@ -112,7 +119,7 @@ fn add_config_properties(obj: &mut InterfaceObject, hw_type: [u8; 6]) {
         DataProperty::read_write(
             PropertyId::DeviceAddr,
             PropertyDataType::UnsignedChar,
-            &[0xFF],
+            &[DEFAULT_DEVICE_ADDR],
         )
         .into(),
     );
@@ -144,8 +151,8 @@ pub fn individual_address(obj: &InterfaceObject) -> IndividualAddress {
     let mut device = Vec::new();
     obj.read_property(PropertyId::SubnetAddr, 1, 1, &mut subnet);
     obj.read_property(PropertyId::DeviceAddr, 1, 1, &mut device);
-    let s = subnet.first().copied().unwrap_or(0xFF);
-    let d = device.first().copied().unwrap_or(0xFF);
+    let s = subnet.first().copied().unwrap_or(DEFAULT_SUBNET_ADDR);
+    let d = device.first().copied().unwrap_or(DEFAULT_DEVICE_ADDR);
     IndividualAddress::from_raw(u16::from(s) << 8 | u16::from(d))
 }
 

@@ -17,6 +17,16 @@
 
 use alloc::vec::Vec;
 
+const FLAG_COMM_ENABLE: u16 = 1 << 10;
+const FLAG_READ_ENABLE: u16 = 1 << 11;
+const FLAG_WRITE_ENABLE: u16 = 1 << 12;
+const FLAG_READ_ON_INIT: u16 = 1 << 13;
+const FLAG_TRANSMIT_ENABLE: u16 = 1 << 14;
+const FLAG_UPDATE_ENABLE: u16 = 1 << 15;
+const PRIORITY_SHIFT: u32 = 8;
+const PRIORITY_MASK: u16 = 0x03;
+const VALUE_TYPE_MASK: u16 = 0xFF;
+
 /// Parsed descriptor for a single group object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroupObjectDescriptor {
@@ -27,42 +37,42 @@ pub struct GroupObjectDescriptor {
 impl GroupObjectDescriptor {
     /// Communication enabled (K-flag, bit 10).
     pub const fn communication_enable(self) -> bool {
-        self.raw & (1 << 10) != 0
+        self.raw & FLAG_COMM_ENABLE != 0
     }
 
     /// Read enabled (L-flag, bit 11).
     pub const fn read_enable(self) -> bool {
-        self.raw & (1 << 11) != 0
+        self.raw & FLAG_READ_ENABLE != 0
     }
 
     /// Write enabled (S-flag, bit 12).
     pub const fn write_enable(self) -> bool {
-        self.raw & (1 << 12) != 0
+        self.raw & FLAG_WRITE_ENABLE != 0
     }
 
     /// Read on init (I-flag, bit 13).
     pub const fn read_on_init(self) -> bool {
-        self.raw & (1 << 13) != 0
+        self.raw & FLAG_READ_ON_INIT != 0
     }
 
     /// Transmit on change (Ü-flag, bit 14).
     pub const fn transmit_enable(self) -> bool {
-        self.raw & (1 << 14) != 0
+        self.raw & FLAG_TRANSMIT_ENABLE != 0
     }
 
     /// Update on response (A-flag, bit 15).
     pub const fn update_enable(self) -> bool {
-        self.raw & (1 << 15) != 0
+        self.raw & FLAG_UPDATE_ENABLE != 0
     }
 
     /// Priority (bits 9..8).
     pub const fn priority(self) -> u8 {
-        ((self.raw >> 8) & 0x03) as u8
+        ((self.raw >> PRIORITY_SHIFT) & PRIORITY_MASK) as u8
     }
 
     /// Value size code (bits 7..0). Encodes the DPT data length.
     pub const fn value_type(self) -> u8 {
-        (self.raw & 0xFF) as u8
+        (self.raw & VALUE_TYPE_MASK) as u8
     }
 }
 

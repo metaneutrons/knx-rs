@@ -62,6 +62,15 @@ const ADC_VALUE_DEFAULT: u16 = 0;
 /// Maximum allowed memory area size (256 KiB).
 const MAX_MEMORY_SIZE: usize = 256 * 1024;
 
+/// Authorization level: full access (no restrictions).
+const AUTH_LEVEL_FULL: u8 = 0;
+/// Memory extended read/write return code: success.
+const MEM_EXT_RETURN_OK: u8 = 0;
+/// Memory extended read/write return code: error (out of range).
+const MEM_EXT_RETURN_ERROR: u8 = 1;
+/// Broadcast group address (raw value 0).
+const BROADCAST_GA: u16 = 0;
+
 /// Parameters for extended property value services (read/write).
 struct ExtPropertyParams {
     object_type: u16,
@@ -372,7 +381,7 @@ impl Bau {
                 self.queue_individual_address_response();
             }
             AppIndication::AuthorizeRequest { key: _ } => {
-                self.queue_authorize_response(source, 0);
+                self.queue_authorize_response(source, AUTH_LEVEL_FULL);
             }
             AppIndication::KeyWrite { level, key: _ } => {
                 self.queue_key_response(source, level);
@@ -900,15 +909,7 @@ impl Bau {
     }
 
     fn handle_memory_write(&mut self, address: u16, data: &[u8]) {
-        let addr = address as usize;
-        let needed = addr + data.len();
-        if needed > MAX_MEMORY_SIZE {
-            return;
-        }
-        if needed > self.memory_area.len() {
-            self.memory_area.resize(needed, 0);
-        }
-        self.memory_area[addr..addr + data.len()].copy_from_slice(data);
+        self.write_to_memory(address as usize, data);
     }
 
     fn handle_restart_master_reset(&mut self, source: u16, erase_code: u8) {
@@ -979,9 +980,9 @@ impl Bau {
         let addr = address as usize;
         let len = count as usize;
         let (return_code, data) = if addr + len <= self.memory_area.len() {
-            (0, self.memory_area[addr..addr + len].to_vec())
+            (MEM_EXT_RETURN_OK, self.memory_area[addr..addr + len].to_vec())
         } else {
-            (1, Vec::new()) // out of range
+            (MEM_EXT_RETURN_ERROR, Vec::new()) // out of range
         };
         let payload =
             application_layer::encode_memory_ext_read_response(return_code, address, &data);
@@ -989,16 +990,10 @@ impl Bau {
     }
 
     fn handle_memory_ext_write(&mut self, source: u16, address: u32, data: &[u8]) {
-        let addr = address as usize;
-        let needed = addr + data.len();
-        if needed > MAX_MEMORY_SIZE {
+        if !self.write_to_memory(address as usize, data) {
             return;
         }
-        if needed > self.memory_area.len() {
-            self.memory_area.resize(needed, 0);
-        }
-        self.memory_area[addr..addr + data.len()].copy_from_slice(data);
-        let payload = application_layer::encode_memory_ext_write_response(0, address);
+        let payload = application_layer::encode_memory_ext_write_response(MEM_EXT_RETURN_OK, address);
         self.queue_individual_frame(source, Priority::System, &payload);
     }
 
@@ -1010,15 +1005,7 @@ impl Bau {
                 DOMAIN_ADDRESS_IP,
             );
             // Respond as broadcast
-            let src = self.individual_address();
-            let dst = DestinationAddress::Group(GroupAddress::from_raw(0));
-            self.outbox.push_back(CemiFrame::new_l_data(
-                MessageCode::LDataReq,
-                src,
-                dst,
-                Priority::System,
-                &payload,
-            ));
+            self.queue_broadcast_frame(&payload);
         }
     }
 
@@ -1044,15 +1031,7 @@ impl Bau {
                 test_info,
                 &serial,
             );
-            let src = self.individual_address();
-            let dst = DestinationAddress::Group(GroupAddress::from_raw(0));
-            self.outbox.push_back(CemiFrame::new_l_data(
-                MessageCode::LDataReq,
-                src,
-                dst,
-                Priority::System,
-                &payload,
-            ));
+            self.queue_broadcast_frame(&payload);
         }
     }
 
@@ -1259,7 +1238,7 @@ impl Bau {
 
     fn queue_individual_address_response(&mut self) {
         let payload = application_layer::encode_individual_address_response();
-        self.queue_group_frame(0, Priority::System, &payload);
+        self.queue_group_frame(BROADCAST_GA, Priority::System, &payload);
     }
 
     fn queue_device_descriptor_response(&mut self, destination: u16) {
@@ -1297,6 +1276,22 @@ impl Bau {
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
+    // ── Shared helpers ─────────────────────────────────────────
+
+    /// Grow-and-copy into the memory area. Returns `false` if the write
+    /// would exceed `MAX_MEMORY_SIZE`.
+    fn write_to_memory(&mut self, addr: usize, data: &[u8]) -> bool {
+        let needed = addr + data.len();
+        if needed > MAX_MEMORY_SIZE {
+            return false;
+        }
+        if needed > self.memory_area.len() {
+            self.memory_area.resize(needed, 0);
+        }
+        self.memory_area[addr..addr + data.len()].copy_from_slice(data);
+        true
+    }
+
     // ── Shared frame helpers ──────────────────────────────────
 
     fn queue_group_frame(&mut self, ga: u16, priority: Priority, payload: &[u8]) {
@@ -1309,6 +1304,10 @@ impl Bau {
             priority,
             payload,
         ));
+    }
+
+    fn queue_broadcast_frame(&mut self, payload: &[u8]) {
+        self.queue_group_frame(BROADCAST_GA, Priority::System, payload);
     }
 
     fn queue_individual_frame(&mut self, destination: u16, priority: Priority, payload: &[u8]) {

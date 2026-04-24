@@ -10,6 +10,9 @@
 
 use alloc::vec::Vec;
 
+const ENTRY_SIZE: usize = 4;
+const TSAP_OFFSET: usize = 2;
+
 /// Association table: maps TSAPs to ASAPs.
 pub struct AssociationTable {
     data: Vec<u8>,
@@ -42,7 +45,7 @@ impl AssociationTable {
 
     /// Get the TSAP for entry at `idx` (0-based).
     fn get_tsap(&self, idx: u16) -> u16 {
-        let offset = 2 + (idx as usize) * 4;
+        let offset = TSAP_OFFSET + (idx as usize) * ENTRY_SIZE;
         if offset + 2 > self.data.len() {
             return 0;
         }
@@ -51,7 +54,7 @@ impl AssociationTable {
 
     /// Get the ASAP for entry at `idx` (0-based).
     fn get_asap(&self, idx: u16) -> u16 {
-        let offset = 2 + (idx as usize) * 4 + 2;
+        let offset = TSAP_OFFSET + (idx as usize) * ENTRY_SIZE + TSAP_OFFSET;
         if offset + 2 > self.data.len() {
             return 0;
         }
