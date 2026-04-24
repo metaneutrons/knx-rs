@@ -257,15 +257,95 @@ enum TranslationCategory {
     Application,
 }
 
-/// Filter translation units by category, returning the Languages XML fragment.
-const fn filter_translations(
-    _xml: &str,
-    _languages_range: &ElementRange,
-    _category: TranslationCategory,
+/// Filter translation units by category, returning a `Languages` XML fragment.
+///
+/// Keeps only `TranslationUnit` elements whose `RefId` matches the category:
+/// - `Catalog`: `RefId` contains `_CS-` or `_CI-`
+/// - `Hardware`: `RefId` contains `_H-` or `_HP-`
+/// - `Application`: `RefId` contains `_A-` (or any unrecognized pattern)
+fn filter_translations(
+    xml: &str,
+    languages_range: &ElementRange,
+    category: TranslationCategory,
 ) -> String {
-    // TODO: implement translation splitting when we have test data with Languages
-    // For now, return empty — NeoPixel.xml has no Languages element
-    String::new()
+    let content = &xml[languages_range.children_start..languages_range.inner_end];
+
+    // Find each Language element and filter its TranslationUnits
+    let mut result = String::new();
+    let mut search_from = 0;
+
+    while let Some(lang_start) = content[search_from..].find("<Language ") {
+        let lang_abs = search_from + lang_start;
+        let Some(lang_tag_end) = content[lang_abs..].find('>') else { break };
+        let lang_tag = &content[lang_abs..=(lang_abs + lang_tag_end)];
+
+        let Some(lang_close) = content[lang_abs..].find("</Language>") else { break };
+        let lang_inner = &content[lang_abs + lang_tag_end + 1..lang_abs + lang_close];
+
+        let filtered_units = filter_units_in_language(lang_inner, category);
+        if !filtered_units.is_empty() {
+            result.push_str(lang_tag);
+            result.push_str(&filtered_units);
+            result.push_str("</Language>");
+        }
+
+        search_from = lang_abs + lang_close + "</Language>".len();
+    }
+
+    if result.is_empty() {
+        String::new()
+    } else {
+        format!("<Languages>{result}</Languages>")
+    }
+}
+
+/// Filter `TranslationUnit` elements within a single `Language` block.
+fn filter_units_in_language(lang_content: &str, category: TranslationCategory) -> String {
+    let mut result = String::new();
+    let mut search_from = 0;
+
+    while let Some(unit_start) = lang_content[search_from..].find("<TranslationUnit ") {
+        let unit_abs = search_from + unit_start;
+        let Some(unit_close) = lang_content[unit_abs..].find("</TranslationUnit>") else {
+            break;
+        };
+        let unit_end = unit_abs + unit_close + "</TranslationUnit>".len();
+        let unit_xml = &lang_content[unit_abs..unit_end];
+
+        // Extract RefId from the opening tag
+        if let Some(ref_id) = extract_attribute(unit_xml, "RefId") {
+            if matches_category(ref_id, category) {
+                result.push_str(unit_xml);
+            }
+        }
+
+        search_from = unit_end;
+    }
+
+    result
+}
+
+/// Extract an attribute value from an XML opening tag fragment.
+fn extract_attribute<'a>(tag: &'a str, attr_name: &str) -> Option<&'a str> {
+    let pattern = format!("{attr_name}=\"");
+    let start = tag.find(&pattern)? + pattern.len();
+    let end = tag[start..].find('"')? + start;
+    Some(&tag[start..end])
+}
+
+/// Check if a `TranslationUnit` `RefId` matches the given category.
+fn matches_category(ref_id: &str, category: TranslationCategory) -> bool {
+    match category {
+        TranslationCategory::Catalog => ref_id.contains("_CS-") || ref_id.contains("_CI-"),
+        TranslationCategory::Hardware => ref_id.contains("_H-") || ref_id.contains("_HP-"),
+        TranslationCategory::Application => {
+            ref_id.contains("_A-")
+                || (!ref_id.contains("_CS-")
+                    && !ref_id.contains("_CI-")
+                    && !ref_id.contains("_H-")
+                    && !ref_id.contains("_HP-"))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -389,4 +469,41 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn filter_translations_application_includes_app_units() {
+        let xml = std::fs::read_to_string("tests/fixtures/gira_small_app.xml").unwrap();
+        let manu_range = find_element_range(&xml, "Manufacturer").unwrap();
+        let lang_range = find_child_element_range(&xml, &manu_range, "Languages").unwrap();
+
+        let result = filter_translations(&xml, &lang_range, TranslationCategory::Application);
+        assert!(!result.is_empty(), "Application translations should not be empty");
+        assert!(result.contains("<Languages>"));
+        assert!(result.contains("TranslationUnit"));
+        assert!(result.contains("_A-")); // Application program RefId
+    }
+
+    #[test]
+    fn filter_translations_catalog_excludes_app_units() {
+        let xml = std::fs::read_to_string("tests/fixtures/gira_small_app.xml").unwrap();
+        let manu_range = find_element_range(&xml, "Manufacturer").unwrap();
+        let lang_range = find_child_element_range(&xml, &manu_range, "Languages").unwrap();
+
+        let result = filter_translations(&xml, &lang_range, TranslationCategory::Catalog);
+        // gira_small_app.xml only has _A- translation units, no catalog ones
+        assert!(result.is_empty(), "Catalog translations should be empty for app-only fixture");
+    }
+
+    #[test]
+    fn filter_translations_returns_empty_for_no_languages() {
+        // MINIMAL_XML has no Languages element, so this tests the None path in split_xml
+        let meta = extract_metadata_from_str(MINIMAL_XML).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let result = split_xml(MINIMAL_XML, &meta, dir.path()).unwrap();
+
+        // Verify the output files don't contain Languages
+        let catalog = fs::read_to_string(&result.catalog).unwrap();
+        assert!(!catalog.contains("<Languages>"));
+    }
+
 }

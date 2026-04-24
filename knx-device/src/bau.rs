@@ -2093,4 +2093,27 @@ mod tests {
         bau.process_frame(&frame, 0);
         assert!(bau.next_outgoing_frame().is_some());
     }
+
+    #[test]
+    fn property_ext_description_read_responds() {
+        let mut bau = test_bau();
+        device_object::set_individual_address(bau.device_mut(), 0x1101);
+
+        // Request description of ObjectType property (PID 1) on device object (type 0, instance 0)
+        bau.handle_property_ext_description_read(0x1102, 0, 0, 1, 0, 0);
+
+        let frame = bau.next_outgoing_frame();
+        assert!(frame.is_some(), "should send ext description response");
+    }
+
+    #[test]
+    fn property_ext_description_read_unsupported_type_ignored() {
+        let mut bau = test_bau();
+        device_object::set_individual_address(bau.device_mut(), 0x1101);
+
+        // descriptionType != 0 should be silently ignored
+        bau.handle_property_ext_description_read(0x1102, 0, 0, 1, 1, 0);
+
+        assert!(bau.next_outgoing_frame().is_none(), "unsupported descriptionType should not respond");
+    }
 }

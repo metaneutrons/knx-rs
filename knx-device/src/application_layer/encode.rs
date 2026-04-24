@@ -238,6 +238,19 @@ pub fn encode_property_value_ext_response(
     payload
 }
 
+/// Encode the common 3-field extended header: `object_type` (2) + `object_instance`/`property_id` (3).
+#[expect(clippy::cast_possible_truncation)]
+fn encode_ext_ot_oi_pid(buf: &mut Vec<u8>, object_type: u16, object_instance: u16, property_id: u16) {
+    let ot = object_type.to_be_bytes();
+    buf.extend_from_slice(&ot);
+    buf.push(((object_instance >> 4) & 0xFF) as u8);
+    buf.push(
+        ((object_instance & u16::from(MASK_4BIT)) << 4
+            | (property_id >> 8) & u16::from(MASK_4BIT)) as u8,
+    );
+    buf.push((property_id & 0xFF) as u8);
+}
+
 /// Helper to encode the common extended property header.
 fn encode_ext_property_header(
     buf: &mut Vec<u8>,
@@ -247,17 +260,7 @@ fn encode_ext_property_header(
     count: u8,
     start_index: u16,
 ) {
-    let ot = object_type.to_be_bytes();
-    buf.extend_from_slice(&ot);
-    #[expect(clippy::cast_possible_truncation)]
-    {
-        buf.push(((object_instance >> 4) & 0xFF) as u8);
-        buf.push(
-            ((object_instance & u16::from(MASK_4BIT)) << 4
-                | (property_id >> 8) & u16::from(MASK_4BIT)) as u8,
-        );
-        buf.push((property_id & 0xFF) as u8);
-    }
+    encode_ext_ot_oi_pid(buf, object_type, object_instance, property_id);
     buf.push(count);
     buf.extend_from_slice(&start_index.to_be_bytes());
 }
@@ -277,8 +280,10 @@ fn encode_group_value(tpci: u8, apci: u8, data: &[u8]) -> Vec<u8> {
 }
 
 /// Encode a `PropertyExtDescriptionResponse` APDU payload.
+///
+/// Uses the shared extended property header for `object_type`/`object_instance`/`property_id`,
+/// then appends `description_type`, `property_index`, and the property description fields.
 #[expect(clippy::too_many_arguments, reason = "each parameter maps to a KNX wire format field")]
-#[expect(clippy::cast_possible_truncation, reason = "property_index is 12-bit, description_type is 4-bit")]
 pub fn encode_property_ext_description_response(
     object_type: u16,
     object_instance: u16,
@@ -291,13 +296,16 @@ pub fn encode_property_ext_description_response(
     access: u8,
 ) -> Vec<u8> {
     let [hi, lo] = apci_bytes(ApduType::PropertyExtDescriptionResponse);
-    let ot = object_type.to_be_bytes();
-    let oi_pid_hi = ((object_instance >> 4) & 0xFF) as u8;
-    let oi_pid_mid = (((object_instance & u16::from(MASK_4BIT)) << 4)
-        | ((property_id >> 8) & u16::from(MASK_4BIT))) as u8;
-    let pid_lo = (property_id & 0xFF) as u8;
+    let mut payload = Vec::with_capacity(13);
+    payload.push(hi);
+    payload.push(lo);
+    // Reuse shared header for ot/oi/pid (first 5 bytes)
+    encode_ext_ot_oi_pid(&mut payload, object_type, object_instance, property_id);
+    // description_type (4 bits) + property_index (12 bits)
     let desc_idx = ((description_type & MASK_4BIT) << 4) | ((property_index >> 8) as u8 & MASK_4BIT);
-    let idx_lo = (property_index & 0xFF) as u8;
+    payload.push(desc_idx);
+    payload.push((property_index & 0xFF) as u8);
+    // Property description fields (same as standard PropertyDescriptionResponse)
     let type_byte = if write_enable {
         WRITE_ENABLE_FLAG | (pdt & MASK_6BIT)
     } else {
@@ -305,10 +313,11 @@ pub fn encode_property_ext_description_response(
     };
     let max_hi = ((max_elements >> 8) & u16::from(MASK_4BIT)) as u8;
     let max_lo = (max_elements & 0xFF) as u8;
-    alloc::vec![
-        hi, lo, ot[0], ot[1], oi_pid_hi, oi_pid_mid, pid_lo,
-        desc_idx, idx_lo, type_byte, max_hi, max_lo, access
-    ]
+    payload.push(type_byte);
+    payload.push(max_hi);
+    payload.push(max_lo);
+    payload.push(access);
+    payload
 }
 
 /// Encode an APDU into raw bytes (for transport layer connected-mode).
