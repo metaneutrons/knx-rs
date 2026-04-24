@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2025 Fabian Schmieder
+// Copyright (C) 2026 Fabian Schmieder
 
 //! Split a monolithic KNX product XML into separate files per ETS convention.
 //!

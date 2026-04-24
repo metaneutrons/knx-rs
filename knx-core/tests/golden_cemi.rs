@@ -1,7 +1,7 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2025 Fabian Schmieder
+// Copyright (C) 2026 Fabian Schmieder
 
 //! Tests against golden vectors generated from the C++ knx-openknx reference.
 

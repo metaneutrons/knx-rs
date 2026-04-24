@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2025 Fabian Schmieder
+// Copyright (C) 2026 Fabian Schmieder
 
 //! DPT golden vector tests against C++ knx-openknx reference.
 //!
