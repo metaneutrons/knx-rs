@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 0 * * 0"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }}, ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable, beta]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p knx-core -p knx-ip -p knx-prod -- --test-threads=1
+
+  test-features:
+    name: Feature combinations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: "knx-core: default features"
+        run: cargo test -p knx-core
+      - name: "knx-core: no_std (no default features)"
+        run: cargo check -p knx-core --no-default-features
+      - name: "knx-core: serde feature"
+        run: cargo test -p knx-core --features serde
+      - name: "knx-core: all features"
+        run: cargo test -p knx-core --all-features
+
+  no-std:
+    name: "no_std: ${{ matrix.target }}"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - thumbv7em-none-eabihf
+          - riscv32imc-unknown-none-elf
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p knx-core --no-default-features --target ${{ matrix.target }}
+      - run: cargo check -p knx-device --no-default-features --target ${{ matrix.target }}
+      - run: cargo check -p knx-tp --no-default-features --target ${{ matrix.target }}
+
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p knx-core -p knx-ip
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/audit@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --no-deps
