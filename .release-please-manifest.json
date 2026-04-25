@@ -1,7 +1,7 @@
 {
-  "knx-core": "0.1.0",
-  "knx-ip": "0.1.0",
-  "knx-device": "0.1.0",
-  "knx-tp": "0.1.0",
-  "knx-prod": "0.1.0"
+  "knx-core": "0.2.0",
+  "knx-ip": "0.2.0",
+  "knx-device": "0.2.0",
+  "knx-tp": "0.1.1",
+  "knx-prod": "0.1.1"
 }

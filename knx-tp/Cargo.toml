@@ -1,7 +1,7 @@
 [package]
 name = "knx-tp"
 description = "KNX TP-UART data link layer for embedded targets (Siemens TP-UART 2, OnSemi NCN5120/5130)"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 license = "GPL-3.0-only"
