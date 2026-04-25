@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+  "knx-core",
+  "knx-ip",
+  "knx-device",
+  "knx-tp",
+  "knx-prod",
+  "examples/knx-demo-device",
+  "examples/knx-demo-client",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-only"
+repository = "https://github.com/metaneutrons/knx-rs"
+homepage = "https://github.com/metaneutrons/knx-rs"
+authors = ["Fabian Schmieder"]
