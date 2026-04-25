@@ -1,0 +1,4 @@
+# ETS DLLs are proprietary — do not commit
+dlls/
+bin/
+obj/

@@ -1,0 +1,3 @@
+# Preserve line endings in test fixtures (hashing depends on exact bytes)
+*.xml binary
+*.bin binary

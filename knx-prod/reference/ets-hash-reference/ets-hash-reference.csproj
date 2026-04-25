@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Match whatever `dotnet --version` you have installed. -->
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      These DLLs must be copied from an ETS6 installation.
+      They are NOT included in the repository.
+      See README.md for instructions.
+    -->
+    <Reference Include="Knx.Ets.XmlSigning">
+      <HintPath>dlls/Knx.Ets.XmlSigning.dll</HintPath>
+    </Reference>
+    <Reference Include="Knx.Ets.Xml.RegistrationRelevanceInformation">
+      <HintPath>dlls/Knx.Ets.Xml.RegistrationRelevanceInformation.dll</HintPath>
+    </Reference>
+    <Reference Include="Knx.Ets.Common">
+      <HintPath>dlls/Knx.Ets.Common.dll</HintPath>
+    </Reference>
+    <Reference Include="Knx.Ets.Common.Types">
+      <HintPath>dlls/Knx.Ets.Common.Types.dll</HintPath>
+    </Reference>
+    <Reference Include="Knx.Ets.Xml.ObjectModel">
+      <HintPath>dlls/Knx.Ets.Xml.ObjectModel.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>
