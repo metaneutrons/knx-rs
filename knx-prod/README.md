@@ -2,9 +2,11 @@
 
 Cross-platform `.knxprod` generator for KNX ETS product databases — no Windows, no ETS, no .NET required.
 
+Part of the [knx-rs](https://github.com/metaneutrons/knx-rs) workspace.
+
 ## What it does
 
-Takes a monolithic KNX product XML (as produced by [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer)) and generates a signed `.knxprod` ZIP archive importable by ETS.
+Takes a monolithic KNX product XML and generates a signed `.knxprod` ZIP archive importable by ETS. The XML can come from [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) or be generated from Rust code via an xtask (see [knx-rs README](https://github.com/metaneutrons/knx-rs#generating-knxprod-files)).
 
 The pipeline:
 
@@ -30,6 +32,13 @@ The `Hash` attribute on `<ApplicationProgram>` is computed by the closed-source 
 All 89 registration-relevant element types from the ETS registry are implemented. See [HASHING.md](HASHING.md) for the full algorithm documentation.
 
 ## Usage
+
+### CLI
+
+```sh
+cargo install knx-prod
+knx-prod MyDevice.xml -o MyDevice.knxprod
+```
 
 ### As a library
 
