@@ -7,6 +7,11 @@ rust-version = "1.85"
 license = "GPL-3.0-only"
 repository = "https://github.com/metaneutrons/knx-rs"
 authors = ["Fabian Schmieder"]
+readme = "../README.md"
+homepage = "https://github.com/metaneutrons/knx-rs"
+documentation = "https://docs.rs/knx_ip"
+keywords = ["knx", "home-automation", "knxnet-ip", "tunnel", "multicast"]
+categories = ["network-programming", "hardware-support"]
 
 [dependencies]
 knx-core = { path = "../knx-core" }

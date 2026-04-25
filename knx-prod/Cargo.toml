@@ -7,6 +7,11 @@ rust-version = "1.85"
 license = "GPL-3.0-only"
 repository = "https://github.com/metaneutrons/knx-rs"
 authors = ["Fabian Schmieder"]
+readme = "README.md"
+homepage = "https://github.com/metaneutrons/knx-rs"
+documentation = "https://docs.rs/knx_prod"
+keywords = ["knx", "ets", "knxprod", "home-automation", "signing"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 base64 = "0.22.1"
