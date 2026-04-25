@@ -22,6 +22,7 @@ A platform-independent KNX protocol stack in Rust — for embedded devices, serv
 | **[knx-ip](knx-ip/)** | Async KNXnet/IP tunnel, router, discovery, and device server (tokio) | ❌ |
 | **[knx-device](knx-device/)** | KNX device stack — group objects, ETS programming, BAU | ✅ |
 | **[knx-tp](knx-tp/)** | TP-UART data link layer for embedded targets *(WIP)* | ✅ |
+| **[knx-prod](knx-prod/)** | `.knxprod` generator — hash, sign, and package ETS product databases | ❌ |
 
 ## Features
 
@@ -48,10 +49,18 @@ A platform-independent KNX protocol stack in Rust — for embedded devices, serv
 - **Property system** — data-backed and callback-backed properties with `const` metadata
 - **Interface objects** — device object, application program, with unified indexed access
 - **Table objects** — address table, association table, group object table (ETS-loadable)
-- **Group objects** — `ComFlag` state machine, DPT-aware values (`value_as_f64`, `set_value_if_changed`), update callbacks
-- **Bus Access Unit (BAU)** — processes CEMI frames, handles `GroupValueRead/Write`, `PropertyValueRead/Write`, `MemoryRead/Write`, `DeviceDescriptorRead`, `IndividualAddressWrite`, connected-mode transport
+- **Group objects** — `ComFlag` state machine, DPT-aware values, update callbacks
+- **Bus Access Unit (BAU)** — processes CEMI frames, handles all KNX application-layer services including connected-mode transport
 - **Memory management** — `MemoryBackend` trait, RAM backend, C++-compatible persistence format
 - **`no_std` + `alloc`** — runs on embedded targets
+
+### knx-prod
+
+- **Hash** — clean-room Rust reimplementation of the ETS `Knx.Ets.XmlSigning.dll` hashing algorithm, verified byte-exact against 28 test files from 5 manufacturers
+- **Sign** — compute registration-relevant MD5 hash, patch fingerprint into application IDs
+- **Split** — split monolithic XML into Catalog.xml, Hardware.xml, Application.xml with per-category translation filtering
+- **Package** — ZIP into `.knxprod` importable by ETS
+- **No C# dependency** — replaces the Windows-only `OpenKNXproducer` signing step entirely
 
 ## Quick Start
 
@@ -93,13 +102,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut server = DeviceServer::start(Ipv4Addr::UNSPECIFIED).await?;
 
     loop {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
         tokio::select! {
             Some(event) = server.recv() => {
                 match event {
                     ServerEvent::TunnelFrame(frame)
                     | ServerEvent::RoutingFrame(frame) => {
-                        bau.process_frame(&frame);
-                        bau.poll();
+                        bau.process_frame(&frame, now);
+                        bau.poll(now);
                         while let Some(out) = bau.next_outgoing_frame() {
                             server.send_frame(out).await?;
                         }
@@ -110,6 +124,90 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 ```
+
+## Generating .knxprod Files
+
+`knx-prod` replaces the Windows-only C# toolchain (`OpenKNXproducer` + `Knx.Ets.XmlSigning.dll`) with a single Rust binary. No .NET, no Wine, no Windows VM required.
+
+### Workflow
+
+```
+OpenKNXproducer (XML authoring)     knx-prod (signing + packaging)
+         ↓                                    ↓
+   MyDevice.xml  ──────────────────→  MyDevice.knxprod  ──→  ETS Import
+```
+
+You still use [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) (or any tool) to author the product XML. `knx-prod` handles the signing and packaging step — the part that previously required the closed-source ETS DLLs on Windows.
+
+### Local usage
+
+```sh
+# Build
+cargo build --release -p knx-prod
+
+# Generate .knxprod from product XML
+./target/release/knx-prod MyDevice.xml -o MyDevice.knxprod
+```
+
+Output:
+
+```
+Input:  MyDevice.xml
+Output: MyDevice.knxprod
+Manufacturer: M-00FA
+Application:  M-00FA_A-0001-00-0001
+Namespace:    project/20
+Done.
+```
+
+### As a library
+
+```rust
+use std::path::Path;
+use knx_prod::generate_knxprod;
+
+generate_knxprod(
+    Path::new("MyDevice.xml"),
+    Path::new("MyDevice.knxprod"),
+).expect("failed to generate knxprod");
+```
+
+### CI Integration
+
+Add `knx-prod` to your GitHub Actions workflow to generate `.knxprod` files on every push — no Windows runner needed:
+
+```yaml
+jobs:
+  knxprod:
+    name: Generate .knxprod
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build knx-prod
+        run: cargo build --release -p knx-prod
+
+      - name: Generate .knxprod
+        run: ./target/release/knx-prod firmware/MyDevice.xml -o MyDevice.knxprod
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: knxprod
+          path: MyDevice.knxprod
+```
+
+For release workflows, attach the `.knxprod` as a release asset alongside your firmware binary.
+
+### How the hash works
+
+The `Hash` attribute on `<ApplicationProgram>` is computed by a clean-room Rust reimplementation of the closed-source `Knx.Ets.XmlSigning.dll`. The algorithm was reconstructed through analysis of the ETS signing process and verified byte-exact against 28 test files from 5 manufacturers (MDT, Gira, ABB, Siemens, OpenKNX).
+
+Key aspects: forward-only XML reader with recursively sorted children, .NET `InvariantCulture` string comparison, 89 registration-relevant element types, IEEE 754 double serialization for float attributes, parent-conditional ordering for `ParameterRefRef` elements.
+
+Full documentation: [knx-prod/HASHING.md](knx-prod/HASHING.md)
 
 ## DPT Coverage
 
@@ -140,7 +238,8 @@ Validated against the [OpenKNX/knx](https://github.com/OpenKNX/knx) C++ referenc
 
 - **Golden test vectors** — C++ harness (`test-vectors/generate.cpp`) generates JSON fixtures for CEMI frames, CEMI setters, and DPT conversions, verified byte-for-byte in Rust
 - **Integration tests** — tunnel server ↔ client on real UDP loopback (connect, heartbeat, frame exchange, disconnect)
-- **Unit tests** — every protocol layer, state machine, and parser
+- **Unit tests** — 364 tests across all crates covering every protocol layer, state machine, and parser
+- **knxprod hash verification** — 28 test files from 5 manufacturers, byte-exact match with ETS DLL output
 
 ```sh
 # Run all tests
@@ -151,6 +250,9 @@ cargo test -p knx-core --all-features
 
 # Verify no_std
 cargo check -p knx-core --no-default-features --target thumbv7em-none-eabihf
+
+# knxprod hash tests
+cargo test -p knx-prod
 ```
 
 ## Architecture
@@ -161,13 +263,40 @@ Application code ←→ GroupObjects ←→ BAU ←→ DeviceServer (port 3671)
                               InterfaceObjects  Multicast    Tunnel
                                      ↕         (routing)   (ETS)
                                 DeviceMemory
+
+OpenKNXproducer ──→ Product XML ──→ knx-prod ──→ .knxprod ──→ ETS
+```
+
+## Development
+
+```sh
+# Build everything
+cargo build --workspace
+
+# Run all tests (integration tests need single-threaded)
+cargo test -- --test-threads=1
+
+# Clippy (pedantic + nursery)
+cargo clippy --workspace
+
+# Format
+cargo fmt --all
+
+# Generate docs
+cargo doc --no-deps --open
+
+# Check no_std targets
+cargo check -p knx-core --no-default-features --target thumbv7em-none-eabihf
+cargo check -p knx-device --no-default-features --target thumbv7em-none-eabihf
 ```
 
 ## Acknowledgements
 
 This project builds on the work of the [OpenKNX](https://github.com/OpenKNX) community and the original [thelsing/knx](https://github.com/thelsing/knx) C++ stack by Thomas Kunze. The DPT conversion logic, CEMI frame layout, and protocol constants are derived from the [OpenKNX/knx](https://github.com/OpenKNX/knx) fork (v2.3.1), which is maintained by the OpenKNX team.
 
-We are grateful for their work in creating and maintaining an open-source KNX device stack that made this Rust reimplementation possible.
+The `.knxprod` hashing algorithm was reconstructed through analysis of the `Knx.Ets.XmlSigning.dll` from the ETS distribution. No ETS source code was used — the implementation is a clean-room reimplementation verified against the DLL's output.
+
+We are grateful for the OpenKNX community's work in creating and maintaining an open-source KNX device stack that made this Rust reimplementation possible.
 
 ## License
 
