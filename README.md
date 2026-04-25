@@ -127,19 +127,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Generating .knxprod Files
 
-`knx-prod` replaces the Windows-only C# toolchain (`OpenKNXproducer` + `Knx.Ets.XmlSigning.dll`) with a single Rust binary. No .NET, no Wine, no Windows VM required.
+`knx-prod` replaces the entire Windows-only C# toolchain (`OpenKNXproducer` + `Knx.Ets.XmlSigning.dll`) with pure Rust. No .NET, no Wine, no Windows VM required.
 
-### Workflow
+### Two workflows
+
+**Option A: Rust-native (recommended)** — generate the product XML from your Rust code, then sign and package. No external tools at all.
 
 ```
-OpenKNXproducer (XML authoring)     knx-prod (signing + packaging)
-         ↓                                    ↓
-   MyDevice.xml  ──────────────────→  MyDevice.knxprod  ──→  ETS Import
+Rust source code (GO definitions, parameters)
+         ↓  cargo xtask generate-xml
+   MyDevice.xml (generated, not hand-written)
+         ↓  cargo xtask knxprod  (or: knx-prod CLI)
+   MyDevice.knxprod
+         ↓
+   ETS Import
 ```
 
-You still use [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) (or any tool) to author the product XML. `knx-prod` handles the signing and packaging step — the part that previously required the closed-source ETS DLLs on Windows.
+This is the approach used by [SnapDog](https://github.com/metaneutrons/snapdog): a Rust `xtask` reads the group object definitions from the device firmware (SSOT — the same constants that configure the BAU at runtime) and generates the complete ETS product XML. Then `knx-prod` signs and packages it. The XML is a build artifact, never hand-edited.
 
-### Local usage
+**Option B: OpenKNXproducer + knx-prod** — use OpenKNXproducer for XML authoring, replace only the signing step.
+
+```
+OpenKNXproducer (XML authoring, GUI)
+         ↓
+   MyDevice.xml (hand-authored)
+         ↓  knx-prod
+   MyDevice.knxprod
+         ↓
+   ETS Import
+```
+
+### Writing an xtask for XML generation
+
+Create a `xtask/` crate in your workspace that imports your device's GO definitions and generates the XML:
+
+```rust
+// xtask/src/main.rs
+use my_device::group_objects::{ZONE_GOS, CLIENT_GOS, MAX_ZONES};
+
+fn main() {
+    let xml = generate_product_xml();  // builds KNX XML from GO constants
+    std::fs::write("MyDevice.xml", &xml).unwrap();
+
+    // Optionally, run knx-prod directly:
+    knx_prod::generate_knxprod(
+        &std::path::Path::new("MyDevice.xml"),
+        &std::path::Path::new("MyDevice.knxprod"),
+    ).unwrap();
+}
+```
+
+The key insight: your GO definitions, parameter memory layout, and DPT mappings are `const` data in your firmware crate. The xtask reads them at build time to generate the XML — no duplication, no drift between firmware and ETS configuration.
+
+### Local usage (CLI)
 
 ```sh
 # Build
@@ -147,17 +187,6 @@ cargo build --release -p knx-prod
 
 # Generate .knxprod from product XML
 ./target/release/knx-prod MyDevice.xml -o MyDevice.knxprod
-```
-
-Output:
-
-```
-Input:  MyDevice.xml
-Output: MyDevice.knxprod
-Manufacturer: M-00FA
-Application:  M-00FA_A-0001-00-0001
-Namespace:    project/20
-Done.
 ```
 
 ### As a library
@@ -174,7 +203,7 @@ generate_knxprod(
 
 ### CI Integration
 
-Add `knx-prod` to your GitHub Actions workflow to generate `.knxprod` files on every push — no Windows runner needed:
+Add `.knxprod` generation to your GitHub Actions workflow — runs on Linux, no Windows runner needed:
 
 ```yaml
 jobs:
@@ -186,17 +215,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Build knx-prod
-        run: cargo build --release -p knx-prod
+      # Option A: xtask generates XML + knxprod in one step
+      - run: cargo xtask knxprod
 
-      - name: Generate .knxprod
-        run: ./target/release/knx-prod firmware/MyDevice.xml -o MyDevice.knxprod
+      # Option B: knx-prod CLI on existing XML
+      # - run: cargo run --release -p knx-prod -- firmware/MyDevice.xml -o MyDevice.knxprod
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: knxprod
-          path: MyDevice.knxprod
+          path: "*.knxprod"
 ```
 
 For release workflows, attach the `.knxprod` as a release asset alongside your firmware binary.
