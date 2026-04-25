@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Pre-commit hook: formatting and linting
+set -e
+
+echo "🔍 pre-commit: cargo fmt --check"
+cargo fmt --all -- --check 2>/dev/null || {
+    echo "❌ Formatting issues found. Run: cargo fmt --all"
+    exit 1
+}
+
+echo "🔍 pre-commit: cargo clippy"
+cargo clippy --workspace -- -D warnings 2>/dev/null || {
+    echo "❌ Clippy warnings found."
+    exit 1
+}
+
+echo "✅ pre-commit: OK"

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Pre-push hook: full test suite
+set -e
+
+echo "🧪 pre-push: cargo test"
+cargo test --workspace -- --test-threads=1 2>/dev/null || {
+    echo "❌ Tests failed."
+    exit 1
+}
+
+echo "✅ pre-push: OK"
