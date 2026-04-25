@@ -19,6 +19,10 @@ on:
         description: "Publish knx-tp"
         type: string
         default: "false"
+      knx_prod_release:
+        description: "Publish knx-prod"
+        type: string
+        default: "false"
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,8 +37,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p knx-core -p knx-ip -p knx-device -p knx-tp
-      - run: cargo clippy -p knx-core -p knx-ip -p knx-device -p knx-tp -- -D warnings
+      - run: cargo test -p knx-core -p knx-ip -p knx-device -p knx-tp -p knx-prod
+      - run: cargo clippy -p knx-core -p knx-ip -p knx-device -p knx-tp -p knx-prod -- -D warnings
       - run: cargo check -p knx-core --no-default-features
       - run: cargo check -p knx-device --no-default-features
       - run: cargo check -p knx-tp --no-default-features
@@ -132,3 +136,25 @@ jobs:
       - name: Publish to crates.io
         if: steps.check_token.outputs.has_token == 'true'
         run: cargo publish -p knx-tp --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # knx-prod is standalone (no workspace dependencies)
+  publish-knx-prod:
+    name: "Publish knx-prod"
+    needs: verify
+    runs-on: ubuntu-latest
+    if: inputs.knx_prod_release == 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check for CARGO_REGISTRY_TOKEN
+        id: check_token
+        run: |
+          if [[ -n "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CARGO_REGISTRY_TOKEN not set — skipping crates.io publish"
+          fi
+      - name: Publish to crates.io
+        if: steps.check_token.outputs.has_token == 'true'
+        run: cargo publish -p knx-prod --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
