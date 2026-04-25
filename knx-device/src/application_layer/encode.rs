@@ -7,10 +7,10 @@ use alloc::vec::Vec;
 
 use knx_core::message::ApduType;
 
-use crate::property::PropertyDescription;
 use super::{
     DESCRIPTOR_TYPE_UNSUPPORTED, MASK_4BIT, MASK_6BIT, MASK_12BIT, WRITE_ENABLE_FLAG, apci_bytes,
 };
+use crate::property::PropertyDescription;
 
 /// Encode a `GroupValueWrite` APDU payload.
 pub fn encode_group_value_write(data: &[u8]) -> Vec<u8> {

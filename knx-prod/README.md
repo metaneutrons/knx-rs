@@ -2,7 +2,7 @@
 
 Cross-platform `.knxprod` generator for KNX ETS product databases — no Windows, no ETS, no .NET required.
 
-Part of the [knx-rs](https://github.com/metaneutrons/knx-rs) workspace.
+Part of the [knx-rs](https://github.com/metaneutrons/knx-rs) repository.
 
 ## What it does
 

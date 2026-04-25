@@ -273,7 +273,10 @@ async fn full_device_stack_group_read_response() {
         .get_mut(1)
         .unwrap()
         .set_dpt(DPT_VALUE_TEMP);
-    bau.group_objects_mut().get_mut(2).unwrap().set_dpt(DPT_SWITCH);
+    bau.group_objects_mut()
+        .get_mut(2)
+        .unwrap()
+        .set_dpt(DPT_SWITCH);
 
     // Address table: own address + 2 group addresses
     bau.address_table_mut()

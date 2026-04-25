@@ -119,7 +119,8 @@ impl Property {
                     return 0;
                 }
                 let elem_size = self.element_size() as usize;
-                let read_count = u8::try_from(data.len().checked_div(elem_size).unwrap_or(1)).unwrap_or(u8::MAX);
+                let read_count =
+                    u8::try_from(data.len().checked_div(elem_size).unwrap_or(1)).unwrap_or(u8::MAX);
                 buf.extend_from_slice(&data);
                 read_count
             }

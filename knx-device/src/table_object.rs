@@ -275,7 +275,14 @@ impl TableObject {
         let size = self.data_size.to_be_bytes();
         let crc_be = crc.to_be_bytes();
         [
-            size[0], size[1], size[2], size[3], MCB_CRC_CONTROL, MCB_ACCESS, crc_be[0], crc_be[1],
+            size[0],
+            size[1],
+            size[2],
+            size[3],
+            MCB_CRC_CONTROL,
+            MCB_ACCESS,
+            crc_be[0],
+            crc_be[1],
         ]
     }
 
