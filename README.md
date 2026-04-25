@@ -163,6 +163,7 @@ Create a `xtask/` crate in your workspace that imports your device's GO definiti
 
 ```rust
 // xtask/src/main.rs
+use std::path::Path;
 use my_device::group_objects::{ZONE_GOS, CLIENT_GOS, MAX_ZONES};
 
 fn main() {
@@ -171,8 +172,8 @@ fn main() {
 
     // Optionally, run knx-prod directly:
     knx_prod::generate_knxprod(
-        &std::path::Path::new("MyDevice.xml"),
-        &std::path::Path::new("MyDevice.knxprod"),
+        Path::new("MyDevice.xml"),
+        Path::new("MyDevice.knxprod"),
     ).unwrap();
 }
 ```
@@ -182,24 +183,19 @@ The key insight: your GO definitions, parameter memory layout, and DPT mappings 
 ### Local usage (CLI)
 
 ```sh
-# Build
+# Install from crates.io
+cargo install knx-prod
+
+# Or build from source
 cargo build --release -p knx-prod
 
 # Generate .knxprod from product XML
-./target/release/knx-prod MyDevice.xml -o MyDevice.knxprod
+knx-prod MyDevice.xml -o MyDevice.knxprod
 ```
 
 ### As a library
 
-```rust
-use std::path::Path;
-use knx_prod::generate_knxprod;
-
-generate_knxprod(
-    Path::new("MyDevice.xml"),
-    Path::new("MyDevice.knxprod"),
-).expect("failed to generate knxprod");
-```
+Add `knx-prod` to your `Cargo.toml` (without the `cli` feature) and call `knx_prod::generate_knxprod()` — see the xtask example above.
 
 ### CI Integration
 
@@ -211,7 +207,7 @@ jobs:
     name: Generate .knxprod
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -292,7 +288,7 @@ Application code ←→ GroupObjects ←→ BAU ←→ DeviceServer (port 3671)
                                      ↕         (routing)   (ETS)
                                 DeviceMemory
 
-OpenKNXproducer ──→ Product XML ──→ knx-prod ──→ .knxprod ──→ ETS
+Rust xtask / OpenKNXproducer ──→ Product XML ──→ knx-prod ──→ .knxprod ──→ ETS
 ```
 
 ## Development
