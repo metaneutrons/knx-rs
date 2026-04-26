@@ -88,17 +88,23 @@ mod tests {
 
     #[test]
     fn zip_preserves_directory_structure() {
-        let dir = tempfile::tempdir().unwrap();
-        let manu_dir = dir.path().join("M-00FA");
+        let source = tempfile::tempdir().unwrap();
+        let manu_dir = source.path().join("M-00FA");
         fs::create_dir_all(&manu_dir).unwrap();
         fs::write(manu_dir.join("test.xml"), "content").unwrap();
 
-        let output = dir.path().join("test.knxprod");
-        create_knxprod(dir.path(), &output).unwrap();
+        let out_dir = tempfile::tempdir().unwrap();
+        let output = out_dir.path().join("test.knxprod");
+        create_knxprod(source.path(), &output).unwrap();
 
         let file = fs::File::open(&output).unwrap();
         let mut archive = zip::ZipArchive::new(file).unwrap();
-        let name = archive.by_index(0).unwrap().name().to_string();
-        assert!(name.starts_with("M-00FA/"), "got: {name}");
+        let names: Vec<String> = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect();
+        assert!(
+            names.iter().any(|n| n.starts_with("M-00FA/")),
+            "no M-00FA/ entry found in: {names:?}"
+        );
     }
 }
