@@ -17,7 +17,7 @@ categories = ["embedded", "no-std", "hardware-support"]
 default = []
 
 [dependencies]
-knx-core = { path = "../knx-core", default-features = false }
+knx-core = { path = "../knx-core", version = "0.1.0", default-features = false }
 
 [lints.rust]
 missing_docs = "warn"

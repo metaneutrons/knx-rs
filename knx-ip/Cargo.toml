@@ -14,14 +14,14 @@ keywords = ["knx", "home-automation", "knxnet-ip", "tunnel", "multicast"]
 categories = ["network-programming", "hardware-support"]
 
 [dependencies]
-knx-core = { path = "../knx-core" }
+knx-core = { path = "../knx-core", version = "0.1.0" }
 tokio = { version = "1", features = ["net", "time", "sync", "macros", "rt"] }
 tracing = "0.1"
 thiserror = "2"
 
 [dev-dependencies]
-knx-device = { path = "../knx-device" }
-knx-core = { path = "../knx-core" }
+knx-device = { path = "../knx-device", version = "0.1.0" }
+knx-core = { path = "../knx-core", version = "0.1.0" }
 tokio = { version = "1", features = ["full", "test-util"] }
 
 [lints.rust]

@@ -13,9 +13,9 @@ name = "knx_demo_device"
 path = "src/lib.rs"
 
 [dependencies]
-knx-core = { path = "../../knx-core" }
-knx-ip = { path = "../../knx-ip" }
-knx-device = { path = "../../knx-device" }
+knx-core = { path = "../../knx-core", version = "0.1.0" }
+knx-ip = { path = "../../knx-ip", version = "0.1.0" }
+knx-device = { path = "../../knx-device", version = "0.1.0" }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
