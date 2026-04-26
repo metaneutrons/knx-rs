@@ -4,7 +4,7 @@
 //! `ApplicationProgram` hashing for KNX ETS product databases.
 //!
 //! Computes the registration-relevant MD5 hash over the `ApplicationProgram`
-//! XML subtree, following the ETS ApplicationProgram hashing algorithm.
+//! XML subtree, following the ETS `ApplicationProgram` hashing algorithm.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
