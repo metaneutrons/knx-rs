@@ -47,7 +47,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p knx-core -p knx-ip -p knx-prod -- --test-threads=1
+      - run: cargo test -p knx-rs-core -p knx-rs-ip -p knx-rs-prod -- --test-threads=1
 
   test-features:
     name: Feature combinations
@@ -56,14 +56,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: "knx-core: default features"
-        run: cargo test -p knx-core
-      - name: "knx-core: no_std (no default features)"
-        run: cargo check -p knx-core --no-default-features
-      - name: "knx-core: serde feature"
-        run: cargo test -p knx-core --features serde
-      - name: "knx-core: all features"
-        run: cargo test -p knx-core --all-features
+      - name: "knx-rs-core: default features"
+        run: cargo test -p knx-rs-core
+      - name: "knx-rs-core: no_std (no default features)"
+        run: cargo check -p knx-rs-core --no-default-features
+      - name: "knx-rs-core: serde feature"
+        run: cargo test -p knx-rs-core --features serde
+      - name: "knx-rs-core: all features"
+        run: cargo test -p knx-rs-core --all-features
 
   no-std:
     name: "no_std: ${{ matrix.target }}"
@@ -79,9 +79,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p knx-core --no-default-features --target ${{ matrix.target }}
-      - run: cargo check -p knx-device --no-default-features --target ${{ matrix.target }}
-      - run: cargo check -p knx-tp --no-default-features --target ${{ matrix.target }}
+      - run: cargo check -p knx-rs-core --no-default-features --target ${{ matrix.target }}
+      - run: cargo check -p knx-rs-device --no-default-features --target ${{ matrix.target }}
+      - run: cargo check -p knx-rs-tp --no-default-features --target ${{ matrix.target }}
 
   msrv:
     name: MSRV (1.85)
@@ -92,7 +92,7 @@ jobs:
         with:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p knx-core -p knx-ip
+      - run: cargo check -p knx-rs-core -p knx-rs-ip
 
   security:
     name: Security Audit
