@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.1](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.1.0...knx-rs-v0.1.1) (2026-04-27)
+
+
+### Bug Fixes
+
+* add version to inter-crate path dependencies for crates.io ([893405e](https://github.com/metaneutrons/knx-rs/commit/893405e11f78f789829e94290e5a5a2dd1e1fdcf))
+* **ci:** handle already-published crates in publish workflow ([7b54ec5](https://github.com/metaneutrons/knx-rs/commit/7b54ec56f27c6c9abe2941fc7a47894807b6e6ed))
+* **ci:** update workflow crate names to knx-rs-* namespace ([db65590](https://github.com/metaneutrons/knx-rs/commit/db6559057c30c51421850dd70f8a2e8556c5fe2a))
+* **knx-prod:** flaky zip test — write output outside source dir ([51b9c21](https://github.com/metaneutrons/knx-rs/commit/51b9c2129c05229fd139c0155c87e513162e6ed7))
+
 ## 0.1.0 (2026-04-26)
 
 
