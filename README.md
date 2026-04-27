@@ -6,9 +6,9 @@
 [![no_std](https://img.shields.io/badge/no__std-compatible-green.svg)](https://docs.rust-embedded.org/book/)
 
 <!-- Uncomment after publishing to crates.io:
-[![knx-core](https://img.shields.io/crates/v/knx-core.svg?label=knx-core)](https://crates.io/crates/knx-core)
-[![knx-ip](https://img.shields.io/crates/v/knx-ip.svg?label=knx-ip)](https://crates.io/crates/knx-ip)
-[![knx-device](https://img.shields.io/crates/v/knx-device.svg?label=knx-device)](https://crates.io/crates/knx-device)
+[![knx-rs-core](https://img.shields.io/crates/v/knx-core.svg?label=knx-core)](https://crates.io/crates/knx-core)
+[![knx-rs-ip](https://img.shields.io/crates/v/knx-ip.svg?label=knx-ip)](https://crates.io/crates/knx-ip)
+[![knx-rs-device](https://img.shields.io/crates/v/knx-device.svg?label=knx-device)](https://crates.io/crates/knx-device)
 [![docs.rs](https://img.shields.io/docsrs/knx-core)](https://docs.rs/knx-core)
 -->
 
@@ -18,11 +18,11 @@ A platform-independent KNX protocol stack in Rust — for embedded devices, serv
 
 | Crate | Description | `no_std` |
 |-------|-------------|----------|
-| **[knx-core](knx-core/)** | Protocol types, CEMI frames, DPT conversions, KNXnet/IP frame types | ✅ |
-| **[knx-ip](knx-ip/)** | Async KNXnet/IP tunnel, router, discovery, and device server (tokio) | ❌ |
-| **[knx-device](knx-device/)** | KNX device stack — group objects, ETS programming, BAU | ✅ |
-| **[knx-tp](knx-tp/)** | TP-UART data link layer for embedded targets *(WIP)* | ✅ |
-| **[knx-prod](knx-prod/)** | `.knxprod` generator — hash, sign, and package ETS product databases | ❌ |
+| **[knx-rs-core](knx-core/)** | Protocol types, CEMI frames, DPT conversions, KNXnet/IP frame types | ✅ |
+| **[knx-rs-ip](knx-ip/)** | Async KNXnet/IP tunnel, router, discovery, and device server (tokio) | ❌ |
+| **[knx-rs-device](knx-device/)** | KNX device stack — group objects, ETS programming, BAU | ✅ |
+| **[knx-rs-tp](knx-tp/)** | TP-UART data link layer for embedded targets *(WIP)* | ✅ |
+| **[knx-rs-prod](knx-prod/)** | `.knxprod` generator — hash, sign, and package ETS product databases | ❌ |
 
 ## Features
 
@@ -67,8 +67,8 @@ A platform-independent KNX protocol stack in Rust — for embedded devices, serv
 ### Client: read from a KNX gateway
 
 ```rust
-use knx_core::dpt::{self, DPT_VALUE_TEMP};
-use knx_ip::{KnxConnection, connect, parse_url};
+use knx_rs_core::dpt::{self, DPT_VALUE_TEMP};
+use knx_rs_ip::{KnxConnection, connect, parse_url};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -88,9 +88,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 use std::net::Ipv4Addr;
-use knx_device::{bau::Bau, device_object, group_object::GroupObject};
-use knx_ip::tunnel_server::{DeviceServer, ServerEvent};
-use knx_core::dpt::DPT_VALUE_TEMP;
+use knx_rs_device::{bau::Bau, device_object, group_object::GroupObject};
+use knx_rs_ip::tunnel_server::{DeviceServer, ServerEvent};
+use knx_rs_core::dpt::DPT_VALUE_TEMP;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -171,7 +171,7 @@ fn main() {
     std::fs::write("MyDevice.xml", &xml).unwrap();
 
     // Optionally, run knx-prod directly:
-    knx_prod::generate_knxprod(
+    knx_rs_prod::generate_knxprod(
         Path::new("MyDevice.xml"),
         Path::new("MyDevice.knxprod"),
     ).unwrap();
@@ -187,7 +187,7 @@ The key insight: your GO definitions, parameter memory layout, and DPT mappings 
 cargo install knx-prod
 
 # Or build from source
-cargo build --release -p knx-prod
+cargo build --release -p knx-rs-prod
 
 # Generate .knxprod from product XML
 knx-prod MyDevice.xml -o MyDevice.knxprod
@@ -195,7 +195,7 @@ knx-prod MyDevice.xml -o MyDevice.knxprod
 
 ### As a library
 
-Add `knx-prod` to your `Cargo.toml` (without the `cli` feature) and call `knx_prod::generate_knxprod()` — see the xtask example above.
+Add `knx-prod` to your `Cargo.toml` (without the `cli` feature) and call `knx_rs_prod::generate_knxprod()` — see the xtask example above.
 
 ### CI Integration
 
@@ -215,7 +215,7 @@ jobs:
       - run: cargo xtask knxprod
 
       # Option B: knx-prod CLI on existing XML
-      # - run: cargo run --release -p knx-prod -- firmware/MyDevice.xml -o MyDevice.knxprod
+      # - run: cargo run --release -p knx-rs-prod -- firmware/MyDevice.xml -o MyDevice.knxprod
 
       - uses: actions/upload-artifact@v4
         with:
@@ -231,7 +231,7 @@ The `Hash` attribute on `<ApplicationProgram>` is computed by a clean-room Rust 
 
 Key aspects: forward-only XML reader with recursively sorted children, .NET `InvariantCulture` string comparison, 89 registration-relevant element types, IEEE 754 double serialization for float attributes, parent-conditional ordering for `ParameterRefRef` elements.
 
-Full documentation: [knx-prod/HASHING.md](knx-prod/HASHING.md)
+Full documentation: [knx-rs-prod/HASHING.md](knx-rs-prod/HASHING.md)
 
 ## DPT Coverage
 
@@ -270,13 +270,13 @@ Validated against the [OpenKNX/knx](https://github.com/OpenKNX/knx) C++ referenc
 cargo test -- --test-threads=1
 
 # Run with all features
-cargo test -p knx-core --all-features
+cargo test -p knx-rs-core --all-features
 
 # Verify no_std
-cargo check -p knx-core --no-default-features --target thumbv7em-none-eabihf
+cargo check -p knx-rs-core --no-default-features --target thumbv7em-none-eabihf
 
 # knxprod hash tests
-cargo test -p knx-prod
+cargo test -p knx-rs-prod
 ```
 
 ## Architecture
@@ -310,8 +310,8 @@ cargo fmt --all
 cargo doc --no-deps --open
 
 # Check no_std targets
-cargo check -p knx-core --no-default-features --target thumbv7em-none-eabihf
-cargo check -p knx-device --no-default-features --target thumbv7em-none-eabihf
+cargo check -p knx-rs-core --no-default-features --target thumbv7em-none-eabihf
+cargo check -p knx-rs-device --no-default-features --target thumbv7em-none-eabihf
 ```
 
 ## Acknowledgements

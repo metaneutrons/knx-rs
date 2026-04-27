@@ -1,0 +1,25 @@
+[package]
+name = "knx-rs-demo-device"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "knx-rs-demo-device"
+path = "src/main.rs"
+
+[lib]
+name = "knx_rs_demo_device"
+path = "src/lib.rs"
+
+[dependencies]
+knx-rs-core = { path = "../../knx-rs-core", version = "0.1.0" }
+knx-rs-ip = { path = "../../knx-rs-ip", version = "0.1.0" }
+knx-rs-device = { path = "../../knx-rs-device", version = "0.1.0" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+libm = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }

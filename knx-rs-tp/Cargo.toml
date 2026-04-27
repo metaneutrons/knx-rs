@@ -1,0 +1,35 @@
+[package]
+name = "knx-rs-tp"
+description = "KNX TP-UART data link layer for embedded targets (Siemens TP-UART 2, OnSemi NCN5120/5130)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "../README.md"
+homepage.workspace = true
+documentation = "https://docs.rs/knx_rs_tp"
+keywords = ["knx", "home-automation", "tp-uart", "embedded", "no-std"]
+categories = ["embedded", "no-std", "hardware-support"]
+
+[features]
+default = []
+
+[dependencies]
+knx-rs-core = { path = "../knx-rs-core", version = "0.1.0", default-features = false }
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+unused_qualifications = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
