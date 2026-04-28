@@ -38,22 +38,43 @@ jobs:
             echo "has_token=false" >> "$GITHUB_OUTPUT"
             echo "::warning::CARGO_REGISTRY_TOKEN not set — skipping crates.io publish"
           fi
-      # Publish in dependency order: knx-rs-core first, then dependents
+
+      # Publish in dependency order with retries
       - name: Publish knx-rs-core
         if: steps.check_token.outputs.has_token == 'true'
         run: cargo publish -p knx-rs-core --token ${{ secrets.CARGO_REGISTRY_TOKEN }} || echo "::warning::knx-rs-core already published or failed"
+
       - name: Wait for crates.io index
         if: steps.check_token.outputs.has_token == 'true'
-        run: sleep 30
-      - name: Publish knx-rs-ip
+        run: sleep 60
+
+      - name: Publish knx-rs-ip (with retry)
         if: steps.check_token.outputs.has_token == 'true'
-        run: cargo publish -p knx-rs-ip --token ${{ secrets.CARGO_REGISTRY_TOKEN }} || echo "::warning::knx-rs-ip already published or failed"
-      - name: Publish knx-rs-device
+        run: |
+          for i in 1 2 3; do
+            cargo publish -p knx-rs-ip --token ${{ secrets.CARGO_REGISTRY_TOKEN }} && break
+            echo "::warning::Attempt $i failed, waiting 30s..."
+            sleep 30
+          done
+
+      - name: Publish knx-rs-device (with retry)
         if: steps.check_token.outputs.has_token == 'true'
-        run: cargo publish -p knx-rs-device --token ${{ secrets.CARGO_REGISTRY_TOKEN }} || echo "::warning::knx-rs-device already published or failed"
-      - name: Publish knx-rs-tp
+        run: |
+          for i in 1 2 3; do
+            cargo publish -p knx-rs-device --token ${{ secrets.CARGO_REGISTRY_TOKEN }} && break
+            echo "::warning::Attempt $i failed, waiting 30s..."
+            sleep 30
+          done
+
+      - name: Publish knx-rs-tp (with retry)
         if: steps.check_token.outputs.has_token == 'true'
-        run: cargo publish -p knx-rs-tp --token ${{ secrets.CARGO_REGISTRY_TOKEN }} || echo "::warning::knx-rs-tp already published or failed"
+        run: |
+          for i in 1 2 3; do
+            cargo publish -p knx-rs-tp --token ${{ secrets.CARGO_REGISTRY_TOKEN }} && break
+            echo "::warning::Attempt $i failed, waiting 30s..."
+            sleep 30
+          done
+
       - name: Publish knx-rs-prod
         if: steps.check_token.outputs.has_token == 'true'
         run: cargo publish -p knx-rs-prod --token ${{ secrets.CARGO_REGISTRY_TOKEN }} || echo "::warning::knx-rs-prod already published or failed"
