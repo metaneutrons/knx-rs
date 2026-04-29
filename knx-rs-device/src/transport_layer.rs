@@ -910,4 +910,66 @@ mod tests {
         assert!(actions.is_empty());
         assert_eq!(tl.state(), State::OpenIdle);
     }
+
+    #[test]
+    fn timeout_exactly_on_deadline() {
+        let mut tl = TransportLayer::new();
+        tl.connect_indication(ADDR_1001, 0);
+        tl.take_actions();
+        assert_eq!(tl.state(), State::OpenIdle);
+
+        // Poll at exactly the deadline (now_ms >= deadline triggers timeout)
+        tl.poll(CONNECTION_TIMEOUT_MS);
+        assert_eq!(
+            tl.state(),
+            State::Closed,
+            "polling at exactly the deadline should trigger disconnect"
+        );
+    }
+
+    #[test]
+    fn rapid_connect_disconnect_cycle() {
+        let mut tl = TransportLayer::new();
+
+        // Connect
+        tl.connect_indication(ADDR_1001, 0);
+        assert_eq!(tl.state(), State::OpenIdle);
+        tl.take_actions();
+
+        // Immediately disconnect
+        tl.disconnect_indication(ADDR_1001);
+        assert_eq!(tl.state(), State::Closed);
+        tl.take_actions();
+
+        // Connect again — verify clean state
+        tl.connect_indication(ADDR_1001, 100);
+        assert_eq!(tl.state(), State::OpenIdle);
+        let actions = tl.take_actions();
+        assert_eq!(actions.len(), 1);
+        assert!(
+            matches!(actions[0], Action::ConnectIndication { source } if source == ADDR_1001),
+            "second connect should produce a clean ConnectIndication"
+        );
+    }
+
+    #[test]
+    fn data_received_after_timeout() {
+        let mut tl = TransportLayer::new();
+        tl.connect_indication(ADDR_1001, 0);
+        tl.take_actions();
+
+        // Let connection timeout
+        tl.poll(CONNECTION_TIMEOUT_MS + 1);
+        assert_eq!(tl.state(), State::Closed);
+        tl.take_actions();
+
+        // Receive data after timeout — should be ignored (state is Closed)
+        tl.data_connected_indication(ADDR_1001, 0, Priority::Low, alloc::vec![0xBB], 7000);
+        let actions = tl.take_actions();
+        assert!(
+            actions.is_empty(),
+            "data received after timeout should be ignored"
+        );
+        assert_eq!(tl.state(), State::Closed);
+    }
 }

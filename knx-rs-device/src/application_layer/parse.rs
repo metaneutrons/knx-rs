@@ -1250,4 +1250,58 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn parse_max_length_memory_write() {
+        // MemoryWrite with 15 bytes of data (max for 4-bit count field)
+        let mut payload = alloc::vec![0x0F, 0x00, 0x10]; // count=15, address=0x0010
+        payload.extend_from_slice(&[0xAA; 15]);
+        let ind = parse_indication(ApduType::MemoryWrite, &payload).unwrap();
+        if let AppIndication::MemoryWrite {
+            count,
+            address,
+            data,
+        } = ind
+        {
+            assert_eq!(count, 15, "count should be 15 (max 4-bit value)");
+            assert_eq!(address, 0x0010);
+            assert_eq!(data.len(), 15);
+            assert!(data.iter().all(|&b| b == 0xAA));
+        } else {
+            panic!("expected MemoryWrite");
+        }
+    }
+
+    #[test]
+    fn parse_all_zero_payload() {
+        // Various APDU types with all-zero data — verify no crash
+        let zeros_3 = [0x00, 0x00, 0x00];
+        let zeros_4 = [0x00, 0x00, 0x00, 0x00];
+        let zeros_5 = [0x00, 0x00, 0x00, 0x00, 0x00];
+        let zeros_8 = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+        assert!(parse_indication(ApduType::MemoryRead, &zeros_3).is_ok());
+        assert!(parse_indication(ApduType::MemoryWrite, &zeros_3).is_ok());
+        assert!(parse_indication(ApduType::PropertyValueRead, &zeros_4).is_ok());
+        assert!(parse_indication(ApduType::AuthorizeRequest, &zeros_5).is_ok());
+        assert!(parse_indication(ApduType::PropertyValueExtRead, &zeros_8).is_ok());
+        assert!(parse_indication(ApduType::GroupValueWrite, &[0x00]).is_ok());
+        assert!(parse_indication(ApduType::GroupValueRead, &[]).is_ok());
+        assert!(parse_indication(ApduType::Restart, &[]).is_ok());
+    }
+
+    #[test]
+    fn parse_property_value_read_exact_minimum() {
+        // Exactly 4 bytes (minimum required), verify correct parsing
+        let ind = parse_indication(ApduType::PropertyValueRead, &[0x02, 0x0B, 0x31, 0x05]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::PropertyValueRead {
+                object_index: 0x02,
+                property_id: 0x0B,
+                count: 3,
+                start_index: 0x0105,
+            }
+        ));
+    }
 }

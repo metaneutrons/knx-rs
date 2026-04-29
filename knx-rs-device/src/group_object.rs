@@ -537,4 +537,56 @@ mod tests {
         store.reinitialize_from_table(&table);
         assert_eq!(store.count(), 2);
     }
+
+    #[test]
+    fn write_during_transmitting_overwrites() {
+        let mut go = GroupObject::new(1, 2);
+        go.write_value(&[0x01, 0x02]);
+        go.set_comm_flag(ComFlag::Transmitting);
+        assert_eq!(go.comm_flag(), ComFlag::Transmitting);
+
+        // Write new value while transmitting — should overwrite data and set WriteRequest
+        go.write_value(&[0xAA, 0xBB]);
+        assert_eq!(
+            go.comm_flag(),
+            ComFlag::WriteRequest,
+            "write_value should set WriteRequest even from Transmitting"
+        );
+        assert_eq!(go.value_ref(), &[0xAA, 0xBB], "data should be overwritten");
+    }
+
+    #[test]
+    fn read_request_while_write_pending() {
+        let mut go = GroupObject::new(1, 1);
+        go.write_value(&[0x42]);
+        assert_eq!(go.comm_flag(), ComFlag::WriteRequest);
+
+        // Request read while write is pending — ReadRequest should win
+        go.request_object_read();
+        assert_eq!(
+            go.comm_flag(),
+            ComFlag::ReadRequest,
+            "request_object_read should override WriteRequest"
+        );
+    }
+
+    #[test]
+    fn value_from_bus_during_write_request() {
+        let mut go = GroupObject::new(1, 1);
+        go.write_value(&[0x42]);
+        assert_eq!(go.comm_flag(), ComFlag::WriteRequest);
+
+        // Bus delivers a value while write is pending — bus wins
+        go.value_from_bus(&[0xFF]);
+        assert_eq!(
+            go.comm_flag(),
+            ComFlag::Updated,
+            "value_from_bus should override WriteRequest with Updated"
+        );
+        assert_eq!(
+            go.value_ref(),
+            &[0xFF],
+            "bus value should overwrite local data"
+        );
+    }
 }

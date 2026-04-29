@@ -2173,4 +2173,50 @@ mod tests {
             "unsupported descriptionType should not respond"
         );
     }
+
+    #[test]
+    fn memory_write_zero_length() {
+        let mut bau = handler_test_bau();
+        bau.handle_memory_write(0x0010, &[0xAA]);
+        let before = bau.memory_area.clone();
+        // Write empty data — should not crash and memory should be unchanged
+        bau.handle_memory_write(0x0010, &[]);
+        assert_eq!(
+            bau.memory_area, before,
+            "empty write should not modify memory"
+        );
+    }
+
+    #[test]
+    fn memory_write_at_exact_max_boundary() {
+        let mut bau = handler_test_bau();
+        // handle_memory_write uses u16 address, max addressable is 0xFFFF
+        // Write 4 bytes ending exactly at 0xFFFF+4 = 0x10003 (within MAX_MEMORY_SIZE)
+        let addr: u16 = 0xFFFC;
+        let data = [0xDE, 0xAD, 0xBE, 0xEF];
+        bau.handle_memory_write(addr, &data);
+        assert_eq!(
+            bau.memory_area.len(),
+            0x10000,
+            "memory should grow to addr + data.len()"
+        );
+        assert_eq!(
+            &bau.memory_area[addr as usize..],
+            &data,
+            "data at boundary should be written correctly"
+        );
+    }
+
+    #[test]
+    fn memory_read_zero_count() {
+        let mut bau = handler_test_bau();
+        bau.handle_memory_write(0x0000, &[0xAA, 0xBB]);
+        // Read with count=0
+        bau.handle_memory_read(SRC_1102, 0, 0x0000);
+        let resp = bau.next_outgoing_frame().expect("expected memory response");
+        let payload = resp.payload();
+        // count nibble should be 0 and no data bytes
+        assert_eq!(payload[1] & 0x0F, 0, "count should be 0");
+        assert_eq!(payload.len(), 4, "response should have no data bytes");
+    }
 }

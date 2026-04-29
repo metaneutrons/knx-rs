@@ -208,4 +208,66 @@ mod tests {
             Err(PersistenceError::MemoryTooLarge)
         );
     }
+
+    #[test]
+    fn restore_corrupted_bytes_in_middle() {
+        let mut bau = test_bau();
+        bau.addr_table_object.handle_load_event(&[1], 0);
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x06, 0x01, 0x00];
+        bau.addr_table_object.handle_load_event(&alc, 0);
+        bau.set_memory_area(alloc::vec![0x00, 0x02, 0x08, 0x01, 0x08, 0x02]);
+        bau.addr_table_object.handle_load_event(&[2], 6);
+
+        let mut saved = save_bau_state(&bau);
+        // Corrupt a byte in the middle of the table object data (state byte)
+        // Set the second table object's state to an invalid LoadState value that
+        // still parses (LoadState::from maps unknown to Unloaded), but corrupt
+        // the mem_len to claim more data than available
+        let mem_len_offset = HEADER_SIZE - MEMORY_LENGTH_SIZE;
+        saved[mem_len_offset..mem_len_offset + 4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+
+        let mut bau2 = test_bau();
+        assert_eq!(
+            restore_bau_state(&mut bau2, &saved),
+            Err(PersistenceError::MemoryTooLarge),
+            "corrupted mem_len should cause MemoryTooLarge error"
+        );
+    }
+
+    #[test]
+    fn restore_memory_exceeds_max_size() {
+        let mut bau = test_bau();
+        // Craft data with valid header but mem_len > available trailing data
+        let mut data = alloc::vec![0u8; HEADER_SIZE + 10];
+        // Set mem_len to a value larger than the remaining bytes
+        let mem_len_offset = HEADER_SIZE - MEMORY_LENGTH_SIZE;
+        data[mem_len_offset..mem_len_offset + 4].copy_from_slice(&100u32.to_le_bytes());
+        // Only 10 bytes follow the header, but mem_len claims 100
+        assert_eq!(
+            restore_bau_state(&mut bau, &data),
+            Err(PersistenceError::MemoryTooLarge),
+            "mem_len exceeding available data should fail"
+        );
+    }
+
+    #[test]
+    fn save_during_loading_state() {
+        let mut bau = test_bau();
+        // Set addr_table_object to Loading state
+        bau.addr_table_object.handle_load_event(&[1], 0); // START_LOADING
+        assert_eq!(
+            bau.addr_table_object.load_state(),
+            crate::property::LoadState::Loading
+        );
+
+        let saved = save_bau_state(&bau);
+
+        let mut bau2 = test_bau();
+        restore_bau_state(&mut bau2, &saved).unwrap();
+        assert_eq!(
+            bau2.addr_table_object.load_state(),
+            crate::property::LoadState::Loading,
+            "Loading state should be preserved across save/restore"
+        );
+    }
 }

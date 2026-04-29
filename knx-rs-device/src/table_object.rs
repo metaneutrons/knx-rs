@@ -558,4 +558,60 @@ mod tests {
         assert_eq!(to.load_state(), LoadState::Error);
         assert_eq!(to.error_code(), LoadError::MaxTableLengthExceeded);
     }
+
+    #[test]
+    fn double_load_completed() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0); // START_LOADING
+        let (became_loaded, _) = to.handle_load_event(&[2], 0); // LOAD_COMPLETED
+        assert!(became_loaded);
+        assert_eq!(to.load_state(), LoadState::Loaded);
+
+        // Complete again — should remain Loaded (no-op in Loaded state)
+        let (became_loaded, _) = to.handle_load_event(&[2], 0); // LOAD_COMPLETED again
+        assert!(!became_loaded, "second LoadCompleted should be a no-op");
+        assert_eq!(to.load_state(), LoadState::Loaded);
+    }
+
+    #[test]
+    fn start_loading_while_already_loading() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0); // START_LOADING
+        assert_eq!(to.load_state(), LoadState::Loading);
+
+        // Allocate some data
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00];
+        to.handle_load_event(&alc, 50);
+        assert_eq!(to.data_offset(), 50);
+        assert_eq!(to.data_size(), 16);
+
+        // Start loading again while already loading — should be no-op
+        let (became_loaded, fill) = to.handle_load_event(&[1], 0); // START_LOADING again
+        assert!(!became_loaded);
+        assert_eq!(fill, None);
+        assert_eq!(to.load_state(), LoadState::Loading, "should remain Loading");
+    }
+
+    #[test]
+    fn alc_with_zero_size() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0); // START_LOADING
+
+        // AdditionalLoadControls with size=0
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00];
+        let (_, fill) = to.handle_load_event(&alc, 42);
+        assert_eq!(
+            to.load_state(),
+            LoadState::Loading,
+            "should not error on size=0"
+        );
+        assert_eq!(
+            to.data_offset(),
+            42,
+            "offset should be set to memory_area_len"
+        );
+        assert_eq!(to.data_size(), 0, "size should be 0");
+        // Fill with size=0 should still return Some (fill_enabled) but with size 0
+        assert_eq!(fill, Some((42, 0, 0x00)));
+    }
 }
