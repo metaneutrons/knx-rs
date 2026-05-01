@@ -1499,10 +1499,10 @@ mod tests {
         .unwrap();
         bau.process_frame(&frame, 0);
         assert_eq!(
-            bau.group_objects.get(1).unwrap().comm_flag(),
+            bau.group_objects().get(1).unwrap().comm_flag(),
             ComFlag::Updated
         );
-        assert_eq!(bau.group_objects.get(1).unwrap().value_ref(), &[0x01]);
+        assert_eq!(bau.group_objects().get(1).unwrap().value_ref(), &[0x01]);
     }
 
     #[test]
@@ -1529,12 +1529,15 @@ mod tests {
         bau.assoc_table_object.handle_load_event(&[1], 0);
         bau.assoc_table_object.handle_load_event(&[2], 0);
 
-        bau.group_objects.get_mut(1).unwrap().write_value(&[1]);
+        bau.group_objects_mut()
+            .get_mut(1)
+            .unwrap()
+            .write_value(&[1]);
         bau.poll(0);
         let frame = bau.next_outgoing_frame().unwrap();
         assert_eq!(frame.destination_address_raw(), 0x0801);
         assert_eq!(
-            bau.group_objects.get(1).unwrap().comm_flag(),
+            bau.group_objects().get(1).unwrap().comm_flag(),
             ComFlag::Transmitting
         );
     }
@@ -1810,10 +1813,10 @@ mod tests {
         .unwrap();
         bau.process_frame(&frame, 0);
         assert_eq!(
-            bau.group_objects.get(1).unwrap().comm_flag(),
+            bau.group_objects().get(1).unwrap().comm_flag(),
             ComFlag::Updated
         );
-        assert_eq!(bau.group_objects.get(1).unwrap().value_ref(), &[0x01]);
+        assert_eq!(bau.group_objects().get(1).unwrap().value_ref(), &[0x01]);
 
         // GroupValueResponse to GA 0x0802 (tsap=2 → asap=2): GO2 has no A-flag → should NOT update
         let frame2 = CemiFrame::parse(&[
@@ -1822,7 +1825,7 @@ mod tests {
         .unwrap();
         bau.process_frame(&frame2, 0);
         assert_eq!(
-            bau.group_objects.get(2).unwrap().comm_flag(),
+            bau.group_objects().get(2).unwrap().comm_flag(),
             ComFlag::Uninitialized
         );
     }
@@ -1893,12 +1896,12 @@ mod tests {
         bau.init_read_requests();
 
         assert_eq!(
-            bau.group_objects.get(1).unwrap().comm_flag(),
+            bau.group_objects().get(1).unwrap().comm_flag(),
             ComFlag::ReadRequest
         );
         // GO2 has no I-flag → should remain Uninitialized
         assert_eq!(
-            bau.group_objects.get(2).unwrap().comm_flag(),
+            bau.group_objects().get(2).unwrap().comm_flag(),
             ComFlag::Uninitialized
         );
     }
@@ -2057,9 +2060,12 @@ mod tests {
         bau.assoc_table_object.handle_load_event(&[1], 0);
         bau.assoc_table_object.handle_load_event(&[2], 0);
 
-        bau.group_objects.get_mut(1).unwrap().request_object_read();
+        bau.group_objects_mut()
+            .get_mut(1)
+            .unwrap()
+            .request_object_read();
         assert_eq!(
-            bau.group_objects.get(1).unwrap().comm_flag(),
+            bau.group_objects().get(1).unwrap().comm_flag(),
             ComFlag::ReadRequest
         );
 
@@ -2071,7 +2077,7 @@ mod tests {
         assert_eq!(p[0], 0x00);
         assert_eq!(p[1], 0x00);
         assert_eq!(
-            bau.group_objects.get(1).unwrap().comm_flag(),
+            bau.group_objects().get(1).unwrap().comm_flag(),
             ComFlag::Transmitting
         );
     }
@@ -2105,7 +2111,7 @@ mod tests {
     fn load_group_object_table_reinitializes_gos() {
         let mut bau = test_bau();
         // All GOs start with size 1
-        assert_eq!(bau.group_objects.get(1).unwrap().value_size(), 1);
+        assert_eq!(bau.group_objects().get(1).unwrap().value_size(), 1);
 
         // Load GO table: GO1=value_type 8 (2 bytes), GO2=value_type 14 (14 bytes)
         let go1: u16 = (1 << 10) | 8;
@@ -2116,8 +2122,8 @@ mod tests {
         tbl.extend_from_slice(&go2.to_be_bytes());
         bau.load_group_object_table(&tbl);
 
-        assert_eq!(bau.group_objects.get(1).unwrap().value_size(), 2);
-        assert_eq!(bau.group_objects.get(2).unwrap().value_size(), 14);
+        assert_eq!(bau.group_objects().get(1).unwrap().value_size(), 2);
+        assert_eq!(bau.group_objects().get(2).unwrap().value_size(), 14);
     }
 
     #[test]
@@ -2218,5 +2224,135 @@ mod tests {
         // count nibble should be 0 and no data bytes
         assert_eq!(payload[1] & 0x0F, 0, "count should be 0");
         assert_eq!(payload.len(), 4, "response should have no data bytes");
+    }
+
+    #[test]
+    fn full_ets_download_flow() {
+        let mut bau = test_bau();
+        // Clear pre-loaded tables
+        bau.address_table = AddressTable::new();
+        bau.association_table = AssociationTable::new();
+        assert!(!bau.configured());
+
+        // 1. Address table: StartLoading
+        bau.addr_table_object.handle_load_event(&[1], 0);
+        // 2. ALC: allocate 6 bytes at current memory_area_len (0)
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x06, 0x01, 0x00];
+        bau.addr_table_object
+            .handle_load_event(&alc, bau.memory_area.len());
+        // 3. MemoryWrite: addr table data (2 entries: 0x0801, 0x0802)
+        bau.handle_memory_write(0x0000, &[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]);
+        // 4. LoadCompleted
+        let (became_loaded, _) = bau.addr_table_object.handle_load_event(&[2], 6);
+        assert!(became_loaded);
+        let tbl = bau.addr_table_object.data(&bau.memory_area).to_vec();
+        bau.address_table.load(&tbl);
+        assert_eq!(bau.address_table.get_tsap(0x0801), Some(1));
+
+        // Repeat for association table
+        bau.assoc_table_object.handle_load_event(&[1], 0);
+        let alc2 = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x0A, 0x01, 0x06];
+        bau.assoc_table_object
+            .handle_load_event(&alc2, bau.memory_area.len());
+        bau.handle_memory_write(
+            0x0006,
+            &[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02],
+        );
+        let (became_loaded, _) = bau.assoc_table_object.handle_load_event(&[2], 16);
+        assert!(became_loaded);
+        let tbl2 = bau.assoc_table_object.data(&bau.memory_area).to_vec();
+        bau.association_table.load(&tbl2);
+
+        assert!(bau.configured());
+        assert_eq!(bau.association_table.translate_asap(1), Some(1));
+    }
+
+    #[test]
+    fn group_value_write_size_mismatch() {
+        let mut bau = test_bau();
+        // GO1 has value_size=1 (default). Write 4 bytes from bus.
+        let frame = CemiFrame::parse(&[
+            0x29, 0x00, 0xBC, 0xE0, 0x11, 0x02, 0x08, 0x01, 0x04, 0x00, 0x80, 0xAA, 0xBB, 0xCC,
+        ])
+        .unwrap();
+        bau.process_frame(&frame, 0);
+        // value_from_bus truncates to min(data.len(), go.data.len()) = 1 byte
+        assert_eq!(bau.group_objects().get(1).unwrap().value_ref().len(), 1);
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Updated
+        );
+    }
+
+    #[test]
+    fn poll_fairness_multiple_pending() {
+        let mut bau = test_bau();
+        device_object::set_individual_address(bau.device_mut(), 0x1101);
+        // Load address table: 3 group addresses
+        bau.address_table_mut()
+            .load(&[0x00, 0x03, 0x08, 0x01, 0x08, 0x02, 0x08, 0x03]);
+        // Load association table: GA1→GO1, GA2→GO2, GA3→GO3
+        bau.association_table_mut().load(&[
+            0x00, 0x03, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02, 0x00, 0x03, 0x00, 0x03,
+        ]);
+        // Mark tables as loaded for configured() check
+        bau.addr_table_object.handle_load_event(&[1], 0);
+        bau.addr_table_object.handle_load_event(&[2], 0);
+        bau.assoc_table_object.handle_load_event(&[1], 0);
+        bau.assoc_table_object.handle_load_event(&[2], 0);
+
+        // Set WriteRequest on GO 1, 2, 3
+        bau.group_objects_mut()
+            .get_mut(1)
+            .unwrap()
+            .write_value(&[0x01]);
+        bau.group_objects_mut()
+            .get_mut(2)
+            .unwrap()
+            .write_value(&[0x02]);
+        bau.group_objects_mut()
+            .get_mut(3)
+            .unwrap()
+            .write_value(&[0x03]);
+
+        bau.poll(0);
+        // All three should have been sent (poll loops while next_pending returns Some)
+        let mut sent_count = 0;
+        while bau.next_outgoing_frame().is_some() {
+            sent_count += 1;
+        }
+        assert_eq!(sent_count, 3, "all 3 pending GOs should be sent");
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Transmitting
+        );
+        assert_eq!(
+            bau.group_objects().get(2).unwrap().comm_flag(),
+            ComFlag::Transmitting
+        );
+        assert_eq!(
+            bau.group_objects().get(3).unwrap().comm_flag(),
+            ComFlag::Transmitting
+        );
+    }
+
+    #[test]
+    fn group_value_read_when_not_configured() {
+        let mut bau = test_bau();
+        // Don't load table objects → configured() == false
+        assert!(!bau.configured());
+
+        bau.group_objects_mut()
+            .get_mut(1)
+            .unwrap()
+            .request_object_read();
+        bau.poll(0);
+        // No frame should be sent because configured() is false
+        assert!(bau.next_outgoing_frame().is_none());
+        // GO should still have ReadRequest (not consumed)
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::ReadRequest
+        );
     }
 }

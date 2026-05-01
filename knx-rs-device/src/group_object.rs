@@ -589,4 +589,31 @@ mod tests {
             "bus value should overwrite local data"
         );
     }
+
+    #[test]
+    fn reinitialize_with_empty_table() {
+        use crate::group_object_table::GroupObjectTable;
+
+        let mut store = GroupObjectStore::new(3, 1);
+        assert_eq!(store.count(), 3);
+
+        // Table with entry_count=0
+        let mut table = GroupObjectTable::new();
+        table.load(&0u16.to_be_bytes());
+
+        store.reinitialize_from_table(&table);
+        assert_eq!(store.count(), 0);
+    }
+
+    #[test]
+    fn next_pending_returns_first_match() {
+        let mut store = GroupObjectStore::new(5, 1);
+
+        // Set GO 3 to WriteRequest, GO 1 to ReadRequest
+        store.get_mut(3).unwrap().write_value(&[0x01]);
+        store.get_mut(1).unwrap().request_object_read();
+
+        // next_pending iterates in order, GO 1 comes first
+        assert_eq!(store.next_pending(), Some(1));
+    }
 }

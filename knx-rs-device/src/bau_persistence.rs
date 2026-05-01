@@ -270,4 +270,57 @@ mod tests {
             "Loading state should be preserved across save/restore"
         );
     }
+
+    #[test]
+    fn restore_with_shorter_memory_than_table_offsets() {
+        let mut bau = test_bau();
+        // Set up addr table at offset 50, size 10
+        bau.addr_table_object.handle_load_event(&[1], 0);
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x0A, 0x01, 0x00];
+        bau.addr_table_object.handle_load_event(&alc, 50);
+        // Write 60 bytes of memory so offset+size fits
+        bau.set_memory_area(alloc::vec![0xAA; 60]);
+        bau.addr_table_object.handle_load_event(&[2], 60);
+
+        let saved = save_bau_state(&bau);
+
+        // Manually truncate the memory portion in saved data to 40 bytes
+        // Header: 3 * TableObject::SAVE_SIZE + 5 (prog ver) + 4 (mem_len) = header
+        let header_size = HEADER_SIZE;
+        let mut truncated = saved[..header_size].to_vec();
+        // Set mem_len to 40
+        let mem_len_offset = header_size - MEMORY_LENGTH_SIZE;
+        truncated[mem_len_offset..mem_len_offset + 4].copy_from_slice(&40u32.to_le_bytes());
+        truncated.extend_from_slice(&[0xBB; 40]);
+
+        let mut bau2 = test_bau();
+        restore_bau_state(&mut bau2, &truncated).unwrap();
+        // Table offset(50)+size(10)=60 > memory(40), so data() returns empty
+        assert_eq!(
+            bau2.addr_table_object.data(bau2.memory_area()),
+            &[] as &[u8]
+        );
+    }
+
+    #[test]
+    fn restore_preserves_program_version() {
+        use crate::property::PropertyId;
+
+        let mut bau = test_bau();
+        // Write program version [1,2,3,4,5] to object 3 (app program)
+        if let Some(obj) = bau.object_mut(3) {
+            obj.write_property(PropertyId::ProgramVersion, 1, 1, &[1, 2, 3, 4, 5]);
+        }
+
+        let saved = save_bau_state(&bau);
+
+        let mut bau2 = test_bau();
+        restore_bau_state(&mut bau2, &saved).unwrap();
+
+        let mut ver = alloc::vec::Vec::new();
+        if let Some(obj) = bau2.object(3) {
+            obj.read_property(PropertyId::ProgramVersion, 1, 1, &mut ver);
+        }
+        assert_eq!(ver, &[1, 2, 3, 4, 5]);
+    }
 }

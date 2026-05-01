@@ -972,4 +972,99 @@ mod tests {
         );
         assert_eq!(tl.state(), State::Closed);
     }
+
+    #[test]
+    fn second_connect_while_connected_rejects() {
+        let mut tl = TransportLayer::new();
+        tl.connect_indication(ADDR_1001, 0);
+        tl.take_actions();
+        assert_eq!(tl.state(), State::OpenIdle);
+        assert_eq!(tl.connection_address(), ADDR_1001);
+
+        // Second connect from different address
+        tl.connect_indication(ADDR_2002, 100);
+        assert_eq!(tl.state(), State::OpenIdle);
+        assert_eq!(
+            tl.connection_address(),
+            ADDR_1001,
+            "should stay connected to original"
+        );
+        let actions = tl.take_actions();
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::SendControl {
+                destination,
+                tpdu_type: TpduType::Disconnect,
+                ..
+            } if *destination == ADDR_2002
+        )));
+    }
+
+    #[test]
+    fn data_during_disconnect() {
+        let mut tl = TransportLayer::new();
+        tl.connect_indication(ADDR_1001, 0);
+        tl.take_actions();
+
+        // Disconnect request transitions to Closed
+        tl.disconnect_request();
+        assert_eq!(tl.state(), State::Closed);
+        tl.take_actions();
+
+        // Data arrives after disconnect — should be ignored
+        tl.data_connected_indication(ADDR_1001, 0, Priority::Low, alloc::vec![0xAA], 200);
+        let actions = tl.take_actions();
+        assert!(
+            actions.is_empty(),
+            "data after disconnect should be ignored"
+        );
+        assert_eq!(tl.state(), State::Closed);
+    }
+
+    #[test]
+    fn ack_wrong_seq_after_retransmit() {
+        let mut tl = TransportLayer::new();
+        tl.connect_indication(ADDR_1001, 0);
+        tl.take_actions();
+
+        // Send data (seq=0)
+        tl.data_connected_request(Priority::Low, alloc::vec![0x01], 100);
+        tl.take_actions();
+
+        // Timeout → retransmit (still seq=0)
+        tl.poll(100 + ACK_TIMEOUT_MS + 1);
+        tl.take_actions();
+        assert_eq!(tl.state(), State::OpenWait);
+
+        // ACK with wrong seq (1 instead of 0) → disconnect
+        tl.ack_indication(ADDR_1001, 1, 4000);
+        assert_eq!(tl.state(), State::Closed);
+    }
+
+    #[test]
+    fn sequence_wrap_during_active_transfer() {
+        let mut tl = TransportLayer::new();
+        tl.connect_indication(ADDR_1001, 0);
+        tl.take_actions();
+
+        // Send and ACK 16 frames (seq 0..15)
+        for i in 0u8..16 {
+            tl.data_connected_request(Priority::Low, alloc::vec![i], u64::from(i) * 100);
+            tl.take_actions();
+            tl.ack_indication(ADDR_1001, i & SEQ_NO_MASK, u64::from(i) * 100 + 50);
+            tl.take_actions();
+        }
+
+        // 17th frame should wrap to seq=0
+        tl.data_connected_request(Priority::Low, alloc::vec![0xFF], 2000);
+        let actions = tl.take_actions();
+        assert!(matches!(
+            actions[0],
+            Action::SendDataConnected { seq_no: 0, .. }
+        ));
+
+        // ACK with seq=0 should succeed
+        tl.ack_indication(ADDR_1001, 0, 2050);
+        assert_eq!(tl.state(), State::OpenIdle);
+    }
 }

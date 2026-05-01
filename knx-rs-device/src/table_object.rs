@@ -614,4 +614,34 @@ mod tests {
         // Fill with size=0 should still return Some (fill_enabled) but with size 0
         assert_eq!(fill, Some((42, 0, 0x00)));
     }
+
+    #[test]
+    fn alc_allocates_at_large_offset() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0); // START_LOADING
+        // Allocate with size=100, memory_area_len=200000
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00];
+        to.handle_load_event(&alc, 200_000);
+        assert_eq!(to.data_offset(), 200_000);
+        assert_eq!(to.data_size(), 100);
+        assert_eq!(to.load_state(), LoadState::Loading);
+    }
+
+    #[test]
+    fn multiple_alc_overwrites_previous() {
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0); // START_LOADING
+
+        // First ALC: size=100
+        let alc1 = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00];
+        to.handle_load_event(&alc1, 10);
+        assert_eq!(to.data_offset(), 10);
+        assert_eq!(to.data_size(), 100);
+
+        // Second ALC: size=200 — should overwrite
+        let alc2 = [0x03, 0x0B, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x00];
+        to.handle_load_event(&alc2, 50);
+        assert_eq!(to.data_offset(), 50);
+        assert_eq!(to.data_size(), 200);
+    }
 }

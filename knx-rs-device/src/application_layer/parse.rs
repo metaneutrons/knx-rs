@@ -1304,4 +1304,56 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn parse_memory_write_address_overflow() {
+        // MemoryWrite at address 0xFFFF with count=15 and 15 bytes data
+        let mut payload = alloc::vec![0x0F, 0xFF, 0xFF]; // count=15, address=0xFFFF
+        payload.extend_from_slice(&[0xAA; 15]);
+        let ind = parse_indication(ApduType::MemoryWrite, &payload).unwrap();
+        if let AppIndication::MemoryWrite {
+            count,
+            address,
+            data,
+        } = ind
+        {
+            assert_eq!(count, 15);
+            assert_eq!(address, 0xFFFF);
+            assert_eq!(data.len(), 15);
+        } else {
+            panic!("expected MemoryWrite");
+        }
+    }
+
+    #[test]
+    fn parse_property_write_count_exceeds_data() {
+        // PropertyValueWrite with count=15 but only 1 byte of actual data
+        // Format: [obj_idx, pid, count_hi|start_hi, start_lo, data...]
+        let payload = [0x00, 0x36, 0xF0, 0x01, 0xAA]; // count=15, start=1, data=1 byte
+        let ind = parse_indication(ApduType::PropertyValueWrite, &payload).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::PropertyValueWrite {
+                object_index: 0,
+                property_id: 0x36,
+                count: 15,
+                start_index: 1,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_raw_apdu_with_single_byte() {
+        // Less than 2 bytes → MalformedData
+        let result = parse_raw_apdu(&[0x00]);
+        assert!(matches!(result, Err(AppLayerError::MalformedData)));
+    }
+
+    #[test]
+    fn parse_raw_apdu_with_invalid_apci() {
+        // Bytes that don't map to any valid ApduType
+        let result = parse_raw_apdu(&[0x03, 0xFF]);
+        assert!(matches!(result, Err(AppLayerError::MalformedData)));
+    }
 }
