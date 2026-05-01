@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.1.0...knx-rs-v0.1.1) (2026-05-01)
+
+
+### Bug Fixes
+
+* **ci:** add retry logic and longer wait for crates.io index propagation ([dac60fa](https://github.com/metaneutrons/knx-rs/commit/dac60faa9135d984057057da2ef09563597f1bda))
+
 ## 0.1.0 (2026-04-27)
 
 
