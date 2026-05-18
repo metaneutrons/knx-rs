@@ -54,22 +54,10 @@ jobs:
             echo "::warning::CARGO_REGISTRY_TOKEN not set — skipping crates.io publish"
           fi
 
+      # Publish in dependency order: core → device/tp → ip → prod
       - name: Publish knx-rs-core
         if: steps.check_token.outputs.has_token == 'true'
         run: cargo publish -p knx-rs-core --token ${{ secrets.CARGO_REGISTRY_TOKEN }} || echo "::warning::knx-rs-core already published or failed"
-
-      - name: Wait for crates.io index
-        if: steps.check_token.outputs.has_token == 'true'
-        run: sleep 60
-
-      - name: Publish knx-rs-ip (with retry)
-        if: steps.check_token.outputs.has_token == 'true'
-        run: |
-          for i in 1 2 3; do
-            cargo publish -p knx-rs-ip --token ${{ secrets.CARGO_REGISTRY_TOKEN }} && break
-            echo "::warning::Attempt $i failed, waiting 30s..."
-            sleep 30
-          done
 
       - name: Publish knx-rs-device (with retry)
         if: steps.check_token.outputs.has_token == 'true'
@@ -85,6 +73,15 @@ jobs:
         run: |
           for i in 1 2 3; do
             cargo publish -p knx-rs-tp --token ${{ secrets.CARGO_REGISTRY_TOKEN }} && break
+            echo "::warning::Attempt $i failed, waiting 30s..."
+            sleep 30
+          done
+
+      - name: Publish knx-rs-ip (with retry)
+        if: steps.check_token.outputs.has_token == 'true'
+        run: |
+          for i in 1 2 3; do
+            cargo publish -p knx-rs-ip --token ${{ secrets.CARGO_REGISTRY_TOKEN }} && break
             echo "::warning::Attempt $i failed, waiting 30s..."
             sleep 30
           done
