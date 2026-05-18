@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.1.1...knx-rs-v0.2.0) (2026-05-18)
+
+
+### Features
+
+* **ip:** object-safe KnxConnection, IPv6 support, source validation ([c57fa3c](https://github.com/metaneutrons/knx-rs/commit/c57fa3cd344ad65910efd0f81241515da04b369a))
+
+
+### Bug Fixes
+
+* **device:** enforce write_enable on Property::write, minor cleanups ([585015e](https://github.com/metaneutrons/knx-rs/commit/585015ef18e3b116eb273b9888238fbf1e55dc84))
+
 ## [0.1.1](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.1.0...knx-rs-v0.1.1) (2026-05-01)
 
 
