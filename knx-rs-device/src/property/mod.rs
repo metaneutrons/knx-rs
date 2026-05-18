@@ -129,6 +129,10 @@ impl Property {
 
     /// Write elements to the property.
     pub fn write(&mut self, start: u16, count: u8, data: &[u8]) -> u8 {
+        if !self.write_enable {
+            return 0;
+        }
+
         match &mut self.storage {
             PropertyStorage::Data(d) => d.write(start, count, data),
             PropertyStorage::Callback { write_fn, .. } => {
@@ -169,5 +173,36 @@ impl Property {
 impl From<DataProperty> for Property {
     fn from(d: DataProperty) -> Self {
         Self::data(d)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+
+    #[test]
+    fn callback_property_respects_write_enable() {
+        let called = Arc::new(AtomicBool::new(false));
+        let called_by_write = Arc::clone(&called);
+        let write_fn: PropertyWriteFn = Box::new(move |_, _, _| {
+            called_by_write.store(true, Ordering::SeqCst);
+            1
+        });
+        let mut prop = Property::callback(
+            PropertyId::ManufacturerId,
+            false,
+            PropertyDataType::UnsignedInt,
+            1,
+            AccessLevel::None,
+            |_, _| Vec::new(),
+            Some(write_fn),
+        );
+
+        assert_eq!(prop.write(1, 1, &[0x00, 0xFA]), 0);
+        assert!(!called.load(Ordering::SeqCst));
     }
 }

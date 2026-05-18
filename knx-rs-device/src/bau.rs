@@ -1777,7 +1777,11 @@ mod tests {
     fn memory_write_rejects_oversized() {
         let mut bau = handler_test_bau();
         // ext write beyond MAX_MEMORY_SIZE must be rejected
-        bau.handle_memory_ext_write(SRC_1102, MAX_MEMORY_SIZE as u32, &[0xFF]);
+        bau.handle_memory_ext_write(
+            SRC_1102,
+            u32::try_from(MAX_MEMORY_SIZE).unwrap_or(u32::MAX),
+            &[0xFF],
+        );
         assert!(bau.memory_area.is_empty());
     }
 
@@ -2115,7 +2119,7 @@ mod tests {
 
         // Load GO table: GO1=value_type 8 (2 bytes), GO2=value_type 14 (14 bytes)
         let go1: u16 = (1 << 10) | 8;
-        let go2: u16 = (1 << 10) | 14;
+        let go2: u16 = (1 << 10) | 0x000E;
         let mut tbl = Vec::new();
         tbl.extend_from_slice(&2u16.to_be_bytes());
         tbl.extend_from_slice(&go1.to_be_bytes());

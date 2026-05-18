@@ -474,8 +474,8 @@ mod tests {
 
     /// Helper: expected APCI wire bytes for a given `ApduType`.
     fn expected_apci(t: ApduType) -> [u8; 2] {
-        let v = t as u16;
-        [(v >> 8) as u8, v as u8]
+        let bytes = (t as u16).to_be_bytes();
+        [bytes[0] & 0x03, bytes[1]]
     }
 
     #[test]

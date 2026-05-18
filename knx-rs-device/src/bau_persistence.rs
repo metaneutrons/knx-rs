@@ -317,7 +317,7 @@ mod tests {
         let mut bau2 = test_bau();
         restore_bau_state(&mut bau2, &saved).unwrap();
 
-        let mut ver = alloc::vec::Vec::new();
+        let mut ver = Vec::new();
         if let Some(obj) = bau2.object(3) {
             obj.read_property(PropertyId::ProgramVersion, 1, 1, &mut ver);
         }

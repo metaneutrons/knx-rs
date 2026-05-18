@@ -483,7 +483,7 @@ mod tests {
 
         // Build GO table: GO1 value_type=8 (2 bytes), GO2 value_type=14 (14 bytes)
         let go1: u16 = (1 << 10) | 8; // comm + value_type=8
-        let go2: u16 = (1 << 10) | 14; // comm + value_type=14
+        let go2: u16 = (1 << 10) | 0x000E; // comm + value_type=14
         let mut data = Vec::new();
         data.extend_from_slice(&2u16.to_be_bytes());
         data.extend_from_slice(&go1.to_be_bytes());
