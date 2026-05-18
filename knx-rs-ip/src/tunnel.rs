@@ -10,7 +10,7 @@
 //! - Graceful disconnect handshake
 //! - Auto-reconnect with exponential backoff (optional)
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::pin::Pin;
 
 use knx_rs_core::cemi::CemiFrame;
@@ -19,8 +19,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, timeout};
 
-use crate::KnxConnection;
 use crate::error::KnxIpError;
+use crate::{KnxConnection, KnxFuture};
 
 /// KNX spec: connect request timeout.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -111,33 +111,51 @@ impl TunnelConnection {
 }
 
 impl KnxConnection for TunnelConnection {
-    async fn send(&self, frame: CemiFrame) -> Result<(), KnxIpError> {
-        let (tx, rx) = oneshot::channel();
-        self.tx_cmd
-            .send(TunnelCmd::Send(frame, tx))
-            .await
-            .map_err(|_| KnxIpError::Closed)?;
-        rx.await.map_err(|_| KnxIpError::Closed)?
+    fn send(&self, frame: CemiFrame) -> KnxFuture<'_, Result<(), KnxIpError>> {
+        let tx_cmd = self.tx_cmd.clone();
+        Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            tx_cmd
+                .send(TunnelCmd::Send(frame, tx))
+                .await
+                .map_err(|_| KnxIpError::Closed)?;
+            rx.await.map_err(|_| KnxIpError::Closed)?
+        })
     }
 
-    async fn recv(&mut self) -> Option<CemiFrame> {
-        self.rx.recv().await
+    fn recv(&mut self) -> KnxFuture<'_, Option<CemiFrame>> {
+        Box::pin(async move { self.rx.recv().await })
     }
 
-    async fn close(&mut self) {
-        let _ = self.tx_cmd.send(TunnelCmd::Close).await;
+    fn close(&mut self) -> KnxFuture<'_, ()> {
+        let tx_cmd = self.tx_cmd.clone();
+        Box::pin(async move {
+            let _ = tx_cmd.send(TunnelCmd::Close).await;
+        })
     }
 }
 
 // ── Connection establishment ──────────────────────────────────
 
 async fn establish(remote: &SocketAddr) -> Result<(UdpSocket, u8, SocketAddr), KnxIpError> {
-    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+    let socket = UdpSocket::bind(bind_addr_for_remote(remote)).await?;
     socket.connect(remote).await?;
     let local_addr = socket.local_addr()?;
     let channel_id = do_connect(&socket, local_addr).await?;
     tracing::info!(%remote, channel_id, "KNXnet/IP tunnel connected");
     Ok((socket, channel_id, local_addr))
+}
+
+const fn bind_addr_for_remote(remote: &SocketAddr) -> SocketAddr {
+    match remote {
+        SocketAddr::V4(_) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+        SocketAddr::V6(v6) => SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::UNSPECIFIED,
+            0,
+            0,
+            v6.scope_id(),
+        )),
+    }
 }
 
 const fn build_hpai(addr: SocketAddr) -> Hpai {
@@ -147,12 +165,14 @@ const fn build_hpai(addr: SocketAddr) -> Hpai {
             ip: v4.ip().octets(),
             port: v4.port(),
         },
-        SocketAddr::V6(_) => Hpai {
-            protocol: HostProtocol::Ipv4Udp,
-            ip: [0, 0, 0, 0],
-            port: 0,
-        },
+        SocketAddr::V6(v6) => Hpai::nat_udp(v6.port()),
     }
+}
+
+fn serialize_frame(frame: &KnxIpFrame) -> Result<Vec<u8>, KnxIpError> {
+    frame
+        .try_to_bytes()
+        .map_err(|e| KnxIpError::Protocol(e.to_string()))
 }
 
 async fn do_connect(socket: &UdpSocket, local_addr: SocketAddr) -> Result<u8, KnxIpError> {
@@ -171,7 +191,7 @@ async fn do_connect(socket: &UdpSocket, local_addr: SocketAddr) -> Result<u8, Kn
         service_type: ServiceType::ConnectRequest,
         body,
     };
-    socket.send(&frame.to_bytes()).await?;
+    socket.send(&serialize_frame(&frame)?).await?;
 
     let mut buf = [0u8; 256];
     let n = timeout(CONNECT_TIMEOUT, socket.recv(&mut buf))
@@ -239,7 +259,11 @@ async fn tunnel_task(
                         continue;
                     }
                 };
-                state.handle_incoming(&buf[..n], &cemi_tx).await;
+                if !state.handle_incoming(&buf[..n], &cemi_tx).await
+                    && !try_reconnect(&config, &mut state, &mut heartbeat, &mut cmd_rx).await
+                {
+                    break;
+                }
             }
 
             cmd = cmd_rx.recv() => {
@@ -344,12 +368,12 @@ struct TunnelState {
 }
 
 impl TunnelState {
-    async fn handle_incoming(&mut self, data: &[u8], cemi_tx: &mpsc::Sender<CemiFrame>) {
+    async fn handle_incoming(&mut self, data: &[u8], cemi_tx: &mpsc::Sender<CemiFrame>) -> bool {
         let frame = match KnxIpFrame::parse(data) {
             Ok(f) => f,
             Err(e) => {
                 tracing::trace!(error = %e, "ignoring malformed frame");
-                return;
+                return true;
             }
         };
 
@@ -366,12 +390,16 @@ impl TunnelState {
                     service_type: ServiceType::DisconnectResponse,
                     body: vec![self.channel_id, 0],
                 };
-                let _ = self.socket.send(&resp.to_bytes()).await;
+                if let Ok(bytes) = serialize_frame(&resp) {
+                    let _ = self.socket.send(&bytes).await;
+                }
+                return false;
             }
             _ => {
                 tracing::trace!(service = ?frame.service_type, "ignoring frame");
             }
         }
+        true
     }
 
     async fn handle_tunneling_request(
@@ -396,7 +424,9 @@ impl TunnelState {
             service_type: ServiceType::TunnelingAck,
             body: ack_ch.to_bytes().to_vec(),
         };
-        let _ = self.socket.send(&ack.to_bytes()).await;
+        if let Ok(bytes) = serialize_frame(&ack) {
+            let _ = self.socket.send(&bytes).await;
+        }
 
         // Deduplicate: only process if sequence matches expected
         if ch.sequence_counter != self.recv_seq {
@@ -432,7 +462,7 @@ impl TunnelState {
             service_type: ServiceType::TunnelingRequest,
             body,
         };
-        let frame_bytes = frame.to_bytes();
+        let frame_bytes = serialize_frame(&frame)?;
 
         for attempt in 0..MAX_RETRIES {
             self.socket.send(&frame_bytes).await?;
@@ -442,7 +472,9 @@ impl TunnelState {
                     self.send_seq = self.send_seq.wrapping_add(1);
                     // TUN-1: Re-process any frames received while waiting for ack
                     for data in buffered {
-                        self.handle_incoming(&data, cemi_tx).await;
+                        if !self.handle_incoming(&data, cemi_tx).await {
+                            return Err(KnxIpError::Closed);
+                        }
                     }
                     return Ok(());
                 }
@@ -510,7 +542,7 @@ impl TunnelState {
             service_type: ServiceType::ConnectionStateRequest,
             body,
         };
-        self.socket.send(&frame.to_bytes()).await?;
+        self.socket.send(&serialize_frame(&frame)?).await?;
 
         let mut buf = [0u8; 1024];
         let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
@@ -544,7 +576,9 @@ impl TunnelState {
             }
 
             // Not our heartbeat response — process as incoming frame
-            self.handle_incoming(&buf[..n], cemi_tx).await;
+            if !self.handle_incoming(&buf[..n], cemi_tx).await {
+                return Err(KnxIpError::Closed);
+            }
         }
     }
 
@@ -559,7 +593,7 @@ impl TunnelState {
             service_type: ServiceType::DisconnectRequest,
             body,
         };
-        self.socket.send(&frame.to_bytes()).await?;
+        self.socket.send(&serialize_frame(&frame)?).await?;
         tracing::debug!(channel_id = self.channel_id, "disconnect sent");
         Ok(())
     }

@@ -31,23 +31,25 @@ use knx_rs_core::dpt::{self, Dpt, DptValue};
 use knx_rs_core::message::MessageCode;
 use knx_rs_core::types::Priority;
 
-use crate::KnxConnection;
 use crate::error::KnxIpError;
+use crate::{KnxConnection, KnxFuture};
 
 /// Extension trait for group-level KNX operations.
 ///
 /// Provides high-level methods on top of any [`KnxConnection`].
 /// All APDU encoding is handled internally.
-#[allow(async_fn_in_trait)]
 pub trait GroupOps: KnxConnection {
     /// Write a raw value to a group address.
     ///
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the frame could not be sent.
-    async fn group_write(&self, ga: GroupAddress, data: &[u8]) -> Result<(), KnxIpError> {
-        let frame = build_group_write(ga, data);
-        self.send(frame).await
+    fn group_write(&self, ga: GroupAddress, data: &[u8]) -> KnxFuture<'_, Result<(), KnxIpError>> {
+        let frame = match build_group_write(ga, data) {
+            Ok(frame) => frame,
+            Err(err) => return Box::pin(core::future::ready(Err(err))),
+        };
+        self.send(frame)
     }
 
     /// Write a DPT-encoded [`DptValue`] to a group address.
@@ -55,14 +57,25 @@ pub trait GroupOps: KnxConnection {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if encoding fails or the frame could not be sent.
-    async fn group_write_value(
+    fn group_write_value(
         &self,
         ga: GroupAddress,
         dpt: Dpt,
         value: &DptValue,
-    ) -> Result<(), KnxIpError> {
-        let encoded = dpt::encode(dpt, value).map_err(|e| KnxIpError::Protocol(e.to_string()))?;
-        self.group_write(ga, &encoded).await
+    ) -> KnxFuture<'_, Result<(), KnxIpError>> {
+        let encoded = match dpt::encode(dpt, value) {
+            Ok(encoded) => encoded,
+            Err(err) => {
+                return Box::pin(core::future::ready(Err(KnxIpError::Protocol(
+                    err.to_string(),
+                ))));
+            }
+        };
+        let frame = match build_group_write(ga, &encoded) {
+            Ok(frame) => frame,
+            Err(err) => return Box::pin(core::future::ready(Err(err))),
+        };
+        self.send(frame)
     }
 
     /// Send a group read request.
@@ -72,9 +85,12 @@ pub trait GroupOps: KnxConnection {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the frame could not be sent.
-    async fn group_read(&self, ga: GroupAddress) -> Result<(), KnxIpError> {
-        let frame = build_group_read(ga);
-        self.send(frame).await
+    fn group_read(&self, ga: GroupAddress) -> KnxFuture<'_, Result<(), KnxIpError>> {
+        let frame = match build_group_read(ga) {
+            Ok(frame) => frame,
+            Err(err) => return Box::pin(core::future::ready(Err(err))),
+        };
+        self.send(frame)
     }
 
     /// Send a group value response.
@@ -82,9 +98,16 @@ pub trait GroupOps: KnxConnection {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the frame could not be sent.
-    async fn group_respond(&self, ga: GroupAddress, data: &[u8]) -> Result<(), KnxIpError> {
-        let frame = build_group_response(ga, data);
-        self.send(frame).await
+    fn group_respond(
+        &self,
+        ga: GroupAddress,
+        data: &[u8],
+    ) -> KnxFuture<'_, Result<(), KnxIpError>> {
+        let frame = match build_group_response(ga, data) {
+            Ok(frame) => frame,
+            Err(err) => return Box::pin(core::future::ready(Err(err))),
+        };
+        self.send(frame)
     }
 }
 
@@ -93,7 +116,7 @@ impl<T: KnxConnection> GroupOps for T {}
 
 // ── Frame builders (internal) ─────────────────────────────────
 
-fn build_group_write(ga: GroupAddress, data: &[u8]) -> CemiFrame {
+fn build_group_write(ga: GroupAddress, data: &[u8]) -> Result<CemiFrame, KnxIpError> {
     let mut payload = Vec::with_capacity(2 + data.len());
     payload.push(0x00); // TPCI: unnumbered data
     if data.len() == 1 && data[0] <= 0x3F {
@@ -102,26 +125,28 @@ fn build_group_write(ga: GroupAddress, data: &[u8]) -> CemiFrame {
         payload.push(0x80); // GroupValueWrite APCI
         payload.extend_from_slice(data);
     }
-    CemiFrame::new_l_data(
+    CemiFrame::try_new_l_data(
         MessageCode::LDataReq,
         IndividualAddress::from_raw(0x0000), // filled by gateway
         DestinationAddress::Group(ga),
         Priority::Low,
         &payload,
     )
+    .map_err(|e| KnxIpError::Protocol(e.to_string()))
 }
 
-fn build_group_read(ga: GroupAddress) -> CemiFrame {
-    CemiFrame::new_l_data(
+fn build_group_read(ga: GroupAddress) -> Result<CemiFrame, KnxIpError> {
+    CemiFrame::try_new_l_data(
         MessageCode::LDataReq,
         IndividualAddress::from_raw(0x0000),
         DestinationAddress::Group(ga),
         Priority::Low,
         &[0x00, 0x00], // GroupValueRead
     )
+    .map_err(|e| KnxIpError::Protocol(e.to_string()))
 }
 
-fn build_group_response(ga: GroupAddress, data: &[u8]) -> CemiFrame {
+fn build_group_response(ga: GroupAddress, data: &[u8]) -> Result<CemiFrame, KnxIpError> {
     let mut payload = Vec::with_capacity(2 + data.len());
     payload.push(0x00);
     if data.len() == 1 && data[0] <= 0x3F {
@@ -130,13 +155,14 @@ fn build_group_response(ga: GroupAddress, data: &[u8]) -> CemiFrame {
         payload.push(0x40); // GroupValueResponse APCI
         payload.extend_from_slice(data);
     }
-    CemiFrame::new_l_data(
+    CemiFrame::try_new_l_data(
         MessageCode::LDataReq,
         IndividualAddress::from_raw(0x0000),
         DestinationAddress::Group(ga),
         Priority::Low,
         &payload,
     )
+    .map_err(|e| KnxIpError::Protocol(e.to_string()))
 }
 
 #[cfg(test)]
@@ -148,7 +174,7 @@ mod tests {
 
     #[test]
     fn build_group_write_short() {
-        let frame = build_group_write(GroupAddress::from_raw(0x0801), &[0x01]);
+        let frame = build_group_write(GroupAddress::from_raw(0x0801), &[0x01]).unwrap();
         assert_eq!(frame.destination_address_raw(), 0x0801);
         let payload = frame.payload();
         assert_eq!(payload[0], 0x00); // TPCI
@@ -158,7 +184,7 @@ mod tests {
     #[test]
     fn build_group_write_long() {
         let data = [0x0C, 0x34]; // DPT9 temperature
-        let frame = build_group_write(GroupAddress::from_raw(0x0801), &data);
+        let frame = build_group_write(GroupAddress::from_raw(0x0801), &data).unwrap();
         let payload = frame.payload();
         assert_eq!(payload[0], 0x00);
         assert_eq!(payload[1], 0x80); // GroupValueWrite
@@ -167,14 +193,14 @@ mod tests {
 
     #[test]
     fn build_group_read_frame() {
-        let frame = build_group_read(GroupAddress::from_raw(0x0801));
+        let frame = build_group_read(GroupAddress::from_raw(0x0801)).unwrap();
         let payload = frame.payload();
         assert_eq!(payload, &[0x00, 0x00]);
     }
 
     #[test]
     fn build_group_response_short() {
-        let frame = build_group_response(GroupAddress::from_raw(0x0801), &[0x01]);
+        let frame = build_group_response(GroupAddress::from_raw(0x0801), &[0x01]).unwrap();
         let payload = frame.payload();
         assert_eq!(payload[1], 0x41); // GroupValueResponse | 0x01
     }
@@ -182,12 +208,12 @@ mod tests {
     #[test]
     fn dpt_encoding_in_write() {
         let encoded = dpt::encode(DPT_SWITCH, &DptValue::Bool(true)).unwrap();
-        let frame = build_group_write(GroupAddress::from_raw(0x0802), &encoded);
+        let frame = build_group_write(GroupAddress::from_raw(0x0802), &encoded).unwrap();
         let payload = frame.payload();
         assert_eq!(payload[1], 0x81); // GroupValueWrite | 1
 
         let encoded = dpt::encode(DPT_VALUE_TEMP, &DptValue::Float(21.5)).unwrap();
-        let frame = build_group_write(GroupAddress::from_raw(0x0801), &encoded);
+        let frame = build_group_write(GroupAddress::from_raw(0x0801), &encoded).unwrap();
         assert_eq!(frame.payload().len(), 4); // TPCI + APCI + 2 bytes DPT9
     }
 }

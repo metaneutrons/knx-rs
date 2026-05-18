@@ -18,6 +18,7 @@ use tokio::net::UdpSocket;
 use tokio::time::timeout;
 
 use knx_rs_ip::tunnel_server::{DeviceServer, ServerEvent};
+use knx_rs_ip::{KnxConnection, TunnelConnection};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -190,6 +191,80 @@ async fn tunnel_frame_exchange() {
     assert!(matches!(event, ServerEvent::TunnelFrame(_)));
 
     // Cleanup
+    client
+        .send_to(&build_disconnect(channel_id, client_port), server_addr)
+        .await
+        .unwrap();
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn tunnel_client_connects_over_ipv6_loopback() {
+    let mut server = DeviceServer::start_at("[::1]:0".parse().unwrap())
+        .await
+        .unwrap();
+    let server_addr = server.local_addr();
+    let mut conn = TunnelConnection::connect(server_addr).await.unwrap();
+
+    let cemi = CemiFrame::new_l_data(
+        MessageCode::LDataReq,
+        IndividualAddress::from_raw(0x1101),
+        DestinationAddress::Group(GroupAddress::from_raw(0x0801)),
+        Priority::Low,
+        &[0x00, 0x81],
+    );
+
+    conn.send(cemi).await.unwrap();
+
+    let event = timeout(TEST_TIMEOUT, server.recv())
+        .await
+        .expect("timeout")
+        .expect("event");
+    assert!(matches!(event, ServerEvent::TunnelFrame(_)));
+
+    conn.close().await;
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn tunnel_rejects_tunneling_request_from_wrong_source() {
+    let mut server = DeviceServer::start(Ipv4Addr::LOCALHOST).await.unwrap();
+
+    let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let client_port = client.local_addr().unwrap().port();
+    let server_addr: SocketAddr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 3671).into();
+
+    let resp_bytes = send_recv(&client, server_addr, &build_connect_request(client_port)).await;
+    let resp = KnxIpFrame::parse(&resp_bytes).unwrap();
+    let channel_id = resp.body[0];
+
+    let cemi = CemiFrame::new_l_data(
+        MessageCode::LDataReq,
+        IndividualAddress::from_raw(0x1101),
+        DestinationAddress::Group(GroupAddress::from_raw(0x0801)),
+        Priority::Low,
+        &[0x00, 0x81],
+    );
+
+    let attacker = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let ack_bytes = send_recv(
+        &attacker,
+        server_addr,
+        &build_tunneling_request(channel_id, 0, &cemi),
+    )
+    .await;
+    let ack = KnxIpFrame::parse(&ack_bytes).unwrap();
+    let ack_ch = ConnectionHeader::parse(&ack.body).unwrap();
+    assert_eq!(ack.service_type, ServiceType::TunnelingAck);
+    assert_eq!(ack_ch.status, 0x21);
+
+    assert!(
+        timeout(Duration::from_millis(100), server.recv())
+            .await
+            .is_err(),
+        "spoofed tunnel frame must not be emitted"
+    );
+
     client
         .send_to(&build_disconnect(channel_id, client_port), server_addr)
         .await

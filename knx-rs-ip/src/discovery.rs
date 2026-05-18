@@ -6,7 +6,7 @@
 //! Sends a search request to the KNX multicast group and collects
 //! responses from gateways on the local network.
 
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use knx_rs_core::knxip::{HostProtocol, Hpai, KnxIpFrame, ServiceType};
 use tokio::net::UdpSocket;
@@ -66,13 +66,71 @@ pub async fn discover_with_timeout(
         port: local_port,
     };
 
+    let target = SocketAddr::V4(SocketAddrV4::new(KNX_MULTICAST_ADDR, KNX_PORT));
+    discover_on(socket, hpai, target, duration).await
+}
+
+/// Discover KNXnet/IP gateways using an IPv6 multicast target.
+///
+/// KNXnet/IP HPAI is IPv4-only, so IPv6 discovery requests advertise a
+/// standard NAT-mode HPAI and rely on the UDP source address for replies.
+///
+/// # Errors
+///
+/// Returns [`KnxIpError`] if the socket cannot be created.
+pub async fn discover_v6(
+    interface: u32,
+    multicast: SocketAddrV6,
+) -> Result<Vec<GatewayInfo>, KnxIpError> {
+    discover_v6_with_timeout(interface, multicast, DISCOVERY_TIMEOUT).await
+}
+
+/// Discover gateways over IPv6 with a custom timeout.
+///
+/// # Errors
+///
+/// Returns [`KnxIpError`] if the socket cannot be created.
+pub async fn discover_v6_with_timeout(
+    interface: u32,
+    multicast: SocketAddrV6,
+    duration: Duration,
+) -> Result<Vec<GatewayInfo>, KnxIpError> {
+    if !multicast.ip().is_multicast() {
+        return Err(KnxIpError::Protocol(format!(
+            "discovery target is not multicast: {multicast}"
+        )));
+    }
+    let scope_id = if interface == 0 {
+        multicast.scope_id()
+    } else {
+        interface
+    };
+    let socket = UdpSocket::bind(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, scope_id)).await?;
+    let local_port = socket.local_addr()?.port();
+    let hpai = Hpai::nat_udp(local_port);
+    let target = SocketAddr::V6(SocketAddrV6::new(
+        *multicast.ip(),
+        multicast.port(),
+        multicast.flowinfo(),
+        scope_id,
+    ));
+    discover_on(socket, hpai, target, duration).await
+}
+
+async fn discover_on(
+    socket: UdpSocket,
+    hpai: Hpai,
+    target: SocketAddr,
+    duration: Duration,
+) -> Result<Vec<GatewayInfo>, KnxIpError> {
     let frame = KnxIpFrame {
         service_type: ServiceType::SearchRequest,
         body: hpai.to_bytes().to_vec(),
     };
-
-    let target = SocketAddr::V4(SocketAddrV4::new(KNX_MULTICAST_ADDR, KNX_PORT));
-    socket.send_to(&frame.to_bytes(), target).await?;
+    let bytes = frame
+        .try_to_bytes()
+        .map_err(|e| KnxIpError::Protocol(e.to_string()))?;
+    socket.send_to(&bytes, target).await?;
 
     tracing::debug!("discovery search request sent");
 
@@ -116,16 +174,16 @@ fn parse_search_response(data: &[u8], src: SocketAddr) -> Option<GatewayInfo> {
 
     // Parse control endpoint HPAI
     let hpai = Hpai::parse(body)?;
-    let address = if hpai.ip == [0, 0, 0, 0] {
+    let address = if hpai.is_unspecified() {
         // NAT mode: use source address
-        src
+        socket_addr_with_port(src, hpai.port)
     } else {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(hpai.ip), hpai.port))
     };
 
     // Parse device info DIB (starts at offset 8)
     let (name, individual_address) = if body.len() >= 62 {
-        let dib = &body[Hpai::LEN as usize..];
+        let dib = &body[usize::from(Hpai::LEN)..];
         // DIB structure: length(1) + type(1) + medium(1) + status(1) + individual_addr(2) + ...
         // + serial(6) + multicast(4) + mac(6) + name(30)
         let ia = u16::from_be_bytes([dib[4], dib[5]]);
@@ -145,6 +203,19 @@ fn parse_search_response(data: &[u8], src: SocketAddr) -> Option<GatewayInfo> {
         individual_address,
         raw_body: frame.body.clone(),
     })
+}
+
+const fn socket_addr_with_port(src: SocketAddr, port: u16) -> SocketAddr {
+    let port = if port == 0 { src.port() } else { port };
+    match src {
+        SocketAddr::V4(v4) => SocketAddr::V4(SocketAddrV4::new(*v4.ip(), port)),
+        SocketAddr::V6(v6) => SocketAddr::V6(SocketAddrV6::new(
+            *v6.ip(),
+            port,
+            v6.flowinfo(),
+            v6.scope_id(),
+        )),
+    }
 }
 
 #[cfg(test)]

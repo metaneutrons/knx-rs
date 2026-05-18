@@ -6,7 +6,7 @@
 //! Joins the KNX multicast group (default `224.0.23.12:3671`) and
 //! sends/receives routing indications with rate limiting per KNX spec.
 
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use knx_rs_core::cemi::CemiFrame;
 use knx_rs_core::knxip::{KnxIpFrame, ServiceType};
@@ -14,8 +14,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 
-use crate::KnxConnection;
 use crate::error::KnxIpError;
+use crate::{KnxConnection, KnxFuture};
 
 /// Default KNX multicast address.
 pub const KNX_MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 23, 12);
@@ -53,6 +53,23 @@ impl RouterConnection {
         local_addr: Ipv4Addr,
         multicast: SocketAddrV4,
     ) -> Result<Self, KnxIpError> {
+        Self::connect_v4(local_addr, multicast).await
+    }
+
+    /// Join an IPv4 KNX multicast group and start receiving routing indications.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnxIpError`] if the socket cannot be created or joined.
+    pub async fn connect_v4(
+        local_addr: Ipv4Addr,
+        multicast: SocketAddrV4,
+    ) -> Result<Self, KnxIpError> {
+        if !multicast.ip().is_multicast() {
+            return Err(KnxIpError::Protocol(format!(
+                "router target is not multicast: {multicast}"
+            )));
+        }
         let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, multicast.port());
         let socket = UdpSocket::bind(bind_addr).await?;
 
@@ -61,20 +78,52 @@ impl RouterConnection {
             .map_err(|e| KnxIpError::Protocol(format!("join multicast {}: {e}", multicast.ip())))?;
 
         socket.set_multicast_loop_v4(false).ok();
+        Ok(Self::spawn(socket, SocketAddr::V4(multicast)))
+    }
 
-        let target = SocketAddr::V4(multicast);
+    /// Join an IPv6 multicast group and start receiving routing indications.
+    ///
+    /// Use the target address scope id or pass an explicit interface index for
+    /// link-local multicast groups.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnxIpError`] if the socket cannot be created or joined.
+    pub async fn connect_v6(interface: u32, multicast: SocketAddrV6) -> Result<Self, KnxIpError> {
+        if !multicast.ip().is_multicast() {
+            return Err(KnxIpError::Protocol(format!(
+                "router target is not multicast: {multicast}"
+            )));
+        }
+        let interface = if interface == 0 {
+            multicast.scope_id()
+        } else {
+            interface
+        };
+        let bind_addr = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, multicast.port(), 0, interface);
+        let socket = UdpSocket::bind(bind_addr).await?;
 
-        tracing::info!(%multicast, "KNXnet/IP router joined multicast");
+        socket
+            .join_multicast_v6(multicast.ip(), interface)
+            .map_err(|e| KnxIpError::Protocol(format!("join multicast {}: {e}", multicast.ip())))?;
 
-        let (cemi_tx, cemi_rx) = mpsc::channel(64);
-        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+        socket.set_multicast_loop_v6(false).ok();
+        Ok(Self::spawn(socket, SocketAddr::V6(multicast)))
+    }
 
-        tokio::spawn(router_task(socket, target, cemi_tx, cmd_rx));
-
-        Ok(Self {
-            rx: cemi_rx,
-            tx_cmd: cmd_tx,
-        })
+    /// Join a KNX multicast group from a generic socket address.
+    ///
+    /// IPv4 uses `0.0.0.0` as the interface selector. IPv6 uses the target
+    /// scope id as the interface index when present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnxIpError`] if the socket cannot be created or joined.
+    pub async fn connect_multicast(multicast: SocketAddr) -> Result<Self, KnxIpError> {
+        match multicast {
+            SocketAddr::V4(v4) => Self::connect_v4(Ipv4Addr::UNSPECIFIED, v4).await,
+            SocketAddr::V6(v6) => Self::connect_v6(v6.scope_id(), v6).await,
+        }
     }
 
     /// Connect to the default KNX multicast group (`224.0.23.12:3671`).
@@ -85,24 +134,44 @@ impl RouterConnection {
     pub async fn connect_default(local_addr: Ipv4Addr) -> Result<Self, KnxIpError> {
         Self::connect(local_addr, SocketAddrV4::new(KNX_MULTICAST_ADDR, KNX_PORT)).await
     }
+
+    fn spawn(socket: UdpSocket, target: SocketAddr) -> Self {
+        tracing::info!(%target, "KNXnet/IP router joined multicast");
+
+        let (cemi_tx, cemi_rx) = mpsc::channel(64);
+        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+
+        tokio::spawn(router_task(socket, target, cemi_tx, cmd_rx));
+
+        Self {
+            rx: cemi_rx,
+            tx_cmd: cmd_tx,
+        }
+    }
 }
 
 impl KnxConnection for RouterConnection {
-    async fn send(&self, frame: CemiFrame) -> Result<(), KnxIpError> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.tx_cmd
-            .send(RouterCmd::Send(frame, tx))
-            .await
-            .map_err(|_| KnxIpError::Closed)?;
-        rx.await.map_err(|_| KnxIpError::Closed)?
+    fn send(&self, frame: CemiFrame) -> KnxFuture<'_, Result<(), KnxIpError>> {
+        let tx_cmd = self.tx_cmd.clone();
+        Box::pin(async move {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            tx_cmd
+                .send(RouterCmd::Send(frame, tx))
+                .await
+                .map_err(|_| KnxIpError::Closed)?;
+            rx.await.map_err(|_| KnxIpError::Closed)?
+        })
     }
 
-    async fn recv(&mut self) -> Option<CemiFrame> {
-        self.rx.recv().await
+    fn recv(&mut self) -> KnxFuture<'_, Option<CemiFrame>> {
+        Box::pin(async move { self.rx.recv().await })
     }
 
-    async fn close(&mut self) {
-        let _ = self.tx_cmd.send(RouterCmd::Close).await;
+    fn close(&mut self) -> KnxFuture<'_, ()> {
+        let tx_cmd = self.tx_cmd.clone();
+        Box::pin(async move {
+            let _ = tx_cmd.send(RouterCmd::Close).await;
+        })
     }
 }
 
@@ -216,7 +285,10 @@ async fn rate_limited_send(
         service_type: ServiceType::RoutingIndication,
         body: cemi.as_bytes().to_vec(),
     };
-    socket.send_to(&frame.to_bytes(), target).await?;
+    let bytes = frame
+        .try_to_bytes()
+        .map_err(|e| KnxIpError::Protocol(e.to_string()))?;
+    socket.send_to(&bytes, target).await?;
     Ok(())
 }
 

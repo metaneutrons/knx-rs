@@ -8,8 +8,9 @@
 //! - `udp://224.0.23.12:3671` → router connection (multicast auto-detected)
 //! - `tunnel://192.168.1.50:3671` → explicit tunnel
 //! - `router://224.0.23.12:3671` → explicit router
+//! - `tunnel://[::1]:3671` → IPv6 tunnel connection
 
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::SocketAddr;
 
 use crate::AnyConnection;
 use crate::error::KnxIpError;
@@ -22,7 +23,7 @@ pub enum ConnectionSpec {
     /// Unicast tunnel connection to a gateway.
     Tunnel(SocketAddr),
     /// Multicast router connection.
-    Router(SocketAddrV4),
+    Router(SocketAddr),
 }
 
 /// Parse a KNX URL into a [`ConnectionSpec`].
@@ -48,16 +49,11 @@ pub fn parse_url(url: &str) -> Result<ConnectionSpec, KnxIpError> {
 
     match scheme {
         "tunnel" => Ok(ConnectionSpec::Tunnel(sock_addr)),
-        "router" => {
-            let v4 = to_v4(sock_addr)?;
-            Ok(ConnectionSpec::Router(v4))
-        }
+        "router" => Ok(ConnectionSpec::Router(sock_addr)),
         "udp" => {
             // Auto-detect: multicast addresses → router, otherwise → tunnel
-            if let SocketAddr::V4(v4) = sock_addr {
-                if v4.ip().is_multicast() {
-                    return Ok(ConnectionSpec::Router(v4));
-                }
+            if sock_addr.ip().is_multicast() {
+                return Ok(ConnectionSpec::Router(sock_addr));
             }
             Ok(ConnectionSpec::Tunnel(sock_addr))
         }
@@ -81,16 +77,9 @@ pub async fn connect(spec: ConnectionSpec) -> Result<AnyConnection, KnxIpError> 
             Ok(AnyConnection::Tunnel(conn))
         }
         ConnectionSpec::Router(multicast) => {
-            let conn = RouterConnection::connect(Ipv4Addr::UNSPECIFIED, multicast).await?;
+            let conn = RouterConnection::connect_multicast(multicast).await?;
             Ok(AnyConnection::Router(conn))
         }
-    }
-}
-
-fn to_v4(addr: SocketAddr) -> Result<SocketAddrV4, KnxIpError> {
-    match addr {
-        SocketAddr::V4(v4) => Ok(v4),
-        SocketAddr::V6(_) => Err(KnxIpError::InvalidUrl("IPv6 not supported".into())),
     }
 }
 
@@ -120,6 +109,24 @@ mod tests {
     #[test]
     fn parse_explicit_router() {
         let spec = parse_url("router://224.0.23.12:3671").unwrap();
+        assert!(matches!(spec, ConnectionSpec::Router(_)));
+    }
+
+    #[test]
+    fn parse_ipv6_tunnel() {
+        let spec = parse_url("tunnel://[::1]:3671").unwrap();
+        assert!(matches!(spec, ConnectionSpec::Tunnel(_)));
+    }
+
+    #[test]
+    fn parse_ipv6_router() {
+        let spec = parse_url("router://[ff02::1]:3671").unwrap();
+        assert!(matches!(spec, ConnectionSpec::Router(_)));
+    }
+
+    #[test]
+    fn parse_udp_ipv6_multicast_as_router() {
+        let spec = parse_url("udp://[ff02::1]:3671").unwrap();
         assert!(matches!(spec, ConnectionSpec::Router(_)));
     }
 

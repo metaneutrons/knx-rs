@@ -9,8 +9,8 @@
 use knx_rs_core::cemi::CemiFrame;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::KnxConnection;
 use crate::error::KnxIpError;
+use crate::{KnxConnection, KnxFuture};
 
 /// Multiplexes a single [`KnxConnection`] into multiple independent handles.
 ///
@@ -135,15 +135,24 @@ impl MultiplexHandle {
 }
 
 impl KnxConnection for MultiplexHandle {
-    async fn send(&self, frame: CemiFrame) -> Result<(), KnxIpError> {
-        self.send_frame(frame).await
+    fn send(&self, frame: CemiFrame) -> KnxFuture<'_, Result<(), KnxIpError>> {
+        let cmd_tx = self.cmd_tx.clone();
+        Box::pin(async move {
+            let (tx, rx) = oneshot::channel();
+            cmd_tx
+                .send(MuxCmd::Send(frame, tx))
+                .await
+                .map_err(|_| KnxIpError::Closed)?;
+            rx.await.map_err(|_| KnxIpError::Closed)?
+        })
     }
 
-    async fn recv(&mut self) -> Option<CemiFrame> {
-        self.recv().await
+    fn recv(&mut self) -> KnxFuture<'_, Option<CemiFrame>> {
+        Box::pin(async move { Self::recv(self).await })
     }
 
-    async fn close(&mut self) {
+    fn close(&mut self) -> KnxFuture<'_, ()> {
         // MultiplexHandle closes when dropped
+        Box::pin(core::future::ready(()))
     }
 }

@@ -7,10 +7,10 @@
 //! KNXnet/IP tunneling protocol. Supports simultaneous routing
 //! (multicast) and tunneling (unicast) on the same port.
 
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use knx_rs_core::cemi::CemiFrame;
-use knx_rs_core::knxip::{ConnectionHeader, HostProtocol, Hpai, KnxIpFrame, ServiceType};
+use knx_rs_core::knxip::{ConnectionHeader, Hpai, KnxIpFrame, ServiceType};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
@@ -49,6 +49,7 @@ pub enum ServerEvent {
 pub struct DeviceServer {
     rx: mpsc::Receiver<ServerEvent>,
     tx_cmd: mpsc::Sender<ServerCmd>,
+    local_addr: SocketAddr,
 }
 
 enum ServerCmd {
@@ -72,6 +73,7 @@ impl DeviceServer {
     pub async fn start(local_addr: Ipv4Addr) -> Result<Self, KnxIpError> {
         let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, KNX_PORT);
         let socket = UdpSocket::bind(bind_addr).await?;
+        let bound_addr = socket.local_addr()?;
 
         socket
             .join_multicast_v4(KNX_MULTICAST_ADDR, local_addr)
@@ -84,12 +86,50 @@ impl DeviceServer {
         let (event_tx, event_rx) = mpsc::channel(64);
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
 
-        tokio::spawn(server_task(socket, event_tx, cmd_rx));
+        let multicast_target = Some(SocketAddr::V4(SocketAddrV4::new(
+            KNX_MULTICAST_ADDR,
+            KNX_PORT,
+        )));
+
+        tokio::spawn(server_task(socket, multicast_target, event_tx, cmd_rx));
 
         Ok(Self {
             rx: event_rx,
             tx_cmd: cmd_tx,
+            local_addr: bound_addr,
         })
+    }
+
+    /// Start the device server on a specific unicast address.
+    ///
+    /// This is useful for tests, constrained deployments, and IPv6 tunneling
+    /// endpoints. No multicast group is joined; routing multicast is disabled
+    /// for this server instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnxIpError`] if the socket cannot be created.
+    pub async fn start_at(bind_addr: SocketAddr) -> Result<Self, KnxIpError> {
+        let socket = UdpSocket::bind(bind_addr).await?;
+        let local_addr = socket.local_addr()?;
+
+        tracing::info!(%local_addr, "KNXnet/IP device server started");
+
+        let (event_tx, event_rx) = mpsc::channel(64);
+        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+
+        tokio::spawn(server_task(socket, None, event_tx, cmd_rx));
+
+        Ok(Self {
+            rx: event_rx,
+            tx_cmd: cmd_tx,
+            local_addr,
+        })
+    }
+
+    /// Local UDP address the server is bound to.
+    pub const fn local_addr(&self) -> SocketAddr {
+        self.local_addr
     }
 
     /// Receive the next event (incoming frame from tunnel or multicast).
@@ -131,13 +171,13 @@ impl DeviceServer {
 
 async fn server_task(
     socket: UdpSocket,
+    multicast_target: Option<SocketAddr>,
     event_tx: mpsc::Sender<ServerEvent>,
     mut cmd_rx: mpsc::Receiver<ServerCmd>,
 ) {
     let mut tunnels: Vec<TunnelClient> = Vec::new();
     let mut next_channel_id: u8 = 1;
     let mut buf = [0u8; 1024];
-    let multicast_target = SocketAddr::V4(SocketAddrV4::new(KNX_MULTICAST_ADDR, KNX_PORT));
     let cleanup = tokio::time::interval(tokio::time::Duration::from_secs(30));
     tokio::pin!(cleanup);
 
@@ -160,7 +200,12 @@ async fn server_task(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(ServerCmd::SendFrame(cemi)) => {
-                        let stashed = send_to_all(&socket, &multicast_target, &mut tunnels, &cemi).await;
+                        let stashed = send_to_all(
+                            &socket,
+                            multicast_target.as_ref(),
+                            &mut tunnels,
+                            &cemi,
+                        ).await;
                         for (data, src) in stashed {
                             handle_packet(
                                 &data, src, &socket, &event_tx,
@@ -212,13 +257,13 @@ async fn handle_packet(
             handle_connect(socket, src, &frame, tunnels, next_channel_id).await;
         }
         ServiceType::ConnectionStateRequest => {
-            handle_heartbeat(socket, &frame, tunnels).await;
+            handle_heartbeat(socket, src, &frame, tunnels).await;
         }
         ServiceType::DisconnectRequest => {
-            handle_disconnect(socket, &frame, tunnels).await;
+            handle_disconnect(socket, src, &frame, tunnels).await;
         }
         ServiceType::TunnelingRequest => {
-            handle_tunneling_request(socket, &frame, tunnels, event_tx).await;
+            handle_tunneling_request(socket, src, &frame, tunnels, event_tx).await;
         }
         ServiceType::TunnelingAck => {} // client ack, nothing to do
         ServiceType::SearchRequest => {
@@ -242,34 +287,30 @@ async fn handle_connect(
         return;
     }
 
-    // Parse control HPAI
-    let ctrl_hpai = Hpai::parse(&frame.body[..8]);
-    let data_hpai = Hpai::parse(&frame.body[8..16]);
+    // Parse control and data HPAI. IPv6 peers are represented by standard
+    // KNXnet/IP NAT-mode HPAI (0.0.0.0:port) and authenticated by `src`.
+    let Some(ctrl_hpai) = Hpai::parse(&frame.body) else {
+        return;
+    };
+    let data_offset = usize::from(Hpai::LEN);
+    let Some(data_hpai) = Hpai::parse(&frame.body[data_offset..]) else {
+        return;
+    };
 
-    let ctrl_addr = ctrl_hpai.map_or(src, |h| {
-        if h.ip == [0, 0, 0, 0] {
-            src
-        } else {
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(h.ip), h.port))
-        }
-    });
-
-    let data_addr = data_hpai.map_or(src, |h| {
-        if h.ip == [0, 0, 0, 0] {
-            src
-        } else {
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(h.ip), h.port))
-        }
-    });
+    let ctrl_addr = hpai_to_socket_addr(ctrl_hpai, src);
+    let data_addr = hpai_to_socket_addr(data_hpai, src);
 
     // CRI: byte 16 = length, byte 17 = connection type
-    let conn_type = frame.body.get(17).copied().unwrap_or(0);
+    let cri_offset = data_offset + usize::from(Hpai::LEN);
+    let conn_type = frame.body.get(cri_offset + 1).copied().unwrap_or(0);
     let is_config = conn_type == 0x03; // DEVICE_MGMT_CONNECTION
 
     if tunnels.len() >= MAX_TUNNELS {
         // No more connections available
-        let resp = build_connect_response(0, 0x24, 0); // E_NO_MORE_CONNECTIONS
-        let _ = socket.send_to(&resp, ctrl_addr).await;
+        let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
+        if let Some(resp) = build_connect_response(0, 0x24, 0, port) {
+            let _ = socket.send_to(&resp, ctrl_addr).await;
+        }
         return;
     }
 
@@ -304,16 +345,45 @@ async fn handle_connect(
 
     tracing::info!(channel_id, %ctrl_addr, config = is_config, "tunnel client connected");
 
-    let resp = build_connect_response(channel_id, 0x00, 0xFF00 | u16::from(channel_id)); // E_NO_ERROR
-    let _ = socket.send_to(&resp, ctrl_addr).await;
+    let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
+    if let Some(resp) =
+        build_connect_response(channel_id, 0x00, 0xFF00 | u16::from(channel_id), port)
+    {
+        let _ = socket.send_to(&resp, ctrl_addr).await;
+    }
 }
 
-fn build_connect_response(channel_id: u8, status: u8, individual_addr: u16) -> Vec<u8> {
-    let hpai = Hpai {
-        protocol: HostProtocol::Ipv4Udp,
-        ip: [0, 0, 0, 0],
-        port: KNX_PORT,
-    };
+fn hpai_to_socket_addr(hpai: Hpai, src: SocketAddr) -> SocketAddr {
+    if hpai.is_unspecified() {
+        return socket_addr_with_port(src, hpai.port);
+    }
+    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(hpai.ip), hpai.port))
+}
+
+const fn socket_addr_with_port(src: SocketAddr, port: u16) -> SocketAddr {
+    let port = if port == 0 { src.port() } else { port };
+    match src {
+        SocketAddr::V4(v4) => SocketAddr::V4(SocketAddrV4::new(*v4.ip(), port)),
+        SocketAddr::V6(v6) => SocketAddr::V6(SocketAddrV6::new(
+            *v6.ip(),
+            port,
+            v6.flowinfo(),
+            v6.scope_id(),
+        )),
+    }
+}
+
+fn serialize_frame(frame: &KnxIpFrame) -> Option<Vec<u8>> {
+    frame.try_to_bytes().ok()
+}
+
+fn build_connect_response(
+    channel_id: u8,
+    status: u8,
+    individual_addr: u16,
+    port: u16,
+) -> Option<Vec<u8>> {
+    let hpai = Hpai::nat_udp(port);
     let mut body = Vec::with_capacity(12);
     body.push(channel_id);
     body.push(status);
@@ -326,18 +396,27 @@ fn build_connect_response(channel_id: u8, status: u8, individual_addr: u16) -> V
         service_type: ServiceType::ConnectResponse,
         body,
     };
-    frame.to_bytes()
+    serialize_frame(&frame)
 }
 
-async fn handle_heartbeat(socket: &UdpSocket, frame: &KnxIpFrame, tunnels: &mut [TunnelClient]) {
+async fn handle_heartbeat(
+    socket: &UdpSocket,
+    src: SocketAddr,
+    frame: &KnxIpFrame,
+    tunnels: &mut [TunnelClient],
+) {
     if frame.body.is_empty() {
         return;
     }
     let channel_id = frame.body[0];
 
-    let tunnel = tunnels.iter_mut().find(|t| t.channel_id == channel_id);
+    let mut dst = src;
+    let tunnel = tunnels
+        .iter_mut()
+        .find(|t| t.channel_id == channel_id && t.ctrl_addr == src);
     let status = if let Some(t) = tunnel {
         t.last_heartbeat = tokio::time::Instant::now();
+        dst = t.ctrl_addr;
         0x00 // E_NO_ERROR
     } else {
         0x21 // E_CONNECTION_ID
@@ -347,32 +426,14 @@ async fn handle_heartbeat(socket: &UdpSocket, frame: &KnxIpFrame, tunnels: &mut 
         service_type: ServiceType::ConnectionStateResponse,
         body: vec![channel_id, status],
     };
-    let _ = socket
-        .send_to(
-            &resp.to_bytes(),
-            frame
-                .body
-                .get(2..)
-                .and_then(|b| {
-                    Hpai::parse(b).map(|h| {
-                        if h.ip == [0, 0, 0, 0] {
-                            // Can't determine source from HPAI, use channel's ctrl_addr
-                            tunnels.iter().find(|t| t.channel_id == channel_id).map_or(
-                                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
-                                |t| t.ctrl_addr,
-                            )
-                        } else {
-                            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(h.ip), h.port))
-                        }
-                    })
-                })
-                .unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))),
-        )
-        .await;
+    if let Some(bytes) = serialize_frame(&resp) {
+        let _ = socket.send_to(&bytes, dst).await;
+    }
 }
 
 async fn handle_disconnect(
     socket: &UdpSocket,
+    src: SocketAddr,
     frame: &KnxIpFrame,
     tunnels: &mut Vec<TunnelClient>,
 ) {
@@ -383,23 +444,29 @@ async fn handle_disconnect(
 
     let ctrl_addr = tunnels
         .iter()
-        .find(|t| t.channel_id == channel_id)
+        .find(|t| t.channel_id == channel_id && t.ctrl_addr == src)
         .map(|t| t.ctrl_addr);
 
-    tunnels.retain(|t| t.channel_id != channel_id);
-    tracing::info!(channel_id, "tunnel client disconnected");
+    let status = if ctrl_addr.is_some() {
+        tunnels.retain(|t| t.channel_id != channel_id);
+        tracing::info!(channel_id, "tunnel client disconnected");
+        0x00
+    } else {
+        0x21
+    };
 
     let resp = KnxIpFrame {
         service_type: ServiceType::DisconnectResponse,
-        body: vec![channel_id, 0x00],
+        body: vec![channel_id, status],
     };
-    if let Some(addr) = ctrl_addr {
-        let _ = socket.send_to(&resp.to_bytes(), addr).await;
+    if let Some(bytes) = serialize_frame(&resp) {
+        let _ = socket.send_to(&bytes, ctrl_addr.unwrap_or(src)).await;
     }
 }
 
 async fn handle_tunneling_request(
     socket: &UdpSocket,
+    src: SocketAddr,
     frame: &KnxIpFrame,
     tunnels: &mut [TunnelClient],
     event_tx: &mpsc::Sender<ServerEvent>,
@@ -409,19 +476,25 @@ async fn handle_tunneling_request(
     };
 
     let tunnel = tunnels.iter_mut().find(|t| t.channel_id == ch.channel_id);
-    let Some(tunnel) = tunnel else { return };
+    let Some(tunnel) = tunnel else {
+        send_tunneling_ack(socket, src, ch.channel_id, ch.sequence_counter, 0x21).await;
+        return;
+    };
+
+    if tunnel.data_addr != src {
+        send_tunneling_ack(socket, src, ch.channel_id, ch.sequence_counter, 0x21).await;
+        return;
+    }
 
     // Send ACK
-    let ack_ch = ConnectionHeader {
-        channel_id: ch.channel_id,
-        sequence_counter: ch.sequence_counter,
-        status: 0,
-    };
-    let ack = KnxIpFrame {
-        service_type: ServiceType::TunnelingAck,
-        body: ack_ch.to_bytes().to_vec(),
-    };
-    let _ = socket.send_to(&ack.to_bytes(), tunnel.data_addr).await;
+    send_tunneling_ack(
+        socket,
+        tunnel.data_addr,
+        ch.channel_id,
+        ch.sequence_counter,
+        0,
+    )
+    .await;
 
     // Deduplicate
     if ch.sequence_counter != tunnel.recv_seq {
@@ -436,18 +509,43 @@ async fn handle_tunneling_request(
     }
 }
 
+async fn send_tunneling_ack(
+    socket: &UdpSocket,
+    dst: SocketAddr,
+    channel_id: u8,
+    sequence_counter: u8,
+    status: u8,
+) {
+    let ack_ch = ConnectionHeader {
+        channel_id,
+        sequence_counter,
+        status,
+    };
+    let ack = KnxIpFrame {
+        service_type: ServiceType::TunnelingAck,
+        body: ack_ch.to_bytes().to_vec(),
+    };
+    if let Some(bytes) = serialize_frame(&ack) {
+        let _ = socket.send_to(&bytes, dst).await;
+    }
+}
+
 async fn send_to_all(
     socket: &UdpSocket,
-    multicast: &SocketAddr,
+    multicast: Option<&SocketAddr>,
     tunnels: &mut [TunnelClient],
     cemi: &CemiFrame,
 ) -> Vec<(Vec<u8>, SocketAddr)> {
     // Send as routing indication to multicast
-    let routing = KnxIpFrame {
-        service_type: ServiceType::RoutingIndication,
-        body: cemi.as_bytes().to_vec(),
-    };
-    let _ = socket.send_to(&routing.to_bytes(), multicast).await;
+    if let Some(multicast) = multicast {
+        let routing = KnxIpFrame {
+            service_type: ServiceType::RoutingIndication,
+            body: cemi.as_bytes().to_vec(),
+        };
+        if let Some(bytes) = serialize_frame(&routing) {
+            let _ = socket.send_to(&bytes, multicast).await;
+        }
+    }
 
     // Send as tunneling indication to all tunnel clients
     let mut stashed = Vec::new();
@@ -502,7 +600,9 @@ async fn send_tunneling_to(
         service_type: ServiceType::TunnelingRequest,
         body,
     };
-    let frame_bytes = frame.to_bytes();
+    let Some(frame_bytes) = serialize_frame(&frame) else {
+        return Vec::new();
+    };
     let mut stashed: Vec<(Vec<u8>, SocketAddr)> = Vec::new();
 
     for attempt in 0..TUNNELING_MAX_RETRIES {
@@ -512,7 +612,15 @@ async fn send_tunneling_to(
         }
 
         // Wait for ack from this specific client
-        match wait_for_tunneling_ack(socket, tunnel.channel_id, seq, &mut stashed).await {
+        match wait_for_tunneling_ack(
+            socket,
+            tunnel.data_addr,
+            tunnel.channel_id,
+            seq,
+            &mut stashed,
+        )
+        .await
+        {
             Ok(()) => {
                 tunnel.send_seq = seq.wrapping_add(1);
                 return stashed;
@@ -538,6 +646,7 @@ async fn send_tunneling_to(
 /// Any other packets received are stashed for later re-processing.
 async fn wait_for_tunneling_ack(
     socket: &UdpSocket,
+    expected_src: SocketAddr,
     channel_id: u8,
     seq: u8,
     stashed: &mut Vec<(Vec<u8>, SocketAddr)>,
@@ -560,7 +669,10 @@ async fn wait_for_tunneling_ack(
         if let Ok(frame) = KnxIpFrame::parse(&buf[..n]) {
             if frame.service_type == ServiceType::TunnelingAck {
                 if let Some(ack_ch) = ConnectionHeader::parse(&frame.body) {
-                    if ack_ch.channel_id == channel_id && ack_ch.sequence_counter == seq {
+                    if src == expected_src
+                        && ack_ch.channel_id == channel_id
+                        && ack_ch.sequence_counter == seq
+                    {
                         return Ok(());
                     }
                 }
