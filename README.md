@@ -6,10 +6,10 @@
 [![no_std](https://img.shields.io/badge/no__std-compatible-green.svg)](https://docs.rust-embedded.org/book/)
 
 <!-- Uncomment after publishing to crates.io:
-[![knx-rs-core](https://img.shields.io/crates/v/knx-core.svg?label=knx-core)](https://crates.io/crates/knx-core)
-[![knx-rs-ip](https://img.shields.io/crates/v/knx-ip.svg?label=knx-ip)](https://crates.io/crates/knx-ip)
-[![knx-rs-device](https://img.shields.io/crates/v/knx-device.svg?label=knx-device)](https://crates.io/crates/knx-device)
-[![docs.rs](https://img.shields.io/docsrs/knx-core)](https://docs.rs/knx-core)
+[![knx-rs-core](https://img.shields.io/crates/v/knx-rs-core.svg?label=knx-rs-core)](https://crates.io/crates/knx-rs-core)
+[![knx-rs-ip](https://img.shields.io/crates/v/knx-rs-ip.svg?label=knx-rs-ip)](https://crates.io/crates/knx-rs-ip)
+[![knx-rs-device](https://img.shields.io/crates/v/knx-rs-device.svg?label=knx-rs-device)](https://crates.io/crates/knx-rs-device)
+[![docs.rs](https://img.shields.io/docsrs/knx-rs-core)](https://docs.rs/knx-rs-core)
 -->
 
 A platform-independent KNX protocol stack in Rust — for embedded devices, servers, and everything in between.
@@ -18,15 +18,15 @@ A platform-independent KNX protocol stack in Rust — for embedded devices, serv
 
 | Crate | Description | `no_std` |
 |-------|-------------|----------|
-| **[knx-rs-core](knx-core/)** | Protocol types, CEMI frames, DPT conversions, KNXnet/IP frame types | ✅ |
-| **[knx-rs-ip](knx-ip/)** | Async KNXnet/IP tunnel, router, discovery, and device server (tokio) | ❌ |
-| **[knx-rs-device](knx-device/)** | KNX device stack — group objects, ETS programming, BAU | ✅ |
-| **[knx-rs-tp](knx-tp/)** | TP-UART data link layer for embedded targets *(WIP)* | ✅ |
-| **[knx-rs-prod](knx-prod/)** | `.knxprod` generator — hash, sign, and package ETS product databases | ❌ |
+| **[knx-rs-core](knx-rs-core/)** | Protocol types, CEMI frames, DPT conversions, KNXnet/IP frame types | ✅ |
+| **[knx-rs-ip](knx-rs-ip/)** | Async KNXnet/IP tunnel, router, discovery, and device server (tokio) | ❌ |
+| **[knx-rs-device](knx-rs-device/)** | KNX device stack — group objects, ETS programming, BAU | ✅ |
+| **[knx-rs-tp](knx-rs-tp/)** | TP-UART data link layer for embedded targets *(WIP)* | ✅ |
+| **[knx-rs-prod](knx-rs-prod/)** | `.knxprod` generator — hash, sign, and package ETS product databases | ❌ |
 
 ## Features
 
-### knx-core
+### knx-rs-core
 
 - **Addresses** — `IndividualAddress` (1.1.1), `GroupAddress` (1/0/1), with `Display`, `FromStr`, optional `serde`
 - **CEMI frames** — parse and serialize with full read/write access to all control fields
@@ -35,7 +35,7 @@ A platform-independent KNX protocol stack in Rust — for embedded devices, serv
 - **KNXnet/IP types** — frame header, service types, connection header, HPAI
 - **`no_std` + `alloc`** — runs on embedded targets (ARM Cortex-M, RISC-V)
 
-### knx-ip
+### knx-rs-ip
 
 - **Tunnel connection** — connect handshake, 3× retry, heartbeat, auto-reconnect
 - **Router connection** — multicast routing with rate limiting (50 pkt/s per KNX spec)
@@ -44,7 +44,7 @@ A platform-independent KNX protocol stack in Rust — for embedded devices, serv
 - **Multiplexer** — fan out one connection into multiple independent handles
 - **URL parsing** — `udp://`, `tunnel://`, `router://` with multicast auto-detection
 
-### knx-device
+### knx-rs-device
 
 - **Property system** — data-backed and callback-backed properties with `const` metadata
 - **Interface objects** — device object, application program, with unified indexed access
@@ -54,7 +54,7 @@ A platform-independent KNX protocol stack in Rust — for embedded devices, serv
 - **Memory management** — `MemoryBackend` trait, RAM backend, C++-compatible persistence format
 - **`no_std` + `alloc`** — runs on embedded targets
 
-### knx-prod
+### knx-rs-prod
 
 - **Hash** — clean-room Rust reimplementation of the ETS `Knx.Ets.XmlSigning.dll` hashing algorithm, verified byte-exact against 28 test files from 5 manufacturers
 - **Sign** — compute registration-relevant MD5 hash, patch fingerprint into application IDs
@@ -184,18 +184,18 @@ The key insight: your GO definitions, parameter memory layout, and DPT mappings 
 
 ```sh
 # Install from crates.io
-cargo install knx-prod
+cargo install knx-rs-prod
 
 # Or build from source
 cargo build --release -p knx-rs-prod
 
 # Generate .knxprod from product XML
-knx-prod MyDevice.xml -o MyDevice.knxprod
+knx-rs-prod MyDevice.xml -o MyDevice.knxprod
 ```
 
 ### As a library
 
-Add `knx-prod` to your `Cargo.toml` (without the `cli` feature) and call `knx_rs_prod::generate_knxprod()` — see the xtask example above.
+Add `knx-rs-prod` to your `Cargo.toml` (without the `cli` feature) and call `knx_rs_prod::generate_knxprod()` — see the xtask example above.
 
 ### CI Integration
 

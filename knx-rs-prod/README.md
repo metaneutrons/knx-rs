@@ -1,4 +1,4 @@
-# knx-prod
+# knx-rs-prod
 
 Cross-platform `.knxprod` generator for KNX ETS product databases — no Windows, no ETS, no .NET required.
 
@@ -36,8 +36,8 @@ All 89 registration-relevant element types from the ETS registry are implemented
 ### CLI
 
 ```sh
-cargo install knx-prod
-knx-prod MyDevice.xml -o MyDevice.knxprod
+cargo install knx-rs-prod
+knx-rs-prod MyDevice.xml -o MyDevice.knxprod
 ```
 
 ### As a library

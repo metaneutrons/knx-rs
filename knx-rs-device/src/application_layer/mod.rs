@@ -9,9 +9,9 @@
 //!
 //! # Module structure
 //!
-//! - [`types`] — `AppIndication` and `AppLayerError`
-//! - [`encode`] — outgoing APDU encoding functions
-//! - [`parse`] — incoming APDU parsing functions
+//! - `types` — `AppIndication` and `AppLayerError`
+//! - [`crate::application_layer::encode`] — outgoing APDU encoding functions
+//! - [`crate::application_layer::parse`] — incoming APDU parsing functions
 
 /// Outgoing APDU encoding functions for all KNX application-layer services.
 pub mod encode;
