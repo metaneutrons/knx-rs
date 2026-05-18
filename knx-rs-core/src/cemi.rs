@@ -52,6 +52,8 @@ pub enum CemiError {
     UnknownMessageCode(u8),
     /// Control field contains invalid bit combinations.
     InvalidControlField,
+    /// TPDU/APDU payload cannot fit in the NPDU length field.
+    PayloadTooLong(usize),
 }
 
 impl fmt::Display for CemiError {
@@ -61,6 +63,7 @@ impl fmt::Display for CemiError {
             Self::LengthMismatch => f.write_str("cEMI frame length mismatch"),
             Self::UnknownMessageCode(c) => write!(f, "unknown cEMI message code: {c:#04x}"),
             Self::InvalidControlField => f.write_str("invalid cEMI control field"),
+            Self::PayloadTooLong(len) => write!(f, "cEMI payload too long: {len} bytes"),
         }
     }
 }
@@ -91,6 +94,7 @@ impl CemiFrame {
         if data.len() < 2 {
             return Err(CemiError::TooShort);
         }
+        MessageCode::try_from(data[0]).map_err(|_| CemiError::UnknownMessageCode(data[0]))?;
 
         let add_info_len = data[1] as usize;
         let ctrl_offset = 2 + add_info_len;
@@ -105,8 +109,7 @@ impl CemiFrame {
         let payload_len = (npdu_octet_count + 1).max(2);
         let expected_len = ctrl_offset + TPDU_OFFSET + payload_len;
 
-        // Allow frames that are exactly the expected length or longer (trailing data ignored)
-        if data.len() < expected_len {
+        if data.len() != expected_len {
             return Err(CemiError::LengthMismatch);
         }
 
@@ -119,19 +122,29 @@ impl CemiFrame {
     /// Create a new cEMI frame for an `L_Data` indication/request with the given APDU payload.
     ///
     /// The frame is initialized with broadcast system broadcast, no additional info.
-    pub fn new_l_data(
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CemiError::PayloadTooLong`] if the TPDU/APDU payload cannot
+    /// fit in the 8-bit NPDU length field.
+    pub fn try_new_l_data(
         message_code: MessageCode,
         source: IndividualAddress,
         destination: DestinationAddress,
         priority: Priority,
         payload: &[u8],
-    ) -> Self {
+    ) -> Result<Self, CemiError> {
+        if payload.len() > usize::from(u8::MAX) + 1 {
+            return Err(CemiError::PayloadTooLong(payload.len()));
+        }
+
         let npdu_octet_count = if payload.is_empty() {
             0
         } else {
             payload.len() - 1
         };
-        let total_len = MIN_FRAME_SIZE + 1 + npdu_octet_count;
+        let encoded_payload_len = payload.len().max(2);
+        let total_len = MIN_FRAME_SIZE + encoded_payload_len;
         let mut data = alloc::vec![0u8; total_len];
 
         data[0] = message_code as u8;
@@ -167,17 +180,40 @@ impl CemiFrame {
         data[ctrl_offset + 5] = dst_bytes[1];
 
         // NPDU length
-        #[expect(clippy::cast_possible_truncation)]
-        {
-            data[ctrl_offset + NPDU_LEN_OFFSET] = npdu_octet_count as u8;
-        }
+        data[ctrl_offset + NPDU_LEN_OFFSET] =
+            u8::try_from(npdu_octet_count).map_err(|_| CemiError::PayloadTooLong(payload.len()))?;
 
         // TPDU/APDU payload
         if !payload.is_empty() {
             data[ctrl_offset + TPDU_OFFSET..][..payload.len()].copy_from_slice(payload);
         }
 
-        Self { data, ctrl_offset }
+        Ok(Self { data, ctrl_offset })
+    }
+
+    /// Create a new cEMI frame for an `L_Data` indication/request with the given APDU payload.
+    ///
+    /// The frame is initialized with broadcast system broadcast, no additional info.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the TPDU/APDU payload cannot fit in the 8-bit NPDU length
+    /// field. Use [`Self::try_new_l_data`] when the payload length is not
+    /// statically bounded.
+    pub fn new_l_data(
+        message_code: MessageCode,
+        source: IndividualAddress,
+        destination: DestinationAddress,
+        priority: Priority,
+        payload: &[u8],
+    ) -> Self {
+        match Self::try_new_l_data(message_code, source, destination, priority, payload) {
+            Ok(frame) => frame,
+            Err(CemiError::PayloadTooLong(len)) => {
+                panic!("cEMI payload length {len} exceeds the NPDU length field")
+            }
+            Err(_) => unreachable!("constructing an L_Data frame cannot fail for this reason"),
+        }
     }
 
     // ── Field accessors ───────────────────────────────────────

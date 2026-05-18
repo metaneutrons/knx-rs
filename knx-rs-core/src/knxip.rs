@@ -109,6 +109,17 @@ pub enum HostProtocol {
     Ipv4Tcp = 0x02,
 }
 
+impl HostProtocol {
+    /// Try to convert a raw host protocol code to a [`HostProtocol`].
+    pub const fn from_raw(raw: u8) -> Option<Self> {
+        Some(match raw {
+            0x01 => Self::Ipv4Udp,
+            0x02 => Self::Ipv4Tcp,
+            _ => return None,
+        })
+    }
+}
+
 /// Error returned when parsing a KNXnet/IP frame fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KnxIpError {
@@ -122,6 +133,8 @@ pub enum KnxIpError {
     LengthMismatch,
     /// Unknown service type.
     UnknownServiceType(u16),
+    /// Serialized frame length exceeds the KNXnet/IP 16-bit length field.
+    FrameTooLong(usize),
 }
 
 impl fmt::Display for KnxIpError {
@@ -132,6 +145,7 @@ impl fmt::Display for KnxIpError {
             Self::InvalidProtocolVersion => f.write_str("invalid KNXnet/IP protocol version"),
             Self::LengthMismatch => f.write_str("KNXnet/IP frame length mismatch"),
             Self::UnknownServiceType(st) => write!(f, "unknown KNXnet/IP service type: {st:#06x}"),
+            Self::FrameTooLong(len) => write!(f, "KNXnet/IP frame too long: {len} bytes"),
         }
     }
 }
@@ -167,7 +181,7 @@ impl KnxIpFrame {
         let service_raw = u16::from_be_bytes([data[2], data[3]]);
         let total_len = u16::from_be_bytes([data[4], data[5]]) as usize;
 
-        if data.len() < total_len {
+        if data.len() != total_len {
             return Err(KnxIpError::LengthMismatch);
         }
 
@@ -181,17 +195,39 @@ impl KnxIpFrame {
     }
 
     /// Serialize the frame to bytes (header + body).
-    pub fn to_bytes(&self) -> Vec<u8> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnxIpError::FrameTooLong`] if the frame body cannot fit in
+    /// the 16-bit KNXnet/IP length field.
+    pub fn try_to_bytes(&self) -> Result<Vec<u8>, KnxIpError> {
         let total_len = HEADER_LEN as usize + self.body.len();
+        let total_len_u16 =
+            u16::try_from(total_len).map_err(|_| KnxIpError::FrameTooLong(total_len))?;
         let mut buf = Vec::with_capacity(total_len);
         buf.push(HEADER_LEN);
         buf.push(PROTOCOL_VERSION_10);
         buf.extend_from_slice(&(self.service_type as u16).to_be_bytes());
-        #[expect(clippy::cast_possible_truncation)]
-        let len_bytes = (total_len as u16).to_be_bytes();
-        buf.extend_from_slice(&len_bytes);
+        buf.extend_from_slice(&total_len_u16.to_be_bytes());
         buf.extend_from_slice(&self.body);
-        buf
+        Ok(buf)
+    }
+
+    /// Serialize the frame to bytes (header + body).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the frame body cannot fit in the 16-bit KNXnet/IP length
+    /// field. Use [`Self::try_to_bytes`] when the body length is not statically
+    /// bounded.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self.try_to_bytes() {
+            Ok(bytes) => bytes,
+            Err(KnxIpError::FrameTooLong(len)) => {
+                panic!("KNXnet/IP frame length {len} exceeds u16::MAX")
+            }
+            Err(_) => unreachable!("serializing a well-typed frame cannot fail for this reason"),
+        }
     }
 }
 
@@ -266,16 +302,32 @@ impl Hpai {
         if data.len() < Self::LEN as usize || data[0] != Self::LEN {
             return None;
         }
-        let protocol = match data[1] {
-            0x01 => HostProtocol::Ipv4Udp,
-            0x02 => HostProtocol::Ipv4Tcp,
-            _ => return None,
+        let Some(protocol) = HostProtocol::from_raw(data[1]) else {
+            return None;
         };
         Some(Self {
             protocol,
             ip: [data[2], data[3], data[4], data[5]],
             port: u16::from_be_bytes([data[6], data[7]]),
         })
+    }
+
+    /// Create a UDP HPAI in NAT mode.
+    ///
+    /// KNXnet/IP HPAI carries IPv4 endpoints only. For IPv6 sockets, callers
+    /// should use this NAT-mode representation and rely on the UDP source
+    /// address as the authoritative endpoint.
+    pub const fn nat_udp(port: u16) -> Self {
+        Self {
+            protocol: HostProtocol::Ipv4Udp,
+            ip: [0, 0, 0, 0],
+            port,
+        }
+    }
+
+    /// Whether this HPAI uses the wildcard IPv4 address.
+    pub fn is_unspecified(self) -> bool {
+        self.ip == [0, 0, 0, 0]
     }
 
     /// Serialize to 8 bytes.
@@ -301,6 +353,8 @@ impl Hpai {
     clippy::cast_possible_truncation
 )]
 mod tests {
+    use alloc::vec;
+
     use super::*;
 
     #[test]
@@ -380,7 +434,16 @@ mod tests {
         assert_eq!(hpai.protocol, HostProtocol::Ipv4Udp);
         assert_eq!(hpai.ip, [192, 168, 1, 50]);
         assert_eq!(hpai.port, 3671);
+        assert!(!hpai.is_unspecified());
         assert_eq!(hpai.to_bytes(), data);
+    }
+
+    #[test]
+    fn hpai_nat_udp_roundtrip() {
+        let hpai = Hpai::nat_udp(3671);
+        assert_eq!(hpai.protocol, HostProtocol::Ipv4Udp);
+        assert!(hpai.is_unspecified());
+        assert_eq!(Hpai::parse(&hpai.to_bytes()), Some(hpai));
     }
 
     #[test]
@@ -412,6 +475,27 @@ mod tests {
         assert!(matches!(
             KnxIpFrame::parse(&data),
             Err(KnxIpError::UnknownServiceType(0xFFFF))
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_bytes() {
+        let data = [0x06, 0x10, 0x05, 0x30, 0x00, 0x06, 0x00];
+        assert!(matches!(
+            KnxIpFrame::parse(&data),
+            Err(KnxIpError::LengthMismatch)
+        ));
+    }
+
+    #[test]
+    fn try_to_bytes_rejects_oversized_frame() {
+        let frame = KnxIpFrame {
+            service_type: ServiceType::RoutingIndication,
+            body: vec![0; usize::from(u16::MAX)],
+        };
+        assert!(matches!(
+            frame.try_to_bytes(),
+            Err(KnxIpError::FrameTooLong(_))
         ));
     }
 

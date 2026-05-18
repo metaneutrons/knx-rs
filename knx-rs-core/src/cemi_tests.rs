@@ -9,6 +9,8 @@
     clippy::identity_op
 )]
 mod tests {
+    use alloc::vec;
+
     use crate::address::{DestinationAddress, GroupAddress, IndividualAddress};
     use crate::cemi::{CemiError, CemiFrame};
     use crate::message::MessageCode;
@@ -146,6 +148,44 @@ mod tests {
         // Valid header but NPDU length says 5 octets, only 1 provided
         let bad = &[0x29, 0x00, 0xBC, 0xE0, 0x11, 0x01, 0x08, 0x01, 0x05, 0x00];
         assert_eq!(CemiFrame::parse(bad), Err(CemiError::LengthMismatch));
+    }
+
+    #[test]
+    fn parse_rejects_unknown_message_code() {
+        let mut bad = GROUP_WRITE_FRAME.to_vec();
+        bad[0] = 0x00;
+        assert_eq!(
+            CemiFrame::parse(&bad),
+            Err(CemiError::UnknownMessageCode(0))
+        );
+    }
+
+    #[test]
+    fn parse_rejects_trailing_bytes() {
+        let mut bad = GROUP_WRITE_FRAME.to_vec();
+        bad.push(0x00);
+        assert_eq!(CemiFrame::parse(&bad), Err(CemiError::LengthMismatch));
+    }
+
+    #[test]
+    fn try_new_l_data_rejects_oversized_payload() {
+        let src = IndividualAddress::from_raw(0);
+        let dst = DestinationAddress::Group(GroupAddress::from_raw(1));
+        let payload = vec![0; usize::from(u8::MAX) + 2];
+        assert_eq!(
+            CemiFrame::try_new_l_data(MessageCode::LDataInd, src, dst, Priority::Low, &payload),
+            Err(CemiError::PayloadTooLong(payload.len()))
+        );
+    }
+
+    #[test]
+    fn empty_l_data_roundtrip_has_minimum_tpdu() {
+        let src = IndividualAddress::from_raw(0);
+        let dst = DestinationAddress::Group(GroupAddress::from_raw(1));
+        let frame = CemiFrame::new_l_data(MessageCode::LDataInd, src, dst, Priority::Low, &[]);
+        assert_eq!(frame.npdu_length(), 0);
+        assert_eq!(frame.payload(), &[0x00, 0x00]);
+        CemiFrame::parse(frame.as_bytes()).unwrap();
     }
 
     #[test]
