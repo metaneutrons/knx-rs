@@ -268,32 +268,14 @@ fn filter_translations(
     languages_range: &ElementRange,
     category: TranslationCategory,
 ) -> String {
-    let content = &xml[languages_range.children_start..languages_range.inner_end];
-
-    // Find each Language element and filter its TranslationUnits
     let mut result = String::new();
-    let mut search_from = 0;
-
-    while let Some(lang_start) = content[search_from..].find("<Language ") {
-        let lang_abs = search_from + lang_start;
-        let Some(lang_tag_end) = content[lang_abs..].find('>') else {
-            break;
-        };
-        let lang_tag = &content[lang_abs..=(lang_abs + lang_tag_end)];
-
-        let Some(lang_close) = content[lang_abs..].find("</Language>") else {
-            break;
-        };
-        let lang_inner = &content[lang_abs + lang_tag_end + 1..lang_abs + lang_close];
-
-        let filtered_units = filter_units_in_language(lang_inner, category);
+    for lang_range in find_child_element_ranges(xml, languages_range, "Language") {
+        let filtered_units = filter_units_in_language(xml, &lang_range, category);
         if !filtered_units.is_empty() {
-            result.push_str(lang_tag);
+            result.push_str(&xml[lang_range.outer_start..lang_range.children_start]);
             result.push_str(&filtered_units);
-            result.push_str("</Language>");
+            result.push_str(&xml[lang_range.inner_end..lang_range.outer_end]);
         }
-
-        search_from = lang_abs + lang_close + "</Language>".len();
     }
 
     if result.is_empty() {
@@ -304,37 +286,116 @@ fn filter_translations(
 }
 
 /// Filter `TranslationUnit` elements within a single `Language` block.
-fn filter_units_in_language(lang_content: &str, category: TranslationCategory) -> String {
+fn filter_units_in_language(
+    xml: &str,
+    lang_range: &ElementRange,
+    category: TranslationCategory,
+) -> String {
     let mut result = String::new();
-    let mut search_from = 0;
 
-    while let Some(unit_start) = lang_content[search_from..].find("<TranslationUnit ") {
-        let unit_abs = search_from + unit_start;
-        let Some(unit_close) = lang_content[unit_abs..].find("</TranslationUnit>") else {
-            break;
-        };
-        let unit_end = unit_abs + unit_close + "</TranslationUnit>".len();
-        let unit_xml = &lang_content[unit_abs..unit_end];
-
-        // Extract RefId from the opening tag
+    for unit_range in find_child_element_ranges(xml, lang_range, "TranslationUnit") {
+        let unit_xml = &xml[unit_range.outer_start..unit_range.outer_end];
         if let Some(ref_id) = extract_attribute(unit_xml, "RefId") {
-            if matches_category(ref_id, category) {
+            if matches_category(&ref_id, category) {
                 result.push_str(unit_xml);
             }
         }
-
-        search_from = unit_end;
     }
 
     result
 }
 
-/// Extract an attribute value from an XML opening tag fragment.
-fn extract_attribute<'a>(tag: &'a str, attr_name: &str) -> Option<&'a str> {
-    let pattern = format!("{attr_name}=\"");
-    let start = tag.find(&pattern)? + pattern.len();
-    let end = tag[start..].find('"')? + start;
-    Some(&tag[start..end])
+/// Find all direct child element ranges by local name within a parent.
+fn find_child_element_ranges(
+    xml: &str,
+    parent: &ElementRange,
+    local_name: &str,
+) -> Vec<ElementRange> {
+    let search_area = &xml[parent.children_start..parent.inner_end];
+    let offset = parent.children_start;
+    let name_bytes = local_name.as_bytes();
+
+    let mut reader = Reader::from_str(search_area);
+    let mut buf = Vec::new();
+    let mut depth = 0u32;
+    let mut outer_start = None;
+    let mut children_start = None;
+    let mut ranges = Vec::new();
+
+    loop {
+        let event_offset = usize::try_from(reader.buffer_position()).unwrap_or(0);
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) if e.local_name().as_ref() == name_bytes => {
+                if depth == 0 {
+                    let start = event_offset + offset;
+                    outer_start = Some(start);
+                    if let Some(tag_end) = xml[start..].find('>') {
+                        children_start = Some(start + tag_end + 1);
+                    }
+                }
+                depth += 1;
+            }
+            Ok(Event::Empty(ref e)) if e.local_name().as_ref() == name_bytes && depth == 0 => {
+                let start = event_offset + offset;
+                if let Some(tag_end) = xml[start..].find('>') {
+                    let outer_end = start + tag_end + 1;
+                    ranges.push(ElementRange {
+                        outer_start: start,
+                        children_start: outer_end,
+                        inner_end: outer_end,
+                        outer_end,
+                    });
+                }
+            }
+            Ok(Event::End(ref e)) if e.local_name().as_ref() == name_bytes && depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    let inner_end = event_offset + offset;
+                    if let Some(close_tag_end) = xml[inner_end..].find('>') {
+                        ranges.push(ElementRange {
+                            outer_start: outer_start.unwrap_or(inner_end),
+                            children_start: children_start.unwrap_or(inner_end),
+                            inner_end,
+                            outer_end: inner_end + close_tag_end + 1,
+                        });
+                    }
+                    outer_start = None;
+                    children_start = None;
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    ranges
+}
+
+/// Extract an attribute value from an XML element fragment.
+fn extract_attribute(tag: &str, attr_name: &str) -> Option<String> {
+    let mut reader = Reader::from_str(tag);
+    let mut buf = Vec::new();
+    let attr_name = attr_name.as_bytes();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
+                for attr in e.attributes().flatten() {
+                    if attr.key.as_ref() == attr_name {
+                        return Some(attr.unescape_value().map_or_else(
+                            |_| String::from_utf8_lossy(&attr.value).into_owned(),
+                            std::borrow::Cow::into_owned,
+                        ));
+                    }
+                }
+                return None;
+            }
+            Ok(Event::Eof) | Err(_) => return None,
+            _ => {}
+        }
+        buf.clear();
+    }
 }
 
 /// Check if a `TranslationUnit` `RefId` matches the given category.
@@ -502,6 +563,33 @@ mod tests {
             result.is_empty(),
             "Catalog translations should be empty for app-only fixture"
         );
+    }
+
+    #[test]
+    fn filter_translations_uses_xml_parser_for_prefixed_units() {
+        let xml = r#"
+<KNX xmlns:k="http://knx.org/xml/project/20">
+  <ManufacturerData>
+    <k:Manufacturer RefId="M-00FA">
+      <k:Languages>
+        <k:Language Identifier="en-US">
+          <k:TranslationUnit RefId='M-00FA_A-0001'>
+            <k:Translation AttributeName="Name" Text="App" />
+          </k:TranslationUnit>
+          <k:TranslationUnit RefId="M-00FA_H-0001">
+            <k:Translation AttributeName="Name" Text="Hardware" />
+          </k:TranslationUnit>
+        </k:Language>
+      </k:Languages>
+    </k:Manufacturer>
+  </ManufacturerData>
+</KNX>"#;
+        let manu_range = find_element_range(xml, "Manufacturer").unwrap();
+        let lang_range = find_child_element_range(xml, &manu_range, "Languages").unwrap();
+
+        let result = filter_translations(xml, &lang_range, TranslationCategory::Application);
+        assert!(result.contains("M-00FA_A-0001"));
+        assert!(!result.contains("M-00FA_H-0001"));
     }
 
     #[test]
