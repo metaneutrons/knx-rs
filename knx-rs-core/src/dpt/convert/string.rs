@@ -26,6 +26,11 @@ pub fn encode(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
 }
 
 // ── DPT 16: 14-byte string (ASCII or Latin-1) ────────────────
+//
+// Both sub-types are decoded as Latin-1 (each byte maps directly to a code
+// point) and encoded as Latin-1 (code points > 0xFF become `?`). The
+// 16.000 (ASCII) vs 16.001 (Latin-1) distinction is not enforced: bytes
+// 0x80–0xFF are accepted for 16.000 rather than rejected.
 
 fn decode_dpt16(payload: &[u8]) -> Result<String, DptError> {
     if payload.len() < 14 {
