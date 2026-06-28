@@ -19,7 +19,6 @@
 //! for `std`-dependent functionality.
 
 #![no_std]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 extern crate alloc;
 

@@ -15,7 +15,6 @@
 //! - [`protocol`] — host-side protocol handler with UART trait
 
 #![no_std]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 pub mod commands;
 pub mod frame;
