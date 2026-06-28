@@ -30,13 +30,17 @@ use crate::transport_layer::TransportLayer;
 pub const MASK_VERSION_IP: u16 = 0x57B0;
 
 // ── Standard interface object indices (KNX spec) ─────────────
+//
+// Derived from the ObjectType discriminants so the index↔object mapping has a
+// single source of truth (the constructor builds objects in this order).
 
 /// Object index for the address table object.
-const OBJ_ADDR_TABLE: u8 = 1;
+const OBJ_ADDR_TABLE: u8 = crate::interface_object::ObjectType::AddressTable as u8;
 /// Object index for the association table object.
-const OBJ_ASSOC_TABLE: u8 = 2;
+const OBJ_ASSOC_TABLE: u8 = crate::interface_object::ObjectType::AssociationTable as u8;
 /// Object index for the application program object (first user object).
-const OBJ_APP_PROGRAM: u8 = 3;
+pub(crate) const OBJ_APP_PROGRAM: u8 =
+    crate::interface_object::ObjectType::ApplicationProgram as u8;
 
 // ── KNX restart erase codes (KNX 3/5/2) ─────────────────────
 
@@ -220,7 +224,9 @@ impl Bau {
         match object_index {
             OBJ_ADDR_TABLE => Some(&self.addr_table_object),
             OBJ_ASSOC_TABLE => Some(&self.assoc_table_object),
-            _ if object_index >= OBJ_APP_PROGRAM => Some(&self.app_program_object),
+            // Exactly the application-program object; user objects added at
+            // higher indices have no shared table.
+            OBJ_APP_PROGRAM => Some(&self.app_program_object),
             _ => None,
         }
     }
@@ -230,7 +236,7 @@ impl Bau {
         match object_index {
             OBJ_ADDR_TABLE => Some(&mut self.addr_table_object),
             OBJ_ASSOC_TABLE => Some(&mut self.assoc_table_object),
-            _ if object_index >= OBJ_APP_PROGRAM => Some(&mut self.app_program_object),
+            OBJ_APP_PROGRAM => Some(&mut self.app_program_object),
             _ => None,
         }
     }

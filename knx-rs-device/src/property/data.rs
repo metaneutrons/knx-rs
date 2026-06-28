@@ -68,11 +68,6 @@ impl DataProperty {
     }
 
     /// Access level.
-    pub const fn access(&self) -> u8 {
-        self.access as u8
-    }
-
-    /// Access level as `AccessLevel`.
     pub const fn access_level(&self) -> AccessLevel {
         self.access
     }

@@ -148,6 +148,20 @@ mod tests {
     use core::sync::atomic::{AtomicU8, Ordering};
 
     #[test]
+    fn object_type_try_from_roundtrips() {
+        // Drift guard: every accepted value maps back to a same-discriminant
+        // variant, catching a mis-typed arm in the hand-written reverse map.
+        for v in 0..=u16::from(u8::MAX) {
+            if let Ok(ot) = ObjectType::try_from(v) {
+                assert_eq!(
+                    ot as u16, v,
+                    "ObjectType {v} maps to a different discriminant"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn new_object_has_type_property() {
         let obj = InterfaceObject::new(ObjectType::Device);
         let mut buf = Vec::new();
