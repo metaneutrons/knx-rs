@@ -26,13 +26,17 @@
 //! ```
 
 use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
+use knx_rs_core::apdu::Apdu;
 use knx_rs_core::cemi::CemiFrame;
 use knx_rs_core::dpt::{self, Dpt, DptValue};
-use knx_rs_core::message::MessageCode;
+use knx_rs_core::message::{ApduType, MessageCode};
 use knx_rs_core::types::Priority;
 
-use crate::error::KnxIpError;
+use crate::error::Result;
 use crate::{KnxConnection, KnxFuture};
+
+/// TPCI bits for unnumbered (connectionless) group data.
+const TPCI_DATA_GROUP: u8 = 0x00;
 
 /// Extension trait for group-level KNX operations.
 ///
@@ -43,8 +47,8 @@ pub trait GroupOps: KnxConnection {
     ///
     /// # Errors
     ///
-    /// Returns [`KnxIpError`] if the frame could not be sent.
-    fn group_write(&self, ga: GroupAddress, data: &[u8]) -> KnxFuture<'_, Result<(), KnxIpError>> {
+    /// Returns [`KnxIpError`](crate::KnxIpError) if the frame could not be sent.
+    fn group_write(&self, ga: GroupAddress, data: &[u8]) -> KnxFuture<'_, Result<()>> {
         let frame = match build_group_write(ga, data) {
             Ok(frame) => frame,
             Err(err) => return Box::pin(core::future::ready(Err(err))),
@@ -56,20 +60,16 @@ pub trait GroupOps: KnxConnection {
     ///
     /// # Errors
     ///
-    /// Returns [`KnxIpError`] if encoding fails or the frame could not be sent.
+    /// Returns [`KnxIpError`](crate::KnxIpError) if encoding fails or the frame could not be sent.
     fn group_write_value(
         &self,
         ga: GroupAddress,
         dpt: Dpt,
         value: &DptValue,
-    ) -> KnxFuture<'_, Result<(), KnxIpError>> {
+    ) -> KnxFuture<'_, Result<()>> {
         let encoded = match dpt::encode(dpt, value) {
             Ok(encoded) => encoded,
-            Err(err) => {
-                return Box::pin(core::future::ready(Err(KnxIpError::Protocol(
-                    err.to_string(),
-                ))));
-            }
+            Err(err) => return Box::pin(core::future::ready(Err(err.into()))),
         };
         let frame = match build_group_write(ga, &encoded) {
             Ok(frame) => frame,
@@ -84,8 +84,8 @@ pub trait GroupOps: KnxConnection {
     ///
     /// # Errors
     ///
-    /// Returns [`KnxIpError`] if the frame could not be sent.
-    fn group_read(&self, ga: GroupAddress) -> KnxFuture<'_, Result<(), KnxIpError>> {
+    /// Returns [`KnxIpError`](crate::KnxIpError) if the frame could not be sent.
+    fn group_read(&self, ga: GroupAddress) -> KnxFuture<'_, Result<()>> {
         let frame = match build_group_read(ga) {
             Ok(frame) => frame,
             Err(err) => return Box::pin(core::future::ready(Err(err))),
@@ -97,12 +97,8 @@ pub trait GroupOps: KnxConnection {
     ///
     /// # Errors
     ///
-    /// Returns [`KnxIpError`] if the frame could not be sent.
-    fn group_respond(
-        &self,
-        ga: GroupAddress,
-        data: &[u8],
-    ) -> KnxFuture<'_, Result<(), KnxIpError>> {
+    /// Returns [`KnxIpError`](crate::KnxIpError) if the frame could not be sent.
+    fn group_respond(&self, ga: GroupAddress, data: &[u8]) -> KnxFuture<'_, Result<()>> {
         let frame = match build_group_response(ga, data) {
             Ok(frame) => frame,
             Err(err) => return Box::pin(core::future::ready(Err(err))),
@@ -116,53 +112,36 @@ impl<T: KnxConnection> GroupOps for T {}
 
 // ── Frame builders (internal) ─────────────────────────────────
 
-fn build_group_write(ga: GroupAddress, data: &[u8]) -> Result<CemiFrame, KnxIpError> {
-    let mut payload = Vec::with_capacity(2 + data.len());
-    payload.push(0x00); // TPCI: unnumbered data
-    if data.len() == 1 && data[0] <= 0x3F {
-        payload.push(0x80 | (data[0] & 0x3F)); // short GroupValueWrite
-    } else {
-        payload.push(0x80); // GroupValueWrite APCI
-        payload.extend_from_slice(data);
-    }
-    CemiFrame::try_new_l_data(
-        MessageCode::LDataReq,
-        IndividualAddress::from_raw(0x0000), // filled by gateway
-        DestinationAddress::Group(ga),
-        Priority::Low,
-        &payload,
-    )
-    .map_err(|e| KnxIpError::Protocol(e.to_string()))
-}
-
-fn build_group_read(ga: GroupAddress) -> Result<CemiFrame, KnxIpError> {
-    CemiFrame::try_new_l_data(
-        MessageCode::LDataReq,
-        IndividualAddress::from_raw(0x0000),
-        DestinationAddress::Group(ga),
-        Priority::Low,
-        &[0x00, 0x00], // GroupValueRead
-    )
-    .map_err(|e| KnxIpError::Protocol(e.to_string()))
-}
-
-fn build_group_response(ga: GroupAddress, data: &[u8]) -> Result<CemiFrame, KnxIpError> {
-    let mut payload = Vec::with_capacity(2 + data.len());
-    payload.push(0x00);
-    if data.len() == 1 && data[0] <= 0x3F {
-        payload.push(0x40 | (data[0] & 0x3F)); // short GroupValueResponse
-    } else {
-        payload.push(0x40); // GroupValueResponse APCI
-        payload.extend_from_slice(data);
-    }
-    CemiFrame::try_new_l_data(
+/// Build an `L_Data.req` cEMI frame carrying a group-value APDU.
+///
+/// APDU encoding (short/long form, APCI bytes) is delegated to
+/// [`knx_rs_core::apdu::Apdu`] so opcodes and the short-form rule live in one
+/// place; the source address is left zero for the gateway to fill in.
+fn build_group_frame(ga: GroupAddress, apdu_type: ApduType, data: &[u8]) -> Result<CemiFrame> {
+    let apdu = Apdu {
+        apdu_type,
+        data: data.to_vec(),
+    };
+    let payload = apdu.to_bytes(TPCI_DATA_GROUP);
+    Ok(CemiFrame::try_new_l_data(
         MessageCode::LDataReq,
         IndividualAddress::from_raw(0x0000),
         DestinationAddress::Group(ga),
         Priority::Low,
         &payload,
-    )
-    .map_err(|e| KnxIpError::Protocol(e.to_string()))
+    )?)
+}
+
+fn build_group_write(ga: GroupAddress, data: &[u8]) -> Result<CemiFrame> {
+    build_group_frame(ga, ApduType::GroupValueWrite, data)
+}
+
+fn build_group_read(ga: GroupAddress) -> Result<CemiFrame> {
+    build_group_frame(ga, ApduType::GroupValueRead, &[])
+}
+
+fn build_group_response(ga: GroupAddress, data: &[u8]) -> Result<CemiFrame> {
+    build_group_frame(ga, ApduType::GroupValueResponse, data)
 }
 
 #[cfg(test)]
