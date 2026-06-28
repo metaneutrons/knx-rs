@@ -66,12 +66,12 @@ version requirement deliberately and apply the changes below.
 
 ### knx-rs-prod
 
-- **Public surface reduced to a facade.** Only `generate_knxprod`, the `hash` module,
-  and the re-exported `KnxprodError` / `KnxMetadata` remain public; the `archive`,
-  `parse`, `sign`, and `split` modules are now crate-private (and `signed_filename` /
-  `extract_metadata` were removed). Import the error type from the crate root
-  (`knx_rs_prod::KnxprodError`, not `::error::KnxprodError`) and use `generate_knxprod`
-  as the entry point.
+- The pipeline modules (`archive`, `parse`, `sign`, `split`, `hash`, `error`) remain
+  public; `KnxprodError` and `KnxMetadata` are *additionally* re-exported at the crate
+  root, so both `knx_rs_prod::KnxprodError` and `knx_rs_prod::error::KnxprodError` work.
+- Two unused helpers were removed: `sign::signed_filename` and `parse::extract_metadata`
+  (the `&Path` wrapper). Use `parse::extract_metadata_from_str` or `generate_knxprod`
+  (which returns the `KnxMetadata`) instead.
 - **Malformed input now errors** instead of producing a wrong-but-valid hash:
   unparseable numeric attributes and invalid base64 program images return
   `KnxprodError::InvalidStructure`. Well-formed product XML is unaffected.

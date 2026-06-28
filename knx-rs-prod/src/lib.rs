@@ -26,16 +26,16 @@
 //! ).expect("failed to generate knxprod");
 //! ```
 
-// Pipeline internals are crate-private; the public surface is generate_knxprod
-// plus the re-exported KnxprodError/KnxMetadata. `hash` stays public as a
-// standalone, independently useful entry point.
+// The pipeline modules are public so each stage (split, sign, archive, hash,
+// metadata extraction) can be used as a standalone building block, not only via
+// the generate_knxprod facade. KnxprodError and KnxMetadata are additionally
+// re-exported at the crate root for convenient imports.
+pub mod archive;
+pub mod error;
 pub mod hash;
-
-pub(crate) mod archive;
-pub(crate) mod error;
-pub(crate) mod parse;
-pub(crate) mod sign;
-pub(crate) mod split;
+pub mod parse;
+pub mod sign;
+pub mod split;
 
 pub use error::KnxprodError;
 pub use parse::KnxMetadata;
