@@ -72,6 +72,16 @@ impl DataProperty {
         self.access
     }
 
+    /// Access level as a raw wire byte.
+    #[deprecated(
+        since = "0.3.1",
+        note = "use `access_level()` for the typed `AccessLevel`, or `access_level() as u8` for the raw byte"
+    )]
+    #[must_use]
+    pub const fn access(&self) -> u8 {
+        self.access as u8
+    }
+
     /// Size of one element in bytes.
     pub const fn element_size(&self) -> u8 {
         self.data_type.size()

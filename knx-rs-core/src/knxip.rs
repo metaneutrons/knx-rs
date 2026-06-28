@@ -191,6 +191,13 @@ impl fmt::Display for KnxIpParseError {
 
 impl core::error::Error for KnxIpParseError {}
 
+/// Deprecated alias for [`KnxIpParseError`].
+///
+/// Renamed in 0.3 to avoid a name collision with the connection-error type
+/// `knx_rs_ip::KnxIpError`. Kept for backward compatibility with 0.2.
+#[deprecated(since = "0.3.1", note = "renamed to `KnxIpParseError`")]
+pub type KnxIpError = KnxIpParseError;
+
 /// A parsed KNXnet/IP frame header + body.
 #[derive(Clone, PartialEq, Eq)]
 pub struct KnxIpFrame {
