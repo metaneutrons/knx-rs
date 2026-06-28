@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.3.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.2.0...knx-rs-v0.3.0) (2026-06-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** rename KnxIpError, add KNXnet/IP constants and builders
+
+### Features
+
+* **ip:** structured error variants and a Result alias ([4cded38](https://github.com/metaneutrons/knx-rs/commit/4cded3830eb8403e7f9af7f03bd5652db5282fec))
+
+
+### Bug Fixes
+
+* **ci:** correct publish order to respect dependency graph ([c7bc168](https://github.com/metaneutrons/knx-rs/commit/c7bc168ad5a8e24a95498477b42367e6fd51dd5a))
+* **core:** only short-encode group values that fit in 6 bits ([f303214](https://github.com/metaneutrons/knx-rs/commit/f303214a5d9fc8924bf41b0ad0f7e85c8338deb5))
+* **core:** unify APCI masking and short-form APDU encoding ([dd79a05](https://github.com/metaneutrons/knx-rs/commit/dd79a05a468f6c45cbead6b418d4c6aaf940a1d6))
+* **device:** correct app-layer parse offsets and dedup encoders ([5ef896b](https://github.com/metaneutrons/knx-rs/commit/5ef896bf05caea8dc5f57368132c3c78f37520c0))
+* **device:** stop BAU poll-loop hang and check memory bounds ([fb49610](https://github.com/metaneutrons/knx-rs/commit/fb496103277b5a01aaed738aba704cc1313781d9))
+* **device:** validate restored table state; single-source object indices ([e6bf712](https://github.com/metaneutrons/knx-rs/commit/e6bf7129c7331f83061362e4199d7e3de2c62254))
+* **ip:** SO_REUSEADDR, exact RoutingBusy pause, structured router errors ([1e8f75d](https://github.com/metaneutrons/knx-rs/commit/1e8f75d1f0af40c2c4b4a402f9fd18ccb8c5259c))
+* **prod:** fail loud on malformed hash input ([67fd35b](https://github.com/metaneutrons/knx-rs/commit/67fd35b92efb88785a2b875a6a55b1bafde6be3b))
+* **tp:** correct extended-frame encoding and harden the receive path ([1e45370](https://github.com/metaneutrons/knx-rs/commit/1e453701b3241cbe38c04cffe732120c5f9f2274))
+
+
+### Code Refactoring
+
+* **core:** rename KnxIpError, add KNXnet/IP constants and builders ([517c90b](https://github.com/metaneutrons/knx-rs/commit/517c90bbdcb0c2b30e53da1eb35a6e3eff5b320e))
+
 ## [0.2.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.1.1...knx-rs-v0.2.0) (2026-05-18)
 
 
