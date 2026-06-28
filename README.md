@@ -262,7 +262,7 @@ Validated against the [OpenKNX/knx](https://github.com/OpenKNX/knx) C++ referenc
 
 - **Golden test vectors** — C++ harness (`test-vectors/generate.cpp`) generates JSON fixtures for CEMI frames, CEMI setters, and DPT conversions, verified byte-for-byte in Rust
 - **Integration tests** — tunnel server ↔ client on real UDP loopback (connect, heartbeat, frame exchange, disconnect)
-- **Unit tests** — 364 tests across all crates covering every protocol layer, state machine, and parser
+- **Unit tests** — extensive coverage across all crates: protocol types, DPT conversions, parsers, the load state machine, and the BAU service handlers
 - **knxprod hash verification** — 28 test files from 5 manufacturers, byte-exact match with ETS DLL output
 
 ```sh

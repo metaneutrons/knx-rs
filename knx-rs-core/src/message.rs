@@ -248,6 +248,13 @@ impl ApduType {
     }
 }
 
+impl core::fmt::Display for ApduType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Human-readable: variant name plus the wire APCI code.
+        write!(f, "{self:?} ({:#05X})", *self as u16)
+    }
+}
+
 // ── TryFrom implementations ──────────────────────────────────
 
 use crate::types::InvalidWireValue;
