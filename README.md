@@ -5,12 +5,12 @@
 [![MSRV: 1.85](https://img.shields.io/badge/MSRV-1.85-orange.svg)](https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html)
 [![no_std](https://img.shields.io/badge/no__std-compatible-green.svg)](https://docs.rust-embedded.org/book/)
 
-<!-- Uncomment after publishing to crates.io:
 [![knx-rs-core](https://img.shields.io/crates/v/knx-rs-core.svg?label=knx-rs-core)](https://crates.io/crates/knx-rs-core)
 [![knx-rs-ip](https://img.shields.io/crates/v/knx-rs-ip.svg?label=knx-rs-ip)](https://crates.io/crates/knx-rs-ip)
 [![knx-rs-device](https://img.shields.io/crates/v/knx-rs-device.svg?label=knx-rs-device)](https://crates.io/crates/knx-rs-device)
+[![knx-rs-tp](https://img.shields.io/crates/v/knx-rs-tp.svg?label=knx-rs-tp)](https://crates.io/crates/knx-rs-tp)
+[![knx-rs-prod](https://img.shields.io/crates/v/knx-rs-prod.svg?label=knx-rs-prod)](https://crates.io/crates/knx-rs-prod)
 [![docs.rs](https://img.shields.io/docsrs/knx-rs-core)](https://docs.rs/knx-rs-core)
--->
 
 A platform-independent KNX protocol stack in Rust — for embedded devices, servers, and everything in between.
 
@@ -23,6 +23,58 @@ A platform-independent KNX protocol stack in Rust — for embedded devices, serv
 | **[knx-rs-device](knx-rs-device/)** | KNX device stack — group objects, ETS programming, BAU | ✅ |
 | **[knx-rs-tp](knx-rs-tp/)** | TP-UART data link layer for embedded targets *(WIP)* | ✅ |
 | **[knx-rs-prod](knx-rs-prod/)** | `.knxprod` generator — hash, sign, and package ETS product databases | ❌ |
+
+## ⚠️ Migrating from 0.2 to 0.3
+
+**0.3.0 contains breaking API changes.** Cargo treats each `0.x` minor as a breaking
+boundary, so a `"0.2"` dependency will *not* pick up `0.3` automatically — bump your
+version requirement deliberately and apply the changes below.
+
+### knx-rs-core
+
+- **`KnxIpError` → `KnxIpParseError`.** The frame-parse error was renamed to free the
+  name `KnxIpError` for the (unrelated) connection error in `knx-rs-ip`. Rename every
+  reference — including variant paths and the return types of `KnxIpFrame::parse` and
+  `KnxIpFrame::try_to_bytes`.
+- **`Apdu::to_bytes` wire change (correctness):** a single group-value byte `> 0x3F`
+  (e.g. a DPT 5 value such as 200) now uses the long form instead of being masked to
+  6 bits and losing data. Golden byte-vector expectations for such values change;
+  decoding still round-trips both forms.
+
+### knx-rs-ip
+
+- **New `KnxIpError` variants** — `Frame`, `Cemi`, `Dpt`, `Multicast`, `InvalidConfig`.
+  Exhaustive `match`es must add arms (or a `_ =>`). Failures that previously surfaced
+  as `Protocol(String)` (multicast-join, non-multicast target, frame/DPT errors) now
+  use these typed variants, so string-matching on `Protocol` no longer catches them.
+- A `pub type Result<T> = core::result::Result<T, KnxIpError>` alias is now exported
+  from the crate root; existing `Result<_, KnxIpError>` signatures keep compiling.
+
+### knx-rs-tp *(WIP)*
+
+- **`TpFrame::from_cemi` now returns `Option<Self>`** (`None` when the APDU exceeds the
+  frame buffer). Handle the `None` case instead of binding the value directly.
+- **`TpIndication` gained an `Overrun` variant** — add a match arm; treat it as a
+  recoverable resync event.
+
+### knx-rs-device
+
+- **`DataProperty::access() -> u8` removed** — use `access_level()` (typed
+  `AccessLevel`) or `access_level() as u8` for the raw byte.
+- `SystemNetworkParameterRead.test_info` is now sliced from the correct offset (was
+  off by one), so consumers receive the corrected payload.
+
+### knx-rs-prod
+
+- **Public surface reduced to a facade.** Only `generate_knxprod`, the `hash` module,
+  and the re-exported `KnxprodError` / `KnxMetadata` remain public; the `archive`,
+  `parse`, `sign`, and `split` modules are now crate-private (and `signed_filename` /
+  `extract_metadata` were removed). Import the error type from the crate root
+  (`knx_rs_prod::KnxprodError`, not `::error::KnxprodError`) and use `generate_knxprod`
+  as the entry point.
+- **Malformed input now errors** instead of producing a wrong-but-valid hash:
+  unparseable numeric attributes and invalid base64 program images return
+  `KnxprodError::InvalidStructure`. Well-formed product XML is unaffected.
 
 ## Features
 
@@ -127,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Generating .knxprod Files
 
-`knx-prod` replaces the entire Windows-only C# toolchain (`OpenKNXproducer` + `Knx.Ets.XmlSigning.dll`) with pure Rust. No .NET, no Wine, no Windows VM required.
+`knx-rs-prod` replaces the entire Windows-only C# toolchain (`OpenKNXproducer` + `Knx.Ets.XmlSigning.dll`) with pure Rust. No .NET, no Wine, no Windows VM required.
 
 ### Two workflows
 
@@ -137,21 +189,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Rust source code (GO definitions, parameters)
          ↓  cargo xtask generate-xml
    MyDevice.xml (generated, not hand-written)
-         ↓  cargo xtask knxprod  (or: knx-prod CLI)
+         ↓  cargo xtask knxprod  (or: knx-rs-prod CLI)
    MyDevice.knxprod
          ↓
    ETS Import
 ```
 
-This is the approach used by [SnapDog](https://github.com/metaneutrons/snapdog): a Rust `xtask` reads the group object definitions from the device firmware (SSOT — the same constants that configure the BAU at runtime) and generates the complete ETS product XML. Then `knx-prod` signs and packages it. The XML is a build artifact, never hand-edited.
+This is the approach used by [SnapDog](https://github.com/metaneutrons/snapdog): a Rust `xtask` reads the group object definitions from the device firmware (SSOT — the same constants that configure the BAU at runtime) and generates the complete ETS product XML. Then `knx-rs-prod` signs and packages it. The XML is a build artifact, never hand-edited.
 
-**Option B: OpenKNXproducer + knx-prod** — use OpenKNXproducer for XML authoring, replace only the signing step.
+**Option B: OpenKNXproducer + knx-rs-prod** — use OpenKNXproducer for XML authoring, replace only the signing step.
 
 ```
 OpenKNXproducer (XML authoring, GUI)
          ↓
    MyDevice.xml (hand-authored)
-         ↓  knx-prod
+         ↓  knx-rs-prod
    MyDevice.knxprod
          ↓
    ETS Import
@@ -170,7 +222,7 @@ fn main() {
     let xml = generate_product_xml();  // builds KNX XML from GO constants
     std::fs::write("MyDevice.xml", &xml).unwrap();
 
-    // Optionally, run knx-prod directly:
+    // Optionally, run knx-rs-prod directly:
     knx_rs_prod::generate_knxprod(
         Path::new("MyDevice.xml"),
         Path::new("MyDevice.knxprod"),
@@ -214,7 +266,7 @@ jobs:
       # Option A: xtask generates XML + knxprod in one step
       - run: cargo xtask knxprod
 
-      # Option B: knx-prod CLI on existing XML
+      # Option B: knx-rs-prod CLI on existing XML
       # - run: cargo run --release -p knx-rs-prod -- firmware/MyDevice.xml -o MyDevice.knxprod
 
       - uses: actions/upload-artifact@v4
@@ -288,7 +340,7 @@ Application code ←→ GroupObjects ←→ BAU ←→ DeviceServer (port 3671)
                                      ↕         (routing)   (ETS)
                                 DeviceMemory
 
-Rust xtask / OpenKNXproducer ──→ Product XML ──→ knx-prod ──→ .knxprod ──→ ETS
+Rust xtask / OpenKNXproducer ──→ Product XML ──→ knx-rs-prod ──→ .knxprod ──→ ETS
 ```
 
 ## Development
