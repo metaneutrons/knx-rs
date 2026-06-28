@@ -29,7 +29,10 @@ use crate::address::{DestinationAddress, GroupAddress, IndividualAddress};
 use crate::message::{ApduType, MessageCode};
 use crate::tpdu::Tpdu;
 use crate::types::{
-    AckType, AddressType, Confirm, FrameFormat, Priority, Repetition, SystemBroadcast,
+    AckType, AddressType, CTRL1_ACK_MASK, CTRL1_CONFIRM_MASK, CTRL1_FRAME_FORMAT_MASK,
+    CTRL1_PRIORITY_MASK, CTRL1_REPETITION_MASK, CTRL1_SYSTEM_BROADCAST_MASK,
+    CTRL2_ADDRESS_TYPE_MASK, CTRL2_HOP_COUNT_MASK, CTRL2_HOP_COUNT_SHIFT, Confirm, FrameFormat,
+    HOP_COUNT_VALUE_MASK, Priority, Repetition, SystemBroadcast,
 };
 
 /// Minimum cEMI frame size: msg code + add info len + ctrl1 + ctrl2 + src(2) + dst(2) + npdu len.
@@ -240,16 +243,13 @@ impl CemiFrame {
 
     /// Frame format (standard or extended).
     pub fn frame_type(&self) -> FrameFormat {
-        if self.ctrl1() & 0x80 != 0 {
-            FrameFormat::Standard
-        } else {
-            FrameFormat::Extended
-        }
+        // Bit layout lives in types.rs; try_from cannot fail for a masked bit.
+        FrameFormat::try_from(self.ctrl1()).unwrap_or(FrameFormat::Extended)
     }
 
     /// Repetition flag.
     pub fn repetition(&self) -> Repetition {
-        if self.ctrl1() & 0x20 != 0 {
+        if self.ctrl1() & CTRL1_REPETITION_MASK != 0 {
             Repetition::WasNotRepeated
         } else {
             Repetition::WasRepeated
@@ -258,7 +258,7 @@ impl CemiFrame {
 
     /// System broadcast flag.
     pub fn system_broadcast(&self) -> SystemBroadcast {
-        if self.ctrl1() & 0x10 != 0 {
+        if self.ctrl1() & CTRL1_SYSTEM_BROADCAST_MASK != 0 {
             SystemBroadcast::Broadcast
         } else {
             SystemBroadcast::System
@@ -267,17 +267,12 @@ impl CemiFrame {
 
     /// Telegram priority.
     pub fn priority(&self) -> Priority {
-        match self.ctrl1() & 0x0C {
-            0x00 => Priority::System,
-            0x04 => Priority::Normal,
-            0x08 => Priority::Urgent,
-            _ => Priority::Low,
-        }
+        Priority::try_from(self.ctrl1()).unwrap_or(Priority::Low)
     }
 
     /// Acknowledgement request flag.
     pub fn ack(&self) -> AckType {
-        if self.ctrl1() & 0x02 != 0 {
+        if self.ctrl1() & CTRL1_ACK_MASK != 0 {
             AckType::Requested
         } else {
             AckType::DontCare
@@ -286,7 +281,7 @@ impl CemiFrame {
 
     /// Confirmation flag.
     pub fn confirm(&self) -> Confirm {
-        if self.ctrl1() & 0x01 != 0 {
+        if self.ctrl1() & CTRL1_CONFIRM_MASK != 0 {
             Confirm::Error
         } else {
             Confirm::NoError
@@ -295,16 +290,12 @@ impl CemiFrame {
 
     /// Destination address type.
     pub fn address_type(&self) -> AddressType {
-        if self.ctrl2() & 0x80 != 0 {
-            AddressType::Group
-        } else {
-            AddressType::Individual
-        }
+        AddressType::try_from(self.ctrl2()).unwrap_or(AddressType::Individual)
     }
 
     /// Hop count (0–7).
     pub fn hop_count(&self) -> u8 {
-        (self.ctrl2() >> 4) & 0x07
+        (self.ctrl2() >> CTRL2_HOP_COUNT_SHIFT) & HOP_COUNT_VALUE_MASK
     }
 
     /// Source individual address.
@@ -355,43 +346,50 @@ impl CemiFrame {
 
     /// Set the frame format (standard or extended).
     pub fn set_frame_type(&mut self, value: FrameFormat) {
-        self.data[self.ctrl_offset] = (self.data[self.ctrl_offset] & !0x80) | (value as u8);
+        self.data[self.ctrl_offset] =
+            (self.data[self.ctrl_offset] & !CTRL1_FRAME_FORMAT_MASK) | (value as u8);
     }
 
     /// Set the repetition flag.
     pub fn set_repetition(&mut self, value: Repetition) {
-        self.data[self.ctrl_offset] = (self.data[self.ctrl_offset] & !0x20) | (value as u8);
+        self.data[self.ctrl_offset] =
+            (self.data[self.ctrl_offset] & !CTRL1_REPETITION_MASK) | (value as u8);
     }
 
     /// Set the system broadcast flag.
     pub fn set_system_broadcast(&mut self, value: SystemBroadcast) {
-        self.data[self.ctrl_offset] = (self.data[self.ctrl_offset] & !0x10) | (value as u8);
+        self.data[self.ctrl_offset] =
+            (self.data[self.ctrl_offset] & !CTRL1_SYSTEM_BROADCAST_MASK) | (value as u8);
     }
 
     /// Set the telegram priority.
     pub fn set_priority(&mut self, value: Priority) {
-        self.data[self.ctrl_offset] = (self.data[self.ctrl_offset] & !0x0C) | (value as u8);
+        self.data[self.ctrl_offset] =
+            (self.data[self.ctrl_offset] & !CTRL1_PRIORITY_MASK) | (value as u8);
     }
 
     /// Set the acknowledgement request flag.
     pub fn set_ack(&mut self, value: AckType) {
-        self.data[self.ctrl_offset] = (self.data[self.ctrl_offset] & !0x02) | (value as u8);
+        self.data[self.ctrl_offset] =
+            (self.data[self.ctrl_offset] & !CTRL1_ACK_MASK) | (value as u8);
     }
 
     /// Set the confirmation flag.
     pub fn set_confirm(&mut self, value: Confirm) {
-        self.data[self.ctrl_offset] = (self.data[self.ctrl_offset] & !0x01) | (value as u8);
+        self.data[self.ctrl_offset] =
+            (self.data[self.ctrl_offset] & !CTRL1_CONFIRM_MASK) | (value as u8);
     }
 
     /// Set the destination address type.
     pub fn set_address_type(&mut self, value: AddressType) {
-        self.data[self.ctrl_offset + 1] = (self.data[self.ctrl_offset + 1] & !0x80) | (value as u8);
+        self.data[self.ctrl_offset + 1] =
+            (self.data[self.ctrl_offset + 1] & !CTRL2_ADDRESS_TYPE_MASK) | (value as u8);
     }
 
     /// Set the hop count (0–7).
     pub fn set_hop_count(&mut self, value: u8) {
-        self.data[self.ctrl_offset + 1] =
-            (self.data[self.ctrl_offset + 1] & !0x70) | ((value & 0x07) << 4);
+        self.data[self.ctrl_offset + 1] = (self.data[self.ctrl_offset + 1] & !CTRL2_HOP_COUNT_MASK)
+            | ((value & HOP_COUNT_VALUE_MASK) << CTRL2_HOP_COUNT_SHIFT);
     }
 
     /// Set the source individual address.

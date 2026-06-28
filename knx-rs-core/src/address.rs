@@ -33,6 +33,29 @@ impl fmt::Display for AddressParseError {
 
 impl core::error::Error for AddressParseError {}
 
+// ── Address field layout ──────────────────────────────────────
+//
+// Each field's bit width is defined exactly once as a mask; the validation
+// bound (`value > MASK`) and the accessor mask are both derived from it.
+
+/// Individual address: area field shift (bits 15..12).
+const IA_AREA_SHIFT: u16 = 12;
+/// Individual address: line field shift (bits 11..8).
+const IA_LINE_SHIFT: u16 = 8;
+/// Individual address: 4-bit area/line field mask (max value 15).
+const IA_NIBBLE_MASK: u8 = 0x0F;
+
+/// Group address: main field shift (bits 15..11).
+const GA_MAIN_SHIFT: u16 = 11;
+/// Group address: middle field shift (bits 10..8, 3-level).
+const GA_MIDDLE_SHIFT: u16 = 8;
+/// Group address: 5-bit main field mask (max value 31).
+const GA_MAIN_MASK: u8 = 0x1F;
+/// Group address: 3-bit middle field mask (max value 7).
+const GA_MIDDLE_MASK: u8 = 0x07;
+/// Group address: 11-bit 2-level sub field mask (max value 2047).
+const GA_SUB2_MASK: u16 = 0x07FF;
+
 // ── Individual Address ────────────────────────────────────────
 
 /// A KNX individual (physical) address identifying a single device.
@@ -62,13 +85,14 @@ impl IndividualAddress {
     ///
     /// # Errors
     ///
-    /// Returns [`AddressParseError::OutOfRange`] if area > 15, line > 15, or device > 255.
+    /// Returns [`AddressParseError::OutOfRange`] if area > 15 or line > 15.
+    /// (`device` is a `u8`, so it always fits the 8-bit device field.)
     pub const fn new(area: u8, line: u8, device: u8) -> Result<Self, AddressParseError> {
-        if area > 15 || line > 15 {
+        if area > IA_NIBBLE_MASK || line > IA_NIBBLE_MASK {
             return Err(AddressParseError::OutOfRange);
         }
         Ok(Self(
-            ((area as u16) << 12) | ((line as u16) << 8) | (device as u16),
+            ((area as u16) << IA_AREA_SHIFT) | ((line as u16) << IA_LINE_SHIFT) | (device as u16),
         ))
     }
 
@@ -81,13 +105,13 @@ impl IndividualAddress {
     /// Area component (4 bits, 0–15).
     #[inline]
     pub const fn area(self) -> u8 {
-        (self.0 >> 12) as u8 & 0x0F
+        (self.0 >> IA_AREA_SHIFT) as u8 & IA_NIBBLE_MASK
     }
 
     /// Line component (4 bits, 0–15).
     #[inline]
     pub const fn line(self) -> u8 {
-        (self.0 >> 8) as u8 & 0x0F
+        (self.0 >> IA_LINE_SHIFT) as u8 & IA_NIBBLE_MASK
     }
 
     /// Device component (8 bits, 0–255).
@@ -166,13 +190,14 @@ impl GroupAddress {
     ///
     /// # Errors
     ///
-    /// Returns [`AddressParseError::OutOfRange`] if main > 31, middle > 7, or sub > 255.
+    /// Returns [`AddressParseError::OutOfRange`] if main > 31 or middle > 7.
+    /// (`sub` is a `u8`, so it always fits the 8-bit sub field.)
     pub const fn new_3level(main: u8, middle: u8, sub: u8) -> Result<Self, AddressParseError> {
-        if main > 31 || middle > 7 {
+        if main > GA_MAIN_MASK || middle > GA_MIDDLE_MASK {
             return Err(AddressParseError::OutOfRange);
         }
         Ok(Self(
-            ((main as u16) << 11) | ((middle as u16) << 8) | (sub as u16),
+            ((main as u16) << GA_MAIN_SHIFT) | ((middle as u16) << GA_MIDDLE_SHIFT) | (sub as u16),
         ))
     }
 
@@ -182,10 +207,10 @@ impl GroupAddress {
     ///
     /// Returns [`AddressParseError::OutOfRange`] if main > 31 or sub > 2047.
     pub const fn new_2level(main: u8, sub: u16) -> Result<Self, AddressParseError> {
-        if main > 31 || sub > 2047 {
+        if main > GA_MAIN_MASK || sub > GA_SUB2_MASK {
             return Err(AddressParseError::OutOfRange);
         }
-        Ok(Self(((main as u16) << 11) | sub))
+        Ok(Self(((main as u16) << GA_MAIN_SHIFT) | sub))
     }
 
     /// The raw 16-bit wire encoding.
@@ -197,13 +222,13 @@ impl GroupAddress {
     /// Main group (5 bits, 0–31).
     #[inline]
     pub const fn main(self) -> u8 {
-        (self.0 >> 11) as u8 & 0x1F
+        (self.0 >> GA_MAIN_SHIFT) as u8 & GA_MAIN_MASK
     }
 
     /// Middle group in 3-level notation (3 bits, 0–7).
     #[inline]
     pub const fn middle(self) -> u8 {
-        (self.0 >> 8) as u8 & 0x07
+        (self.0 >> GA_MIDDLE_SHIFT) as u8 & GA_MIDDLE_MASK
     }
 
     /// Sub group in 3-level notation (8 bits, 0–255).
@@ -215,7 +240,7 @@ impl GroupAddress {
     /// Sub group in 2-level notation (11 bits, 0–2047).
     #[inline]
     pub const fn sub_2level(self) -> u16 {
-        self.0 & 0x07FF
+        self.0 & GA_SUB2_MASK
     }
 
     /// Encode to big-endian bytes for wire transmission.
