@@ -27,6 +27,45 @@ pub const HEADER_LEN: u8 = 0x06;
 /// KNXnet/IP protocol version 1.0.
 pub const PROTOCOL_VERSION_10: u8 = 0x10;
 
+/// Well-known KNXnet/IP UDP port.
+pub const KNX_PORT: u16 = 3671;
+
+// ── Connection management (CRI/CRD + status) ─────────────────
+
+/// Connection type byte for a tunnelling connection.
+pub const TUNNEL_CONNECTION: u8 = 0x04;
+/// Connection type byte for a device-management connection.
+pub const DEVICE_MGMT_CONNECTION: u8 = 0x03;
+/// KNX layer byte for a link-layer tunnel.
+pub const TUNNEL_LINKLAYER: u8 = 0x02;
+/// Length of a CRI/CRD block (structure length octet value).
+pub const CRI_CRD_LEN: u8 = 0x04;
+/// Default base for a tunnel server's assigned individual address (15.15.x).
+pub const TUNNEL_IA_BASE: u16 = 0xFF00;
+
+/// Connect/connection-state/disconnect status: no error.
+pub const E_NO_ERROR: u8 = 0x00;
+/// Status: the connection ID is not known to the server.
+pub const E_CONNECTION_ID: u8 = 0x21;
+/// Status: the requested connection type is not supported.
+pub const E_CONNECTION_TYPE: u8 = 0x22;
+/// Status: the server has no free connection slots.
+pub const E_NO_MORE_CONNECTIONS: u8 = 0x24;
+
+/// Build a tunnel Connection Request Information (CRI) block.
+#[must_use]
+pub const fn tunnel_cri() -> [u8; 4] {
+    [CRI_CRD_LEN, TUNNEL_CONNECTION, TUNNEL_LINKLAYER, 0x00]
+}
+
+/// Build a tunnel Connection Response Data (CRD) block carrying the assigned
+/// individual address.
+#[must_use]
+pub const fn tunnel_crd(individual_address: u16) -> [u8; 4] {
+    let ia = individual_address.to_be_bytes();
+    [CRI_CRD_LEN, TUNNEL_CONNECTION, ia[0], ia[1]]
+}
+
 /// KNXnet/IP service type identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
@@ -122,7 +161,7 @@ impl HostProtocol {
 
 /// Error returned when parsing a KNXnet/IP frame fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KnxIpError {
+pub enum KnxIpParseError {
     /// Frame is shorter than the header.
     TooShort,
     /// Header length field is not 0x06.
@@ -137,7 +176,7 @@ pub enum KnxIpError {
     FrameTooLong(usize),
 }
 
-impl fmt::Display for KnxIpError {
+impl fmt::Display for KnxIpParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TooShort => f.write_str("KNXnet/IP frame too short"),
@@ -150,7 +189,7 @@ impl fmt::Display for KnxIpError {
     }
 }
 
-impl core::error::Error for KnxIpError {}
+impl core::error::Error for KnxIpParseError {}
 
 /// A parsed KNXnet/IP frame header + body.
 #[derive(Clone, PartialEq, Eq)]
@@ -166,27 +205,27 @@ impl KnxIpFrame {
     ///
     /// # Errors
     ///
-    /// Returns [`KnxIpError`] if the frame is malformed.
-    pub fn parse(data: &[u8]) -> Result<Self, KnxIpError> {
+    /// Returns [`KnxIpParseError`] if the frame is malformed.
+    pub fn parse(data: &[u8]) -> Result<Self, KnxIpParseError> {
         if data.len() < HEADER_LEN as usize {
-            return Err(KnxIpError::TooShort);
+            return Err(KnxIpParseError::TooShort);
         }
         if data[0] != HEADER_LEN {
-            return Err(KnxIpError::InvalidHeaderLength);
+            return Err(KnxIpParseError::InvalidHeaderLength);
         }
         if data[1] != PROTOCOL_VERSION_10 {
-            return Err(KnxIpError::InvalidProtocolVersion);
+            return Err(KnxIpParseError::InvalidProtocolVersion);
         }
 
         let service_raw = u16::from_be_bytes([data[2], data[3]]);
         let total_len = u16::from_be_bytes([data[4], data[5]]) as usize;
 
         if data.len() != total_len {
-            return Err(KnxIpError::LengthMismatch);
+            return Err(KnxIpParseError::LengthMismatch);
         }
 
         let service_type = ServiceType::from_raw(service_raw)
-            .ok_or(KnxIpError::UnknownServiceType(service_raw))?;
+            .ok_or(KnxIpParseError::UnknownServiceType(service_raw))?;
 
         Ok(Self {
             service_type,
@@ -198,12 +237,12 @@ impl KnxIpFrame {
     ///
     /// # Errors
     ///
-    /// Returns [`KnxIpError::FrameTooLong`] if the frame body cannot fit in
+    /// Returns [`KnxIpParseError::FrameTooLong`] if the frame body cannot fit in
     /// the 16-bit KNXnet/IP length field.
-    pub fn try_to_bytes(&self) -> Result<Vec<u8>, KnxIpError> {
+    pub fn try_to_bytes(&self) -> Result<Vec<u8>, KnxIpParseError> {
         let total_len = HEADER_LEN as usize + self.body.len();
         let total_len_u16 =
-            u16::try_from(total_len).map_err(|_| KnxIpError::FrameTooLong(total_len))?;
+            u16::try_from(total_len).map_err(|_| KnxIpParseError::FrameTooLong(total_len))?;
         let mut buf = Vec::with_capacity(total_len);
         buf.push(HEADER_LEN);
         buf.push(PROTOCOL_VERSION_10);
@@ -223,12 +262,99 @@ impl KnxIpFrame {
     pub fn to_bytes(&self) -> Vec<u8> {
         match self.try_to_bytes() {
             Ok(bytes) => bytes,
-            Err(KnxIpError::FrameTooLong(len)) => {
+            Err(KnxIpParseError::FrameTooLong(len)) => {
                 panic!("KNXnet/IP frame length {len} exceeds u16::MAX")
             }
             Err(_) => unreachable!("serializing a well-typed frame cannot fail for this reason"),
         }
     }
+
+    // ── Typed frame constructors ──────────────────────────────
+    //
+    // Single source for the common outgoing-frame body layouts, so client and
+    // server do not hand-roll the same `extend_from_slice` sequences.
+
+    /// Build a routing indication carrying a cEMI telegram.
+    #[must_use]
+    pub fn routing_indication(cemi: &[u8]) -> Self {
+        Self {
+            service_type: ServiceType::RoutingIndication,
+            body: cemi.to_vec(),
+        }
+    }
+
+    /// Build a tunneling request: connection header + cEMI telegram.
+    #[must_use]
+    pub fn tunneling_request(channel_id: u8, sequence: u8, cemi: &[u8]) -> Self {
+        let header = ConnectionHeader {
+            channel_id,
+            sequence_counter: sequence,
+            status: E_NO_ERROR,
+        };
+        let mut body = Vec::with_capacity(ConnectionHeader::LEN as usize + cemi.len());
+        body.extend_from_slice(&header.to_bytes());
+        body.extend_from_slice(cemi);
+        Self {
+            service_type: ServiceType::TunnelingRequest,
+            body,
+        }
+    }
+
+    /// Build a tunneling acknowledgement.
+    #[must_use]
+    pub fn tunneling_ack(channel_id: u8, sequence: u8, status: u8) -> Self {
+        let header = ConnectionHeader {
+            channel_id,
+            sequence_counter: sequence,
+            status,
+        };
+        Self {
+            service_type: ServiceType::TunnelingAck,
+            body: header.to_bytes().to_vec(),
+        }
+    }
+
+    /// Build a connection-state (heartbeat) request.
+    #[must_use]
+    pub fn connection_state_request(channel_id: u8, control: Hpai) -> Self {
+        Self {
+            service_type: ServiceType::ConnectionStateRequest,
+            body: connection_management_body(channel_id, control),
+        }
+    }
+
+    /// Build a disconnect request.
+    #[must_use]
+    pub fn disconnect_request(channel_id: u8, control: Hpai) -> Self {
+        Self {
+            service_type: ServiceType::DisconnectRequest,
+            body: connection_management_body(channel_id, control),
+        }
+    }
+
+    /// Build a connect request from control/data HPAIs and a CRI block.
+    #[must_use]
+    pub fn connect_request(control: Hpai, data: Hpai, cri: &[u8]) -> Self {
+        let mut body = Vec::with_capacity(2 * Hpai::LEN as usize + cri.len());
+        body.extend_from_slice(&control.to_bytes());
+        body.extend_from_slice(&data.to_bytes());
+        body.extend_from_slice(cri);
+        Self {
+            service_type: ServiceType::ConnectRequest,
+            body,
+        }
+    }
+}
+
+/// Connection-management request body: channel id, reserved zero, control HPAI.
+///
+/// Shared by connection-state and disconnect requests.
+fn connection_management_body(channel_id: u8, control: Hpai) -> Vec<u8> {
+    let mut body = Vec::with_capacity(2 + Hpai::LEN as usize);
+    body.push(channel_id);
+    body.push(0);
+    body.extend_from_slice(&control.to_bytes());
+    body
 }
 
 impl fmt::Debug for KnxIpFrame {
@@ -456,7 +582,7 @@ mod tests {
         let data = [0x05, 0x10, 0x05, 0x30, 0x00, 0x06];
         assert!(matches!(
             KnxIpFrame::parse(&data),
-            Err(KnxIpError::InvalidHeaderLength)
+            Err(KnxIpParseError::InvalidHeaderLength)
         ));
     }
 
@@ -465,7 +591,7 @@ mod tests {
         let data = [0x06, 0x11, 0x05, 0x30, 0x00, 0x06];
         assert!(matches!(
             KnxIpFrame::parse(&data),
-            Err(KnxIpError::InvalidProtocolVersion)
+            Err(KnxIpParseError::InvalidProtocolVersion)
         ));
     }
 
@@ -474,7 +600,7 @@ mod tests {
         let data = [0x06, 0x10, 0xFF, 0xFF, 0x00, 0x06];
         assert!(matches!(
             KnxIpFrame::parse(&data),
-            Err(KnxIpError::UnknownServiceType(0xFFFF))
+            Err(KnxIpParseError::UnknownServiceType(0xFFFF))
         ));
     }
 
@@ -483,7 +609,7 @@ mod tests {
         let data = [0x06, 0x10, 0x05, 0x30, 0x00, 0x06, 0x00];
         assert!(matches!(
             KnxIpFrame::parse(&data),
-            Err(KnxIpError::LengthMismatch)
+            Err(KnxIpParseError::LengthMismatch)
         ));
     }
 
@@ -495,8 +621,68 @@ mod tests {
         };
         assert!(matches!(
             frame.try_to_bytes(),
-            Err(KnxIpError::FrameTooLong(_))
+            Err(KnxIpParseError::FrameTooLong(_))
         ));
+    }
+
+    #[test]
+    fn service_type_roundtrip_all_variants() {
+        // Drift guard: every discriminant must round-trip through from_raw so a
+        // new variant or a typo in the reverse map is caught at test time.
+        const ALL: &[ServiceType] = &[
+            ServiceType::SearchRequest,
+            ServiceType::SearchResponse,
+            ServiceType::DescriptionRequest,
+            ServiceType::DescriptionResponse,
+            ServiceType::ConnectRequest,
+            ServiceType::ConnectResponse,
+            ServiceType::ConnectionStateRequest,
+            ServiceType::ConnectionStateResponse,
+            ServiceType::DisconnectRequest,
+            ServiceType::DisconnectResponse,
+            ServiceType::SearchRequestExtended,
+            ServiceType::SearchResponseExtended,
+            ServiceType::DeviceConfigurationRequest,
+            ServiceType::DeviceConfigurationAck,
+            ServiceType::TunnelingRequest,
+            ServiceType::TunnelingAck,
+            ServiceType::RoutingIndication,
+            ServiceType::RoutingLostMessage,
+            ServiceType::RoutingBusy,
+        ];
+        for &st in ALL {
+            assert_eq!(ServiceType::from_raw(st as u16), Some(st), "{st:?}");
+        }
+    }
+
+    #[test]
+    fn host_protocol_roundtrip_all_variants() {
+        for &hp in &[HostProtocol::Ipv4Udp, HostProtocol::Ipv4Tcp] {
+            assert_eq!(HostProtocol::from_raw(hp as u8), Some(hp), "{hp:?}");
+        }
+    }
+
+    #[test]
+    fn tunnel_cri_crd_builders() {
+        assert_eq!(tunnel_cri(), [0x04, 0x04, 0x02, 0x00]);
+        assert_eq!(tunnel_crd(0xFF00), [0x04, 0x04, 0xFF, 0x00]);
+    }
+
+    #[test]
+    fn typed_constructors_roundtrip() {
+        let cemi = [0x29, 0x00, 0xBC];
+        let req = KnxIpFrame::tunneling_request(7, 3, &cemi);
+        let bytes = req.to_bytes();
+        let parsed = KnxIpFrame::parse(&bytes).unwrap();
+        assert_eq!(parsed.service_type, ServiceType::TunnelingRequest);
+        let ch = ConnectionHeader::parse(&parsed.body).unwrap();
+        assert_eq!((ch.channel_id, ch.sequence_counter), (7, 3));
+        assert_eq!(&parsed.body[ConnectionHeader::LEN as usize..], &cemi);
+
+        let hpai = Hpai::nat_udp(KNX_PORT);
+        let dc = KnxIpFrame::disconnect_request(7, hpai);
+        assert_eq!(dc.service_type, ServiceType::DisconnectRequest);
+        assert_eq!(dc.body[0], 7);
     }
 
     #[test]
