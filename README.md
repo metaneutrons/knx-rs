@@ -5,24 +5,17 @@
 [![MSRV: 1.85](https://img.shields.io/badge/MSRV-1.85-orange.svg)](https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html)
 [![no_std](https://img.shields.io/badge/no__std-compatible-green.svg)](https://docs.rust-embedded.org/book/)
 
-[![knx-rs-core](https://img.shields.io/crates/v/knx-rs-core.svg?label=knx-rs-core)](https://crates.io/crates/knx-rs-core)
-[![knx-rs-ip](https://img.shields.io/crates/v/knx-rs-ip.svg?label=knx-rs-ip)](https://crates.io/crates/knx-rs-ip)
-[![knx-rs-device](https://img.shields.io/crates/v/knx-rs-device.svg?label=knx-rs-device)](https://crates.io/crates/knx-rs-device)
-[![knx-rs-tp](https://img.shields.io/crates/v/knx-rs-tp.svg?label=knx-rs-tp)](https://crates.io/crates/knx-rs-tp)
-[![knx-rs-prod](https://img.shields.io/crates/v/knx-rs-prod.svg?label=knx-rs-prod)](https://crates.io/crates/knx-rs-prod)
-[![docs.rs](https://img.shields.io/docsrs/knx-rs-core)](https://docs.rs/knx-rs-core)
-
 A platform-independent KNX protocol stack in Rust — for embedded devices, servers, and everything in between.
 
 ## Crates
 
-| Crate | Description | `no_std` |
-|-------|-------------|----------|
-| **[knx-rs-core](knx-rs-core/)** | Protocol types, CEMI frames, DPT conversions, KNXnet/IP frame types | ✅ |
-| **[knx-rs-ip](knx-rs-ip/)** | Async KNXnet/IP tunnel, router, discovery, and device server (tokio) | ❌ |
-| **[knx-rs-device](knx-rs-device/)** | KNX device stack — group objects, ETS programming, BAU | ✅ |
-| **[knx-rs-tp](knx-rs-tp/)** | TP-UART data link layer for embedded targets *(WIP)* | ✅ |
-| **[knx-rs-prod](knx-rs-prod/)** | `.knxprod` generator — hash, sign, and package ETS product databases | ❌ |
+| Crate | Version | Docs | `no_std` | Description |
+|-------|---------|------|----------|-------------|
+| [knx-rs-core](knx-rs-core/) | [![crates.io](https://img.shields.io/crates/v/knx-rs-core.svg)](https://crates.io/crates/knx-rs-core) | [![docs.rs](https://img.shields.io/docsrs/knx-rs-core)](https://docs.rs/knx-rs-core) | ✅ | Protocol types, CEMI frames, DPT conversions, KNXnet/IP frame types |
+| [knx-rs-ip](knx-rs-ip/) | [![crates.io](https://img.shields.io/crates/v/knx-rs-ip.svg)](https://crates.io/crates/knx-rs-ip) | [![docs.rs](https://img.shields.io/docsrs/knx-rs-ip)](https://docs.rs/knx-rs-ip) | ❌ | Async KNXnet/IP tunnel, router, discovery, and device server (tokio) |
+| [knx-rs-device](knx-rs-device/) | [![crates.io](https://img.shields.io/crates/v/knx-rs-device.svg)](https://crates.io/crates/knx-rs-device) | [![docs.rs](https://img.shields.io/docsrs/knx-rs-device)](https://docs.rs/knx-rs-device) | ✅ | KNX device stack — group objects, ETS programming, BAU |
+| [knx-rs-tp](knx-rs-tp/) | [![crates.io](https://img.shields.io/crates/v/knx-rs-tp.svg)](https://crates.io/crates/knx-rs-tp) | [![docs.rs](https://img.shields.io/docsrs/knx-rs-tp)](https://docs.rs/knx-rs-tp) | ✅ | TP-UART data link layer for embedded targets *(WIP)* |
+| [knx-rs-prod](knx-rs-prod/) | [![crates.io](https://img.shields.io/crates/v/knx-rs-prod.svg)](https://crates.io/crates/knx-rs-prod) | [![docs.rs](https://img.shields.io/docsrs/knx-rs-prod)](https://docs.rs/knx-rs-prod) | ❌ | `.knxprod` generator — hash, sign, and package ETS product databases |
 
 ## ⚠️ Migrating from 0.2 to 0.3
 
