@@ -10,18 +10,26 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use knx_rs_core::cemi::CemiFrame;
-use knx_rs_core::knxip::{ConnectionHeader, Hpai, KnxIpFrame, ServiceType};
+use knx_rs_core::knxip::{
+    ConnectionHeader, DEVICE_MGMT_CONNECTION, E_CONNECTION_ID, E_CONNECTION_TYPE, E_NO_ERROR,
+    E_NO_MORE_CONNECTIONS, Hpai, KnxIpFrame, ServiceType, TUNNEL_IA_BASE, tunnel_crd,
+};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
 use crate::error::KnxIpError;
 use crate::router::{KNX_MULTICAST_ADDR, KNX_PORT};
+use crate::tunnel::{MAX_RETRIES, RECV_BUF_SIZE, REQUEST_TIMEOUT};
 
 /// Maximum simultaneous tunnel connections.
 const MAX_TUNNELS: usize = 4;
 
 /// Tunnel timeout: close if no heartbeat in 120 seconds (per KNX spec).
 const TUNNEL_TIMEOUT_SECS: u64 = 120;
+
+/// How often the server sweeps for tunnels that have stopped sending
+/// heartbeats; must be well below [`TUNNEL_TIMEOUT_SECS`].
+const CLEANUP_INTERVAL_SECS: u64 = 30;
 
 /// A tunnel client connection.
 struct TunnelClient {
@@ -31,7 +39,6 @@ struct TunnelClient {
     send_seq: u8,
     recv_seq: u8,
     last_heartbeat: tokio::time::Instant,
-    _is_config: bool,
 }
 
 /// Incoming frame from a tunnel client or multicast.
@@ -77,7 +84,10 @@ impl DeviceServer {
 
         socket
             .join_multicast_v4(KNX_MULTICAST_ADDR, local_addr)
-            .map_err(|e| KnxIpError::Protocol(format!("join multicast: {e}")))?;
+            .map_err(|source| KnxIpError::Multicast {
+                group: KNX_MULTICAST_ADDR.to_string(),
+                source,
+            })?;
 
         socket.set_multicast_loop_v4(false).ok();
 
@@ -177,8 +187,8 @@ async fn server_task(
 ) {
     let mut tunnels: Vec<TunnelClient> = Vec::new();
     let mut next_channel_id: u8 = 1;
-    let mut buf = [0u8; 1024];
-    let cleanup = tokio::time::interval(tokio::time::Duration::from_secs(30));
+    let mut buf = [0u8; RECV_BUF_SIZE];
+    let cleanup = tokio::time::interval(tokio::time::Duration::from_secs(CLEANUP_INTERVAL_SECS));
     tokio::pin!(cleanup);
 
     loop {
@@ -303,12 +313,22 @@ async fn handle_connect(
     // CRI: byte 16 = length, byte 17 = connection type
     let cri_offset = data_offset + usize::from(Hpai::LEN);
     let conn_type = frame.body.get(cri_offset + 1).copied().unwrap_or(0);
-    let is_config = conn_type == 0x03; // DEVICE_MGMT_CONNECTION
+
+    let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
+
+    // Only tunnel connections are supported; reject device-management (and any
+    // other) connection types explicitly rather than mis-handling them as tunnels.
+    if conn_type == DEVICE_MGMT_CONNECTION {
+        tracing::debug!(%ctrl_addr, "rejecting device-management connection");
+        if let Some(resp) = build_connect_response(0, E_CONNECTION_TYPE, 0, port) {
+            let _ = socket.send_to(&resp, ctrl_addr).await;
+        }
+        return;
+    }
 
     if tunnels.len() >= MAX_TUNNELS {
         // No more connections available
-        let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
-        if let Some(resp) = build_connect_response(0, 0x24, 0, port) {
+        if let Some(resp) = build_connect_response(0, E_NO_MORE_CONNECTIONS, 0, port) {
             let _ = socket.send_to(&resp, ctrl_addr).await;
         }
         return;
@@ -340,15 +360,12 @@ async fn handle_connect(
         send_seq: 0,
         recv_seq: 0,
         last_heartbeat: tokio::time::Instant::now(),
-        _is_config: is_config,
     });
 
-    tracing::info!(channel_id, %ctrl_addr, config = is_config, "tunnel client connected");
+    tracing::info!(channel_id, %ctrl_addr, "tunnel client connected");
 
-    let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
-    if let Some(resp) =
-        build_connect_response(channel_id, 0x00, 0xFF00 | u16::from(channel_id), port)
-    {
+    let assigned_ia = TUNNEL_IA_BASE | u16::from(channel_id);
+    if let Some(resp) = build_connect_response(channel_id, E_NO_ERROR, assigned_ia, port) {
         let _ = socket.send_to(&resp, ctrl_addr).await;
     }
 }
@@ -388,9 +405,7 @@ fn build_connect_response(
     body.push(channel_id);
     body.push(status);
     body.extend_from_slice(&hpai.to_bytes());
-    // CRD: connection response data block (tunnel, link layer, individual address)
-    let addr = individual_addr.to_be_bytes();
-    body.extend_from_slice(&[0x04, 0x04, addr[0], addr[1]]);
+    body.extend_from_slice(&tunnel_crd(individual_addr));
 
     let frame = KnxIpFrame {
         service_type: ServiceType::ConnectResponse,
@@ -417,9 +432,9 @@ async fn handle_heartbeat(
     let status = if let Some(t) = tunnel {
         t.last_heartbeat = tokio::time::Instant::now();
         dst = t.ctrl_addr;
-        0x00 // E_NO_ERROR
+        E_NO_ERROR
     } else {
-        0x21 // E_CONNECTION_ID
+        E_CONNECTION_ID
     };
 
     let resp = KnxIpFrame {
@@ -450,9 +465,9 @@ async fn handle_disconnect(
     let status = if ctrl_addr.is_some() {
         tunnels.retain(|t| t.channel_id != channel_id);
         tracing::info!(channel_id, "tunnel client disconnected");
-        0x00
+        E_NO_ERROR
     } else {
-        0x21
+        E_CONNECTION_ID
     };
 
     let resp = KnxIpFrame {
@@ -477,12 +492,26 @@ async fn handle_tunneling_request(
 
     let tunnel = tunnels.iter_mut().find(|t| t.channel_id == ch.channel_id);
     let Some(tunnel) = tunnel else {
-        send_tunneling_ack(socket, src, ch.channel_id, ch.sequence_counter, 0x21).await;
+        send_tunneling_ack(
+            socket,
+            src,
+            ch.channel_id,
+            ch.sequence_counter,
+            E_CONNECTION_ID,
+        )
+        .await;
         return;
     };
 
     if tunnel.data_addr != src {
-        send_tunneling_ack(socket, src, ch.channel_id, ch.sequence_counter, 0x21).await;
+        send_tunneling_ack(
+            socket,
+            src,
+            ch.channel_id,
+            ch.sequence_counter,
+            E_CONNECTION_ID,
+        )
+        .await;
         return;
     }
 
@@ -492,7 +521,7 @@ async fn handle_tunneling_request(
         tunnel.data_addr,
         ch.channel_id,
         ch.sequence_counter,
-        0,
+        E_NO_ERROR,
     )
     .await;
 
@@ -516,15 +545,7 @@ async fn send_tunneling_ack(
     sequence_counter: u8,
     status: u8,
 ) {
-    let ack_ch = ConnectionHeader {
-        channel_id,
-        sequence_counter,
-        status,
-    };
-    let ack = KnxIpFrame {
-        service_type: ServiceType::TunnelingAck,
-        body: ack_ch.to_bytes().to_vec(),
-    };
+    let ack = KnxIpFrame::tunneling_ack(channel_id, sequence_counter, status);
     if let Some(bytes) = serialize_frame(&ack) {
         let _ = socket.send_to(&bytes, dst).await;
     }
@@ -538,10 +559,7 @@ async fn send_to_all(
 ) -> Vec<(Vec<u8>, SocketAddr)> {
     // Send as routing indication to multicast
     if let Some(multicast) = multicast {
-        let routing = KnxIpFrame {
-            service_type: ServiceType::RoutingIndication,
-            body: cemi.as_bytes().to_vec(),
-        };
+        let routing = KnxIpFrame::routing_indication(cemi.as_bytes());
         if let Some(bytes) = serialize_frame(&routing) {
             let _ = socket.send_to(&bytes, multicast).await;
         }
@@ -569,12 +587,6 @@ async fn send_to_tunnel_client(
     }
 }
 
-/// KNXnet/IP tunneling ack timeout (1 second per spec).
-const TUNNELING_ACK_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(1);
-
-/// Maximum tunneling request retries.
-const TUNNELING_MAX_RETRIES: u8 = 3;
-
 /// Send a tunneling request to a client and wait for ack.
 ///
 /// Returns any non-ack packets received during the ack wait so the caller
@@ -586,26 +598,13 @@ async fn send_tunneling_to(
     cemi: &CemiFrame,
 ) -> Vec<(Vec<u8>, SocketAddr)> {
     let seq = tunnel.send_seq;
-    let ch = ConnectionHeader {
-        channel_id: tunnel.channel_id,
-        sequence_counter: seq,
-        status: 0,
-    };
-
-    let mut body = Vec::with_capacity(ConnectionHeader::LEN as usize + cemi.total_length());
-    body.extend_from_slice(&ch.to_bytes());
-    body.extend_from_slice(cemi.as_bytes());
-
-    let frame = KnxIpFrame {
-        service_type: ServiceType::TunnelingRequest,
-        body,
-    };
+    let frame = KnxIpFrame::tunneling_request(tunnel.channel_id, seq, cemi.as_bytes());
     let Some(frame_bytes) = serialize_frame(&frame) else {
         return Vec::new();
     };
     let mut stashed: Vec<(Vec<u8>, SocketAddr)> = Vec::new();
 
-    for attempt in 0..TUNNELING_MAX_RETRIES {
+    for attempt in 0..MAX_RETRIES {
         if let Err(e) = socket.send_to(&frame_bytes, tunnel.data_addr).await {
             tracing::debug!(channel = tunnel.channel_id, attempt = attempt + 1, error = %e, "send failed");
             continue;
@@ -637,7 +636,7 @@ async fn send_tunneling_to(
 
     tracing::warn!(
         channel = tunnel.channel_id,
-        "no ack after {TUNNELING_MAX_RETRIES} retries"
+        "no ack after {MAX_RETRIES} retries"
     );
     stashed
 }
@@ -651,8 +650,8 @@ async fn wait_for_tunneling_ack(
     seq: u8,
     stashed: &mut Vec<(Vec<u8>, SocketAddr)>,
 ) -> Result<(), ()> {
-    let deadline = tokio::time::Instant::now() + TUNNELING_ACK_TIMEOUT;
-    let mut buf = [0u8; 1024];
+    let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
+    let mut buf = [0u8; RECV_BUF_SIZE];
 
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());

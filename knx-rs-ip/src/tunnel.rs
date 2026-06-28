@@ -14,7 +14,9 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::pin::Pin;
 
 use knx_rs_core::cemi::CemiFrame;
-use knx_rs_core::knxip::{ConnectionHeader, HostProtocol, Hpai, KnxIpFrame, ServiceType};
+use knx_rs_core::knxip::{
+    ConnectionHeader, E_NO_ERROR, HostProtocol, Hpai, KnxIpFrame, ServiceType, tunnel_cri,
+};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, timeout};
@@ -27,11 +29,14 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// KNX spec: heartbeat interval.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 /// KNX spec: tunneling request ack timeout (per attempt).
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 /// KNX spec: maximum tunneling request retries.
-const MAX_RETRIES: u8 = 3;
+pub const MAX_RETRIES: u8 = 3;
 /// KNX spec: heartbeat failures before disconnect.
 const MAX_HEARTBEAT_FAILURES: u8 = 3;
+
+/// Receive buffer size for a single KNXnet/IP datagram.
+pub const RECV_BUF_SIZE: usize = 1024;
 
 /// Initial reconnect delay.
 const RECONNECT_DELAY_INITIAL: Duration = Duration::from_secs(1);
@@ -170,37 +175,22 @@ const fn build_hpai(addr: SocketAddr) -> Hpai {
 }
 
 fn serialize_frame(frame: &KnxIpFrame) -> Result<Vec<u8>, KnxIpError> {
-    frame
-        .try_to_bytes()
-        .map_err(|e| KnxIpError::Protocol(e.to_string()))
+    Ok(frame.try_to_bytes()?)
 }
 
 async fn do_connect(socket: &UdpSocket, local_addr: SocketAddr) -> Result<u8, KnxIpError> {
     let hpai = build_hpai(local_addr);
-    let hpai_bytes = hpai.to_bytes();
-
-    // CRI: tunnel connection (0x04), TP link layer (0x02)
-    let cri = [0x04, 0x04, 0x02, 0x00];
-
-    let mut body = Vec::with_capacity(20);
-    body.extend_from_slice(&hpai_bytes); // control endpoint
-    body.extend_from_slice(&hpai_bytes); // data endpoint
-    body.extend_from_slice(&cri);
-
-    let frame = KnxIpFrame {
-        service_type: ServiceType::ConnectRequest,
-        body,
-    };
+    // Control and data endpoints share the local HPAI.
+    let frame = KnxIpFrame::connect_request(hpai, hpai, &tunnel_cri());
     socket.send(&serialize_frame(&frame)?).await?;
 
-    let mut buf = [0u8; 256];
+    let mut buf = [0u8; RECV_BUF_SIZE];
     let n = timeout(CONNECT_TIMEOUT, socket.recv(&mut buf))
         .await
         .map_err(|_| KnxIpError::Timeout("connect response"))?
         .map_err(KnxIpError::Io)?;
 
-    let resp = KnxIpFrame::parse(&buf[..n])
-        .map_err(|e| KnxIpError::Protocol(format!("connect response: {e}")))?;
+    let resp = KnxIpFrame::parse(&buf[..n])?;
 
     if resp.service_type != ServiceType::ConnectResponse {
         return Err(KnxIpError::Protocol(format!(
@@ -216,7 +206,7 @@ async fn do_connect(socket: &UdpSocket, local_addr: SocketAddr) -> Result<u8, Kn
     let channel_id = resp.body[0];
     let status = resp.body[1];
 
-    if status != 0 {
+    if status != E_NO_ERROR {
         return Err(KnxIpError::ConnectionRejected(status));
     }
 
@@ -328,11 +318,18 @@ async fn try_reconnect(
         tokio::select! {
             () = tokio::time::sleep(delay) => {}
             cmd = cmd_rx.recv() => {
-                if matches!(cmd, Some(TunnelCmd::Close) | None) {
-                    tracing::info!("reconnect cancelled by close");
-                    return false;
+                match cmd {
+                    Some(TunnelCmd::Close) | None => {
+                        tracing::info!("reconnect cancelled by close");
+                        return false;
+                    }
+                    Some(TunnelCmd::Send(_, reply)) => {
+                        // Don't silently drop the reply (which the caller would
+                        // see as a permanent Closed): report a transient,
+                        // retryable error while reconnecting.
+                        let _ = reply.send(Err(KnxIpError::Timeout("reconnecting")));
+                    }
                 }
-                // Ignore other commands during reconnect
             }
         }
 
@@ -388,7 +385,7 @@ impl TunnelState {
                 tracing::info!("remote disconnect");
                 let resp = KnxIpFrame {
                     service_type: ServiceType::DisconnectResponse,
-                    body: vec![self.channel_id, 0],
+                    body: vec![self.channel_id, E_NO_ERROR],
                 };
                 if let Ok(bytes) = serialize_frame(&resp) {
                     let _ = self.socket.send(&bytes).await;
@@ -415,15 +412,7 @@ impl TunnelState {
         }
 
         // Always ACK
-        let ack_ch = ConnectionHeader {
-            channel_id: self.channel_id,
-            sequence_counter: ch.sequence_counter,
-            status: 0,
-        };
-        let ack = KnxIpFrame {
-            service_type: ServiceType::TunnelingAck,
-            body: ack_ch.to_bytes().to_vec(),
-        };
+        let ack = KnxIpFrame::tunneling_ack(self.channel_id, ch.sequence_counter, E_NO_ERROR);
         if let Ok(bytes) = serialize_frame(&ack) {
             let _ = self.socket.send(&bytes).await;
         }
@@ -448,20 +437,7 @@ impl TunnelState {
         cemi: &CemiFrame,
         cemi_tx: &mpsc::Sender<CemiFrame>,
     ) -> Result<(), KnxIpError> {
-        let ch = ConnectionHeader {
-            channel_id: self.channel_id,
-            sequence_counter: self.send_seq,
-            status: 0,
-        };
-
-        let mut body = Vec::with_capacity(ConnectionHeader::LEN as usize + cemi.total_length());
-        body.extend_from_slice(&ch.to_bytes());
-        body.extend_from_slice(cemi.as_bytes());
-
-        let frame = KnxIpFrame {
-            service_type: ServiceType::TunnelingRequest,
-            body,
-        };
+        let frame = KnxIpFrame::tunneling_request(self.channel_id, self.send_seq, cemi.as_bytes());
         let frame_bytes = serialize_frame(&frame)?;
 
         for attempt in 0..MAX_RETRIES {
@@ -488,23 +464,33 @@ impl TunnelState {
         Err(KnxIpError::Timeout("tunneling ack after max retries"))
     }
 
+    /// Receive one datagram into `buf` before `deadline`, mapping timeouts and
+    /// I/O errors to typed errors with `label`.
+    async fn recv_until(
+        &self,
+        buf: &mut [u8],
+        deadline: tokio::time::Instant,
+        label: &'static str,
+    ) -> Result<usize, KnxIpError> {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(KnxIpError::Timeout(label));
+        }
+        timeout(remaining, self.socket.recv(buf))
+            .await
+            .map_err(|_| KnxIpError::Timeout(label))?
+            .map_err(KnxIpError::Io)
+    }
+
     /// Wait for a tunneling ack matching our channel and sequence.
     /// Returns any non-ack frames received while waiting (TUN-1: no frame loss).
     async fn wait_for_ack(&self) -> Result<Vec<Vec<u8>>, KnxIpError> {
-        let mut buf = [0u8; 256];
+        let mut buf = [0u8; RECV_BUF_SIZE];
         let mut buffered_frames = Vec::new();
         let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
 
         loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(KnxIpError::Timeout("tunneling ack"));
-            }
-
-            let n = timeout(remaining, self.socket.recv(&mut buf))
-                .await
-                .map_err(|_| KnxIpError::Timeout("tunneling ack"))?
-                .map_err(KnxIpError::Io)?;
+            let n = self.recv_until(&mut buf, deadline, "tunneling ack").await?;
 
             if let Ok(resp) = KnxIpFrame::parse(&buf[..n]) {
                 if resp.service_type == ServiceType::TunnelingAck {
@@ -512,7 +498,7 @@ impl TunnelState {
                         let channel_matches = ch.channel_id == self.channel_id;
                         let seq_matches = ch.sequence_counter == self.send_seq;
                         if channel_matches && seq_matches {
-                            if ch.status != 0 {
+                            if ch.status != E_NO_ERROR {
                                 return Err(KnxIpError::Protocol(format!(
                                     "tunneling ack error: {:#04x}",
                                     ch.status
@@ -532,31 +518,17 @@ impl TunnelState {
         &mut self,
         cemi_tx: &mpsc::Sender<CemiFrame>,
     ) -> Result<(), KnxIpError> {
-        let hpai = build_hpai(self.local_addr);
-        let mut body = Vec::with_capacity(10);
-        body.push(self.channel_id);
-        body.push(0);
-        body.extend_from_slice(&hpai.to_bytes());
-
-        let frame = KnxIpFrame {
-            service_type: ServiceType::ConnectionStateRequest,
-            body,
-        };
+        let frame =
+            KnxIpFrame::connection_state_request(self.channel_id, build_hpai(self.local_addr));
         self.socket.send(&serialize_frame(&frame)?).await?;
 
-        let mut buf = [0u8; 1024];
+        let mut buf = [0u8; RECV_BUF_SIZE];
         let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
 
         loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(KnxIpError::Timeout("heartbeat response"));
-            }
-
-            let n = timeout(remaining, self.socket.recv(&mut buf))
-                .await
-                .map_err(|_| KnxIpError::Timeout("heartbeat response"))?
-                .map_err(KnxIpError::Io)?;
+            let n = self
+                .recv_until(&mut buf, deadline, "heartbeat response")
+                .await?;
 
             let Ok(resp) = KnxIpFrame::parse(&buf[..n]) else {
                 continue;
@@ -567,7 +539,7 @@ impl TunnelState {
                 && resp.body[0] == self.channel_id
             {
                 let status = resp.body[1];
-                if status != 0 {
+                if status != E_NO_ERROR {
                     return Err(KnxIpError::Protocol(format!(
                         "heartbeat rejected: {status:#04x}"
                     )));
@@ -583,16 +555,7 @@ impl TunnelState {
     }
 
     async fn send_disconnect(&self) -> Result<(), KnxIpError> {
-        let hpai = build_hpai(self.local_addr);
-        let mut body = Vec::with_capacity(10);
-        body.push(self.channel_id);
-        body.push(0);
-        body.extend_from_slice(&hpai.to_bytes());
-
-        let frame = KnxIpFrame {
-            service_type: ServiceType::DisconnectRequest,
-            body,
-        };
+        let frame = KnxIpFrame::disconnect_request(self.channel_id, build_hpai(self.local_addr));
         self.socket.send(&serialize_frame(&frame)?).await?;
         tracing::debug!(channel_id = self.channel_id, "disconnect sent");
         Ok(())
