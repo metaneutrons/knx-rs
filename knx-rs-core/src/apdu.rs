@@ -22,6 +22,21 @@ use alloc::vec::Vec;
 
 use crate::message::ApduType;
 
+/// Mask for the 10-bit APCI field carried in the two TPCI/APCI bytes.
+pub const APCI_MASK: u16 = 0x03FF;
+/// Mask isolating the opcode bits of a "short" APCI (drops the 6 data bits).
+pub const APCI_SHORT_TYPE_MASK: u16 = 0x03C0;
+/// Mask for the 6-bit inline value carried by a "short" APCI.
+pub const APCI_SHORT_DATA_MASK: u8 = 0x3F;
+
+/// Bit position separating an APCI's opcode family from its 6 data bits.
+const APCI_FAMILY_SHIFT: u16 = 6;
+/// Opcode families at or above this index use the full (long) APCI encoding.
+const APCI_SHORT_FAMILY_MAX: u16 = 11;
+/// Opcode family `7` (the `0x1Cx` escape range) is long despite being below the
+/// short-family threshold.
+const APCI_LONG_ESCAPE_FAMILY: u16 = 7;
+
 /// A parsed Application Protocol Data Unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Apdu {
@@ -60,14 +75,16 @@ impl Apdu {
     /// Returns the bytes starting from the TPCI/APCI position.
     pub fn to_bytes(&self, tpci_bits: u8) -> Vec<u8> {
         let apci = self.apdu_type as u16;
-        let is_short = is_short_apci(apci);
         let byte0 = (tpci_bits & 0xFC) | ((apci >> 8) as u8 & 0x03);
         #[expect(clippy::cast_possible_truncation)]
         let apci_low = apci as u8;
 
-        if is_short && self.data.len() == 1 {
-            // Short APDU: data encoded in lower 6 bits of byte 1
-            let byte1 = (apci_low & 0xC0) | (self.data[0] & 0x3F);
+        if uses_short_form(apci, self.data.len()) {
+            // Short APDU: a single 6-bit value packed into the lower bits of
+            // byte 1. Empty data encodes a value of 0 (the inverse of decode,
+            // which always yields one data byte for the short form).
+            let value = self.data.first().copied().unwrap_or(0);
+            let byte1 = (apci_low & 0xC0) | (value & APCI_SHORT_DATA_MASK);
             alloc::vec![byte0, byte1]
         } else {
             // Long APDU: 2-byte APCI header + data
@@ -80,26 +97,44 @@ impl Apdu {
 
 /// Determine if an APCI value uses the "short" encoding (6-bit data in byte 1).
 ///
-/// Per the C++ reference: APCI values where `(apci >> 6) < 11` and `!= 7`
-/// are short — the lower 6 bits are masked off for type identification.
+/// Per the C++ reference: APCI values whose opcode family is below
+/// [`APCI_SHORT_FAMILY_MAX`] and is not the [`APCI_LONG_ESCAPE_FAMILY`] are
+/// short — the lower 6 bits carry inline data and are masked off for type
+/// identification.
 const fn is_short_apci(apci: u16) -> bool {
-    let high = apci >> 6;
-    high < 11 && high != 7
+    let family = apci >> APCI_FAMILY_SHIFT;
+    family < APCI_SHORT_FAMILY_MAX && family != APCI_LONG_ESCAPE_FAMILY
+}
+
+/// Whether an APDU with `data_len` bytes is encoded in the short form.
+///
+/// Used by both [`Apdu::to_bytes`] and [`decode_apci`] so encode and decode
+/// share one definition of the short/long boundary.
+const fn uses_short_form(apci: u16, data_len: usize) -> bool {
+    is_short_apci(apci) && data_len <= 1
+}
+
+/// Normalize a raw 16-bit APCI field to the value used for type identification.
+///
+/// Applies the 10-bit [`APCI_MASK`], then drops the inline data bits of a short
+/// APCI. This is the single source of the masking applied during parsing and
+/// must be used by every raw-APCI → [`ApduType`] conversion.
+const fn normalize_apci(raw: u16) -> u16 {
+    let apci = raw & APCI_MASK;
+    if is_short_apci(apci) {
+        apci & APCI_SHORT_TYPE_MASK
+    } else {
+        apci
+    }
 }
 
 /// Decode APCI value and extract data from payload.
 fn decode_apci(apci_raw: u16, payload: &[u8], npdu_length: u8) -> Option<(ApduType, Vec<u8>)> {
-    let type_bits = if is_short_apci(apci_raw) {
-        apci_raw & 0x03C0
-    } else {
-        apci_raw
-    };
-
-    let apdu_type = match_apdu_type(type_bits)?;
+    let apdu_type = match_apdu_type(normalize_apci(apci_raw))?;
 
     let data = if is_short_apci(apci_raw) && npdu_length <= 1 {
         // Short APDU: small value in lower 6 bits of byte 1
-        alloc::vec![payload[1] & 0x3F]
+        alloc::vec![payload[1] & APCI_SHORT_DATA_MASK]
     } else if payload.len() > 2 {
         // Long APDU: data after the 2-byte APCI header
         payload[2..].to_vec()
@@ -112,9 +147,10 @@ fn decode_apci(apci_raw: u16, payload: &[u8], npdu_length: u8) -> Option<(ApduTy
 
 /// Try to convert a raw APCI value to an `ApduType`.
 ///
-/// This applies the same masking logic as APDU parsing.
+/// Applies [`normalize_apci`] (the same masking used by [`Apdu::parse`]) before
+/// matching, so a short APCI carrying inline data still resolves to its type.
 pub const fn apdu_type_from_raw(raw: u16) -> Option<ApduType> {
-    match_apdu_type(raw)
+    match_apdu_type(normalize_apci(raw))
 }
 
 /// Map a (masked) APCI value to an `ApduType` enum variant.
@@ -274,5 +310,41 @@ mod tests {
     fn parse_too_short() {
         assert!(Apdu::parse(&[0x00], 0).is_none());
         assert!(Apdu::parse(&[], 0).is_none());
+    }
+
+    #[test]
+    fn apdu_type_from_raw_masks_short_inline_data() {
+        // 0x081 = GroupValueWrite (0x080) + 1 bit of inline data. Must resolve
+        // to GroupValueWrite, not None (regression for missing short-APCI mask).
+        assert_eq!(ApduType::from_raw(0x081), Some(ApduType::GroupValueWrite));
+        assert_eq!(
+            ApduType::from_raw(0x041),
+            Some(ApduType::GroupValueResponse)
+        );
+        // Unmasked extra high bits (e.g. a TPCI byte) must not defeat matching.
+        assert_eq!(ApduType::from_raw(0xC081), Some(ApduType::GroupValueWrite));
+        // Long APCIs still resolve exactly.
+        assert_eq!(ApduType::from_raw(0x3D5), Some(ApduType::PropertyValueRead));
+    }
+
+    #[test]
+    fn roundtrip_short_apdu_empty_data() {
+        // A short APCI with empty data encodes as the short form (value 0) and
+        // decodes back to a single zero byte — encode/decode share one boundary.
+        let apdu = Apdu {
+            apdu_type: ApduType::GroupValueWrite,
+            data: Vec::new(),
+        };
+        let bytes = apdu.to_bytes(0x00);
+        assert_eq!(bytes, &[0x00, 0x80]);
+        let parsed = Apdu::parse(&bytes, 1).unwrap();
+        assert_eq!(parsed.apdu_type, ApduType::GroupValueWrite);
+        assert_eq!(parsed.data, &[0x00]);
+    }
+
+    #[test]
+    fn to_apci_bytes_matches_discriminant() {
+        assert_eq!(ApduType::GroupValueWrite.to_apci_bytes(), [0x00, 0x80]);
+        assert_eq!(ApduType::PropertyValueRead.to_apci_bytes(), [0x03, 0xD5]);
     }
 }
