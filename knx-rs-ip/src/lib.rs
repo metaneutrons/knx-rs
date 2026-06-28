@@ -34,7 +34,7 @@ pub mod discovery;
 pub mod multiplex;
 pub mod ops;
 
-pub use error::KnxIpError;
+pub use error::{KnxIpError, Result};
 pub use multiplex::{MultiplexHandle, Multiplexer};
 pub use router::{KNX_MULTICAST_ADDR, KNX_PORT, RouterConnection};
 pub use tunnel::{TunnelConfig, TunnelConnection};
@@ -58,7 +58,7 @@ pub trait KnxConnection: Send {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the frame could not be sent.
-    fn send(&self, frame: CemiFrame) -> KnxFuture<'_, Result<(), KnxIpError>>;
+    fn send(&self, frame: CemiFrame) -> KnxFuture<'_, Result<()>>;
 
     /// Receive the next CEMI frame from the KNX bus.
     ///
@@ -80,7 +80,7 @@ pub enum AnyConnection {
 }
 
 impl KnxConnection for AnyConnection {
-    fn send(&self, frame: CemiFrame) -> KnxFuture<'_, Result<(), KnxIpError>> {
+    fn send(&self, frame: CemiFrame) -> KnxFuture<'_, Result<()>> {
         match self {
             Self::Tunnel(c) => c.send(frame),
             Self::Router(c) => c.send(frame),
