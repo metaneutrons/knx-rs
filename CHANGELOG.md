@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.3.0...knx-rs-v0.3.1) (2026-06-28)
+
+
+### Bug Fixes
+
+* **api:** restore 0.2 back-compat via deprecated shims ([2eb8cfc](https://github.com/metaneutrons/knx-rs/commit/2eb8cfc155d1f7c14b453a465c65e00cdc6930a9))
+* **docs:** drop removed doc_auto_cfg feature gate (breaks docs.rs) ([2894346](https://github.com/metaneutrons/knx-rs/commit/2894346727bee9b24d44f448dd7cf1535845a9e2))
+* **prod:** keep pipeline modules public ([4d01589](https://github.com/metaneutrons/knx-rs/commit/4d01589cac10ff363c0de2e6c7977f3f2ccd389f))
+
 ## [0.3.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.2.0...knx-rs-v0.3.0) (2026-06-28)
 
 
