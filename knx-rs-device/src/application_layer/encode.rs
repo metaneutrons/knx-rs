@@ -57,13 +57,17 @@ pub fn encode_property_response(
     start_index: u16,
     data: &[u8],
 ) -> Vec<u8> {
+    debug_assert!(
+        count <= MASK_4BIT,
+        "PropertyValueResponse count must fit in 4 bits"
+    );
     let [hi, lo] = apci_bytes(ApduType::PropertyValueResponse);
     let mut payload = Vec::with_capacity(6 + data.len());
     payload.push(hi);
     payload.push(lo);
     payload.push(object_index);
     payload.push(property_id);
-    let count_start = (u16::from(count) << 12) | (start_index & MASK_12BIT);
+    let count_start = (u16::from(count & MASK_4BIT) << 12) | (start_index & MASK_12BIT);
     payload.extend_from_slice(&count_start.to_be_bytes());
     payload.extend_from_slice(data);
     payload
@@ -112,24 +116,9 @@ pub fn encode_property_description_response(
     access: u8,
 ) -> Vec<u8> {
     let [hi, lo] = apci_bytes(ApduType::PropertyDescriptionResponse);
-    let type_byte = if write_enable {
-        WRITE_ENABLE_FLAG | (pdt & MASK_6BIT)
-    } else {
-        pdt & MASK_6BIT
-    };
-    let max_hi = ((max_elements >> 8) & u16::from(MASK_4BIT)) as u8;
-    let max_lo = (max_elements & 0xFF) as u8;
-    alloc::vec![
-        hi,
-        lo,
-        object_index,
-        property_id,
-        property_index,
-        type_byte,
-        max_hi,
-        max_lo,
-        access
-    ]
+    let mut payload = alloc::vec![hi, lo, object_index, property_id, property_index];
+    push_property_description_fields(&mut payload, write_enable, pdt, max_elements, access);
+    payload
 }
 
 /// Encode a `MemoryExtReadResponse` APDU payload.
@@ -308,19 +297,37 @@ pub fn encode_property_ext_description_response(
     payload
 }
 
-/// Encode the 4 property description fields shared between standard and extended responses.
-fn encode_property_description_fields(buf: &mut Vec<u8>, desc: PropertyDescription) {
-    let type_byte = if desc.write_enable {
-        WRITE_ENABLE_FLAG | (desc.data_type as u8 & MASK_6BIT)
+/// Push the 4 property-description fields (write-enable|PDT, `max_elements` hi/lo,
+/// access). Single source for both the standard and extended description encoders.
+fn push_property_description_fields(
+    buf: &mut Vec<u8>,
+    write_enable: bool,
+    pdt: u8,
+    max_elements: u16,
+    access: u8,
+) {
+    let type_byte = if write_enable {
+        WRITE_ENABLE_FLAG | (pdt & MASK_6BIT)
     } else {
-        desc.data_type as u8 & MASK_6BIT
+        pdt & MASK_6BIT
     };
-    let max_hi = ((desc.max_elements >> 8) & u16::from(MASK_4BIT)) as u8;
-    let max_lo = (desc.max_elements & 0xFF) as u8;
+    let max_hi = ((max_elements >> 8) & u16::from(MASK_4BIT)) as u8;
+    let max_lo = (max_elements & 0xFF) as u8;
     buf.push(type_byte);
     buf.push(max_hi);
     buf.push(max_lo);
-    buf.push(desc.access as u8);
+    buf.push(access);
+}
+
+/// Encode the 4 property description fields shared between standard and extended responses.
+fn encode_property_description_fields(buf: &mut Vec<u8>, desc: PropertyDescription) {
+    push_property_description_fields(
+        buf,
+        desc.write_enable,
+        desc.data_type as u8,
+        desc.max_elements,
+        desc.access as u8,
+    );
 }
 
 /// Encode an APDU into raw bytes (for transport layer connected-mode).
