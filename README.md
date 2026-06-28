@@ -33,9 +33,9 @@ version requirement deliberately and apply the changes below.
 ### knx-rs-core
 
 - **`KnxIpError` → `KnxIpParseError`.** The frame-parse error was renamed to free the
-  name `KnxIpError` for the (unrelated) connection error in `knx-rs-ip`. Rename every
-  reference — including variant paths and the return types of `KnxIpFrame::parse` and
-  `KnxIpFrame::try_to_bytes`.
+  name `KnxIpError` for the (unrelated) connection error in `knx-rs-ip`. A
+  `#[deprecated]` alias keeps the old name compiling, so existing code still builds
+  (with a warning) — migrate references, including variant paths, at your leisure.
 - **`Apdu::to_bytes` wire change (correctness):** a single group-value byte `> 0x3F`
   (e.g. a DPT 5 value such as 200) now uses the long form instead of being masked to
   6 bits and losing data. Golden byte-vector expectations for such values change;
@@ -59,8 +59,8 @@ version requirement deliberately and apply the changes below.
 
 ### knx-rs-device
 
-- **`DataProperty::access() -> u8` removed** — use `access_level()` (typed
-  `AccessLevel`) or `access_level() as u8` for the raw byte.
+- **`DataProperty::access() -> u8` deprecated** (still available) — prefer
+  `access_level()` (typed `AccessLevel`), or `access_level() as u8` for the raw byte.
 - `SystemNetworkParameterRead.test_info` is now sliced from the correct offset (was
   off by one), so consumers receive the corrected payload.
 
