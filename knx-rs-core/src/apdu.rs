@@ -155,7 +155,7 @@ fn decode_apci(apci_raw: u16, payload: &[u8], npdu_length: u8) -> Option<(ApduTy
 
 /// Try to convert a raw APCI value to an `ApduType`.
 ///
-/// Applies [`normalize_apci`] (the same masking used by [`Apdu::parse`]) before
+/// Applies `normalize_apci` (the same masking used by [`Apdu::parse`]) before
 /// matching, so a short APCI carrying inline data still resolves to its type.
 pub const fn apdu_type_from_raw(raw: u16) -> Option<ApduType> {
     match_apdu_type(normalize_apci(raw))
