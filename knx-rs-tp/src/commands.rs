@@ -26,9 +26,14 @@ pub const ACK_NACK: u8 = 0x04;
 /// Start of frame transmission.
 pub const U_L_DATA_START_REQ: u8 = 0x80;
 /// Continuation of frame transmission.
-pub const U_L_DATA_CONT_REQ: u8 = 0x80;
+///
+/// Shares the start opcode: the TP-UART encodes start and continuation as
+/// `0x80 | index`, so this intentionally aliases [`U_L_DATA_START_REQ`].
+pub const U_L_DATA_CONT_REQ: u8 = U_L_DATA_START_REQ;
 /// End of frame transmission.
 pub const U_L_DATA_END_REQ: u8 = 0x40;
+/// Mask for the 6-bit byte index carried in `U_L_DATA_*` opcodes.
+pub const U_L_DATA_INDEX_MASK: u8 = 0x3F;
 /// NCN5120: set individual address.
 pub const U_NCN5120_SET_ADDRESS_REQ: u8 = 0xF1;
 /// TP-UART 2: set individual address.
@@ -49,6 +54,8 @@ pub const L_DATA_STANDARD_IND: u8 = 0x90;
 pub const L_DATA_EXTENDED_IND: u8 = 0x10;
 /// Frame type mask.
 pub const L_DATA_MASK: u8 = 0xD3;
+/// `L_Data.con` success bit: when clear (`& 0x80 == 0`), transmission succeeded.
+pub const L_DATA_CON_SUCCESS_MASK: u8 = 0x80;
 
 /// Supported transceiver types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

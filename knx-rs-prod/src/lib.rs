@@ -26,16 +26,21 @@
 //! ).expect("failed to generate knxprod");
 //! ```
 
-pub mod archive;
-pub mod error;
+// Pipeline internals are crate-private; the public surface is generate_knxprod
+// plus the re-exported KnxprodError/KnxMetadata. `hash` stays public as a
+// standalone, independently useful entry point.
 pub mod hash;
-pub mod parse;
-pub mod sign;
-pub mod split;
+
+pub(crate) mod archive;
+pub(crate) mod error;
+pub(crate) mod parse;
+pub(crate) mod sign;
+pub(crate) mod split;
+
+pub use error::KnxprodError;
+pub use parse::KnxMetadata;
 
 use std::path::Path;
-
-use error::KnxprodError;
 
 /// Generate a .knxprod file from a KNX product XML.
 ///
@@ -45,7 +50,7 @@ use error::KnxprodError;
 /// # Errors
 ///
 /// Returns [`KnxprodError`] if any step fails.
-pub fn generate_knxprod(input: &Path, output: &Path) -> Result<parse::KnxMetadata, KnxprodError> {
+pub fn generate_knxprod(input: &Path, output: &Path) -> Result<KnxMetadata, KnxprodError> {
     let xml = std::fs::read_to_string(input).map_err(|e| KnxprodError::io(input, e))?;
     let metadata = parse::extract_metadata_from_str(&xml)?;
 
@@ -65,7 +70,7 @@ pub fn generate_knxprod(input: &Path, output: &Path) -> Result<parse::KnxMetadat
         .unwrap_or(&metadata.application_id)
         .to_string();
 
-    Ok(parse::KnxMetadata {
+    Ok(KnxMetadata {
         application_id: new_app_id,
         ..metadata
     })

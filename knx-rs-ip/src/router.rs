@@ -20,11 +20,29 @@ use crate::{KnxConnection, KnxFuture};
 /// Default KNX multicast address.
 pub const KNX_MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 23, 12);
 
-/// Default KNX port.
-pub const KNX_PORT: u16 = 3671;
+/// Default KNX port (re-exported from `knx_rs_core::knxip::KNX_PORT`).
+pub const KNX_PORT: u16 = knx_rs_core::knxip::KNX_PORT;
 
 /// KNX spec: max 50 routing indications per second (KNX 3.2.6 p.6).
 const MAX_PACKETS_PER_SEC: u32 = 50;
+
+/// KNX spec: default `RoutingBusy` wait time when the field is absent (ms).
+const DEFAULT_ROUTING_BUSY_WAIT_MS: u16 = 50;
+
+/// Bind a UDP socket with `SO_REUSEADDR` so multiple listeners can share the
+/// multicast port (the standard idiom for a shared multicast group).
+fn bind_reuse(addr: SocketAddr) -> std::io::Result<UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let domain = match addr {
+        SocketAddr::V4(_) => Domain::IPV4,
+        SocketAddr::V6(_) => Domain::IPV6,
+    };
+    let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    UdpSocket::from_std(socket.into())
+}
 
 /// A KNXnet/IP router connection over multicast UDP.
 pub struct RouterConnection {
@@ -61,21 +79,26 @@ impl RouterConnection {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the socket cannot be created or joined.
+    // async for symmetry with the rest of the connection API and forward-compat.
+    #[allow(clippy::unused_async)]
     pub async fn connect_v4(
         local_addr: Ipv4Addr,
         multicast: SocketAddrV4,
     ) -> Result<Self, KnxIpError> {
         if !multicast.ip().is_multicast() {
-            return Err(KnxIpError::Protocol(format!(
+            return Err(KnxIpError::InvalidConfig(format!(
                 "router target is not multicast: {multicast}"
             )));
         }
         let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, multicast.port());
-        let socket = UdpSocket::bind(bind_addr).await?;
+        let socket = bind_reuse(SocketAddr::V4(bind_addr))?;
 
         socket
             .join_multicast_v4(*multicast.ip(), local_addr)
-            .map_err(|e| KnxIpError::Protocol(format!("join multicast {}: {e}", multicast.ip())))?;
+            .map_err(|source| KnxIpError::Multicast {
+                group: multicast.ip().to_string(),
+                source,
+            })?;
 
         socket.set_multicast_loop_v4(false).ok();
         Ok(Self::spawn(socket, SocketAddr::V4(multicast)))
@@ -89,9 +112,11 @@ impl RouterConnection {
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the socket cannot be created or joined.
+    // async for symmetry with the rest of the connection API and forward-compat.
+    #[allow(clippy::unused_async)]
     pub async fn connect_v6(interface: u32, multicast: SocketAddrV6) -> Result<Self, KnxIpError> {
         if !multicast.ip().is_multicast() {
-            return Err(KnxIpError::Protocol(format!(
+            return Err(KnxIpError::InvalidConfig(format!(
                 "router target is not multicast: {multicast}"
             )));
         }
@@ -101,11 +126,14 @@ impl RouterConnection {
             interface
         };
         let bind_addr = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, multicast.port(), 0, interface);
-        let socket = UdpSocket::bind(bind_addr).await?;
+        let socket = bind_reuse(SocketAddr::V6(bind_addr))?;
 
         socket
             .join_multicast_v6(multicast.ip(), interface)
-            .map_err(|e| KnxIpError::Protocol(format!("join multicast {}: {e}", multicast.ip())))?;
+            .map_err(|source| KnxIpError::Multicast {
+                group: multicast.ip().to_string(),
+                source,
+            })?;
 
         socket.set_multicast_loop_v6(false).ok();
         Ok(Self::spawn(socket, SocketAddr::V6(multicast)))
@@ -177,10 +205,12 @@ impl KnxConnection for RouterConnection {
 
 // ── Rate limiter ──────────────────────────────────────────────
 
-/// Sliding-window rate limiter: max N events per 1-second window.
+/// Sliding-window rate limiter: max N events per 1-second window, with an
+/// optional explicit pause (e.g. on `RoutingBusy`).
 struct RateLimiter {
     timestamps: std::collections::VecDeque<Instant>,
     max_per_sec: u32,
+    paused_until: Option<Instant>,
 }
 
 impl RateLimiter {
@@ -188,15 +218,25 @@ impl RateLimiter {
         Self {
             timestamps: std::collections::VecDeque::with_capacity(max_per_sec as usize),
             max_per_sec,
+            paused_until: None,
         }
     }
 
-    /// Check if a send is allowed. If not, returns the duration to wait.
+    /// Check if a send is allowed. If not, returns the duration to wait. On
+    /// success, records the send timestamp.
     fn check(&mut self) -> Option<Duration> {
         let now = Instant::now();
-        let window_start = now - Duration::from_secs(1);
 
-        // Remove timestamps older than 1 second
+        // Honour an explicit pause first (modelled separately from the window so
+        // it lasts exactly the requested duration, not duration + 1s).
+        if let Some(until) = self.paused_until {
+            if now < until {
+                return Some(until - now);
+            }
+            self.paused_until = None;
+        }
+
+        let window_start = now - Duration::from_secs(1);
         while self.timestamps.front().is_some_and(|&t| t < window_start) {
             self.timestamps.pop_front();
         }
@@ -212,14 +252,9 @@ impl RateLimiter {
         }
     }
 
-    /// Force a pause on the next send (used by `RoutingBusy` handling).
+    /// Force a pause on sends for `duration` (used by `RoutingBusy` handling).
     fn pause(&mut self, duration: Duration) {
-        // Fill the window with future timestamps to block sends for `duration`
-        let future = Instant::now() + duration;
-        self.timestamps.clear();
-        for _ in 0..self.max_per_sec {
-            self.timestamps.push_back(future);
-        }
+        self.paused_until = Some(Instant::now() + duration);
     }
 }
 
@@ -270,24 +305,14 @@ async fn rate_limited_send(
     cemi: &CemiFrame,
     limiter: &mut RateLimiter,
 ) -> Result<(), KnxIpError> {
-    // Wait if rate limit exceeded
-    if let Some(wait) = limiter.check() {
+    // Wait until a slot is available; check() records the timestamp once allowed.
+    while let Some(wait) = limiter.check() {
         tracing::debug!(wait_ms = wait.as_millis(), "rate limit: waiting");
         tokio::time::sleep(wait).await;
-        // Re-check after waiting (the check also records the timestamp)
-        if let Some(extra_wait) = limiter.check() {
-            tokio::time::sleep(extra_wait).await;
-            let _ = limiter.check(); // record
-        }
     }
 
-    let frame = KnxIpFrame {
-        service_type: ServiceType::RoutingIndication,
-        body: cemi.as_bytes().to_vec(),
-    };
-    let bytes = frame
-        .try_to_bytes()
-        .map_err(|e| KnxIpError::Protocol(e.to_string()))?;
+    let frame = KnxIpFrame::routing_indication(cemi.as_bytes());
+    let bytes = frame.try_to_bytes()?;
     socket.send_to(&bytes, target).await?;
     Ok(())
 }
@@ -312,11 +337,13 @@ async fn handle_routing_indication(
             }
         }
         ServiceType::RoutingBusy => {
-            // KNX 3.2.6 §4.4: pause sending for the specified wait time
-            let wait_ms = if frame.body.len() >= 6 {
-                u16::from_be_bytes([frame.body[4], frame.body[5]])
+            // KNX 3.2.6 §4.4: pause sending for the specified wait time.
+            // RoutingBusy body: structlen(1) deviceState(1) waitTime(2) ctrl(2);
+            // the wait time is the 2-byte field at offset 2.
+            let wait_ms = if frame.body.len() >= 4 {
+                u16::from_be_bytes([frame.body[2], frame.body[3]])
             } else {
-                50 // default 50ms per spec
+                DEFAULT_ROUTING_BUSY_WAIT_MS
             };
             tracing::debug!(wait_ms, "received RoutingBusy, pausing sends");
             // Drain the rate limiter to force a pause on next send
@@ -339,5 +366,17 @@ mod tests {
         assert!(limiter.check().is_none());
         // 4th should be rate-limited
         assert!(limiter.check().is_some());
+    }
+
+    #[test]
+    fn pause_blocks_for_at_most_the_requested_duration() {
+        // Regression: pause() used to over-block by ~1s by filling the window.
+        let mut limiter = RateLimiter::new(MAX_PACKETS_PER_SEC);
+        limiter.pause(Duration::from_millis(100));
+        let wait = limiter.check().expect("should be paused");
+        assert!(
+            wait <= Duration::from_millis(100),
+            "pause over-blocked: {wait:?}"
+        );
     }
 }

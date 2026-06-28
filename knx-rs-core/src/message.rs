@@ -235,6 +235,24 @@ impl ApduType {
     pub const fn from_raw(raw: u16) -> Option<Self> {
         crate::apdu::apdu_type_from_raw(raw)
     }
+
+    /// The two APCI bytes for this service (high bits in `[0]`, low in `[1]`).
+    ///
+    /// This is the single source for encoding an `ApduType` to its wire APCI;
+    /// the TPCI bits must be OR-ed into byte 0 separately.
+    #[must_use]
+    pub const fn to_apci_bytes(self) -> [u8; 2] {
+        let apci = self as u16;
+        #[expect(clippy::cast_possible_truncation)]
+        [(apci >> 8) as u8, apci as u8]
+    }
+}
+
+impl core::fmt::Display for ApduType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Human-readable: variant name plus the wire APCI code.
+        write!(f, "{self:?} ({:#05X})", *self as u16)
+    }
 }
 
 // ── TryFrom implementations ──────────────────────────────────

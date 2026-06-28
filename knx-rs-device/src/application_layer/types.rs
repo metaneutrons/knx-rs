@@ -26,7 +26,7 @@ pub enum AppLayerError {
 impl core::fmt::Display for AppLayerError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::UnsupportedApdu(t) => write!(f, "unsupported APDU type: {t:?}"),
+            Self::UnsupportedApdu(t) => write!(f, "unsupported APDU type: {t}"),
             Self::TruncatedPayload { expected, got } => {
                 write!(f, "truncated payload: expected {expected} bytes, got {got}")
             }

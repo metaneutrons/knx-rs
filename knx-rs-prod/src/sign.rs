@@ -7,8 +7,6 @@
 //! and the fingerprint portion of the `Id` attribute, and renames the file
 //! to match the new fingerprint.
 
-use std::path::{Path, PathBuf};
-
 use regex::Regex;
 
 use crate::error::KnxprodError;
@@ -97,17 +95,6 @@ fn patch_fingerprint(xml: &str, old_fp: &str, new_fp: &str) -> String {
     let pattern = format!(r"(?i)(_A-[0-9A-Fa-f]{{4}}-[0-9A-Fa-f]{{2}}-){escaped}");
     let re = Regex::new(&pattern).expect("valid regex");
     re.replace_all(xml, format!("${{1}}{new_fp}")).into_owned()
-}
-
-/// Compute the new application path after signing (for external callers that
-/// need to predict the filename).
-#[must_use]
-pub fn signed_filename(original: &Path, fingerprint: &str) -> PathBuf {
-    let filename = original.file_name().and_then(|f| f.to_str()).unwrap_or("");
-    extract_fingerprint(filename).map_or_else(
-        || original.to_path_buf(),
-        |old_fp| original.with_file_name(filename.replace(&old_fp, fingerprint)),
-    )
 }
 
 #[cfg(test)]

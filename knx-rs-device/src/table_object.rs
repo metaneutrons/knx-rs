@@ -106,11 +106,11 @@ impl TableObject {
             return &[];
         }
         let start = self.data_offset as usize;
-        let end = start + self.data_size as usize;
-        if end <= memory_area.len() {
-            &memory_area[start..end]
-        } else {
-            &[]
+        // checked_add so corrupt/hostile offset+size (restored state on a 32-bit
+        // target) cannot wrap to a small `end` that passes the bounds check.
+        match start.checked_add(self.data_size as usize) {
+            Some(end) if end <= memory_area.len() => &memory_area[start..end],
+            _ => &[],
         }
     }
 
@@ -305,9 +305,29 @@ impl TableObject {
         if data.len() < Self::SAVE_SIZE {
             return 0;
         }
-        self.state = LoadState::from(data[0]);
-        self.data_offset = u32::from_le_bytes([data[1], data[2], data[3], data[4]]);
-        self.data_size = u32::from_le_bytes([data[5], data[6], data[7], data[8]]);
+        let state = LoadState::from(data[0]);
+        let data_offset = u32::from_le_bytes([data[1], data[2], data[3], data[4]]);
+        let data_size = u32::from_le_bytes([data[5], data[6], data[7], data[8]]);
+
+        // The error field is transient and not persisted; reset it on restore.
+        self.error = LoadError::NoFault;
+
+        // Validate persisted geometry: a Loaded table must fit MAX_MEMORY_SIZE
+        // and not overflow. Corrupt/incompatible state restores as Unloaded
+        // instead of yielding a "Loaded" table with an out-of-range range.
+        let valid = data_size as usize <= MAX_MEMORY_SIZE
+            && (data_offset as usize)
+                .checked_add(data_size as usize)
+                .is_some_and(|end| end <= MAX_MEMORY_SIZE);
+        if state == LoadState::Loaded && !valid {
+            self.state = LoadState::Unloaded;
+            self.data_offset = 0;
+            self.data_size = 0;
+        } else {
+            self.state = state;
+            self.data_offset = data_offset;
+            self.data_size = data_size;
+        }
         Self::SAVE_SIZE
     }
 }

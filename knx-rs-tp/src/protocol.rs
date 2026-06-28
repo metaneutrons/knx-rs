@@ -4,10 +4,12 @@
 //! TP-UART host-side protocol.
 
 use crate::commands::{
-    self, BcuType, U_ACK_REQ, U_L_DATA_CONT_REQ, U_L_DATA_END_REQ, U_L_DATA_START_REQ, U_RESET_IND,
-    U_RESET_REQ, U_STATE_REQ,
+    self, BcuType, L_DATA_CON_SUCCESS_MASK, U_ACK_REQ, U_L_DATA_CONT_REQ, U_L_DATA_END_REQ,
+    U_L_DATA_INDEX_MASK, U_L_DATA_START_REQ, U_RESET_IND, U_RESET_REQ, U_STATE_REQ,
 };
-use crate::frame::TpFrame;
+use crate::frame::{
+    APDU_LEN_MASK, CRC_LEN, HEADER_EXT, HEADER_STD, MAX_FRAME_LEN, TpFrame, is_extended_ctrl,
+};
 
 /// Trait for UART byte-level I/O.
 pub trait UartInterface {
@@ -30,12 +32,15 @@ pub enum TpIndication {
     Frame(TpFrame),
     /// Transmit confirmation (true = success).
     TransmitConfirm(bool),
+    /// A frame was dropped because its length exceeded the receive buffer; the
+    /// receiver has resynchronised and is ready for the next frame.
+    Overrun,
 }
 
 /// TP-UART protocol handler.
 pub struct TpUartProtocol {
     bcu_type: BcuType,
-    rx_buf: [u8; 64],
+    rx_buf: [u8; MAX_FRAME_LEN],
     rx_pos: usize,
     rx_expected: usize,
 }
@@ -45,7 +50,7 @@ impl TpUartProtocol {
     pub const fn new(bcu_type: BcuType) -> Self {
         Self {
             bcu_type,
-            rx_buf: [0u8; 64],
+            rx_buf: [0u8; MAX_FRAME_LEN],
             rx_pos: 0,
             rx_expected: 0,
         }
@@ -98,7 +103,7 @@ impl TpUartProtocol {
         let last = data.len() - 1;
         for (i, &byte) in data.iter().enumerate() {
             #[expect(clippy::cast_possible_truncation)]
-            let idx = i as u8 & 0x3F;
+            let idx = i as u8 & U_L_DATA_INDEX_MASK;
             let cmd = if i == 0 {
                 U_L_DATA_START_REQ | idx
             } else if i == last {
@@ -123,7 +128,9 @@ impl TpUartProtocol {
                 return Some(TpIndication::State(byte));
             }
             if byte & commands::U_FRAME_STATE_MASK == commands::U_FRAME_STATE_IND {
-                return Some(TpIndication::TransmitConfirm(byte & 0x80 == 0));
+                return Some(TpIndication::TransmitConfirm(
+                    byte & L_DATA_CON_SUCCESS_MASK == 0,
+                ));
             }
             if is_frame_start(byte) {
                 self.rx_buf[0] = byte;
@@ -139,14 +146,25 @@ impl TpUartProtocol {
             self.rx_pos += 1;
         }
 
-        if self.rx_expected == 0 && self.rx_pos >= 7 {
-            let is_ext = (self.rx_buf[0] & commands::L_DATA_MASK) == commands::L_DATA_EXTENDED_IND;
+        if self.rx_expected == 0 && self.rx_pos >= HEADER_STD + CRC_LEN {
+            let is_ext = is_extended_ctrl(self.rx_buf[0]);
             let apdu_len = if is_ext {
                 self.rx_buf[6] as usize
             } else {
-                (self.rx_buf[5] & 0x0F) as usize
+                (self.rx_buf[5] & APDU_LEN_MASK) as usize
             };
-            self.rx_expected = if is_ext { 8 } else { 7 } + apdu_len;
+            let header = if is_ext { HEADER_EXT } else { HEADER_STD };
+            // The length octet excludes the TPCI byte, so the NPDU is
+            // `apdu_len + 1` octets on the wire (see `CemiFrame::npdu_length`).
+            let expected = header + apdu_len + 1 + CRC_LEN;
+            // A crafted/oversized length must not wedge the state machine: if the
+            // frame cannot fit the receive buffer, drop it and resynchronise.
+            if expected > self.rx_buf.len() {
+                self.rx_pos = 0;
+                self.rx_expected = 0;
+                return Some(TpIndication::Overrun);
+            }
+            self.rx_expected = expected;
         }
 
         if self.rx_expected > 0 && self.rx_pos >= self.rx_expected {
@@ -258,6 +276,35 @@ mod tests {
         let mut uart = MockUart::new(&[]);
         proto.set_address(&mut uart, 0x1101);
         assert_eq!(uart.tx, &[commands::U_TPUART2_SET_ADDRESS_REQ, 0x11, 0x01]);
+    }
+
+    #[test]
+    fn oversized_extended_length_does_not_wedge() {
+        // Extended ctrl byte (frame-type bit clear) with a 0xFF length byte
+        // yields rx_expected far beyond the 64-byte buffer. The state machine
+        // must resync and report an overrun rather than spinning forever.
+        let mut proto = TpUartProtocol::new(BcuType::Ncn5120);
+        // ctrl=0x10 (extended), ctrl2, src(2), dst(2), len=0xFF
+        let bytes = [0x10u8, 0x00, 0x11, 0x01, 0x08, 0x01, 0xFF];
+        let mut uart = MockUart::new(&bytes);
+        let mut last = None;
+        for _ in 0..bytes.len() {
+            if let Some(ind) = proto.process(&mut uart) {
+                last = Some(ind);
+            }
+        }
+        assert!(matches!(last, Some(TpIndication::Overrun)));
+        // Receiver is reset and ready for the next frame.
+        let mut data = [0xBC, 0x11, 0x01, 0x08, 0x01, 0xE1, 0x00, 0x81, 0x00];
+        data[8] = knx_rs_core::cemi::CemiFrame::calc_crc_tp(&data[..8]);
+        let mut uart2 = MockUart::new(&data);
+        let mut frame = None;
+        for _ in 0..data.len() {
+            if let Some(ind) = proto.process(&mut uart2) {
+                frame = Some(ind);
+            }
+        }
+        assert!(matches!(frame, Some(TpIndication::Frame(_))));
     }
 
     #[test]

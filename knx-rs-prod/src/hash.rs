@@ -100,11 +100,16 @@ struct ElementInfo {
     ordered: bool,
 }
 
-fn write_attr(buf: &mut Vec<u8>, info: &AttrInfo, raw: Option<&str>) {
+fn write_attr(buf: &mut Vec<u8>, info: &AttrInfo, raw: Option<&str>) -> Result<(), KnxprodError> {
     write_string(buf, info.short);
     // C# uses string.IsNullOrEmpty: empty strings are treated as missing.
     let raw = raw.filter(|s| !s.is_empty());
     let effective = raw.or(info.default);
+    // Fail loud on a present-but-unparseable numeric value, matching the C#
+    // reference (which throws); silently coercing to 0 would emit a confident
+    // but wrong registration hash. An absent attribute uses NULL_SENTINEL.
+    let invalid =
+        |v: &str| KnxprodError::InvalidStructure(format!("unparseable {}: {v}", info.short));
     match (&info.attr_type, effective) {
         (_, None) => write_string(buf, NULL_SENTINEL),
         (AttrType::String, Some(v)) => write_string(buf, v),
@@ -112,20 +117,21 @@ fn write_attr(buf: &mut Vec<u8>, info: &AttrInfo, raw: Option<&str>) {
         (AttrType::Bool, Some(v)) => {
             write_bool(buf, v == "1" || v.eq_ignore_ascii_case("true"));
         }
-        (AttrType::UInt16, Some(v)) => write_u16(buf, v.parse().unwrap_or(0)),
-        (AttrType::UInt32, Some(v)) => write_u32(buf, v.parse().unwrap_or(0)),
+        (AttrType::UInt16, Some(v)) => write_u16(buf, v.parse().map_err(|_| invalid(v))?),
+        (AttrType::UInt32, Some(v)) => write_u32(buf, v.parse().map_err(|_| invalid(v))?),
         (AttrType::Int32, Some(v)) => {
-            let n: i32 = v.parse().unwrap_or(0);
+            let n: i32 = v.parse().map_err(|_| invalid(v))?;
             #[allow(clippy::cast_sign_loss)]
             write_u32(buf, n as u32);
         }
-        (AttrType::Int64, Some(v)) => write_i64(buf, v.parse().unwrap_or(0)),
-        (AttrType::Byte, Some(v)) => write_byte(buf, v.parse().unwrap_or(0)),
+        (AttrType::Int64, Some(v)) => write_i64(buf, v.parse().map_err(|_| invalid(v))?),
+        (AttrType::Byte, Some(v)) => write_byte(buf, v.parse().map_err(|_| invalid(v))?),
         (AttrType::Double, Some(v)) => {
-            let d: f64 = v.parse().unwrap_or(0.0);
+            let d: f64 = v.parse().map_err(|_| invalid(v))?;
             buf.extend_from_slice(&d.to_le_bytes());
         }
     }
+    Ok(())
 }
 
 fn normalize_appl_prog_id(id: &str) -> String {
@@ -144,7 +150,9 @@ fn normalize_appl_prog_id(id: &str) -> String {
                     // The fingerprint is 4 hex chars after this dash
                     let fp_start = a_pos + 3 + i; // position of '-' in original
                     let fp_end = fp_start + 5; // '-' + 4 hex chars
-                    if fp_end <= id.len() {
+                    // Guard the byte index against a multi-byte char boundary so
+                    // slicing cannot panic on non-ASCII input.
+                    if fp_end <= id.len() && id.is_char_boundary(fp_end) {
                         let mut result = String::with_capacity(id.len());
                         result.push_str(&id[..fp_start]);
                         result.push_str(&id[fp_end..]);
@@ -605,7 +613,7 @@ fn process_element(
     let mut order_is_relevant = false;
 
     if let Some((_, info)) = registry.get(name) {
-        let (attr_bytes, sort_val, is_ordered) = serialize_registry_attrs(info, start);
+        let (attr_bytes, sort_val, is_ordered) = serialize_registry_attrs(info, start)?;
         stream.extend_from_slice(&attr_bytes);
         order_is_relevant = is_ordered;
         // C# ParameterRefRefElementInfo.OrderIsRelevant returns false when
@@ -681,7 +689,7 @@ fn scan_for_inner_text(
                     continue;
                 }
                 if depth > 0 {
-                    write_collected_text(kind, &normalized, stream);
+                    write_collected_text(kind, &normalized, stream)?;
                     return Ok(depth);
                 }
                 return collect_remaining_text(reader, kind, normalized, stream);
@@ -693,7 +701,7 @@ fn scan_for_inner_text(
                     continue;
                 }
                 if depth > 0 {
-                    write_collected_text(kind, &normalized, stream);
+                    write_collected_text(kind, &normalized, stream)?;
                     return Ok(depth);
                 }
                 return collect_remaining_text(reader, kind, normalized, stream);
@@ -702,7 +710,7 @@ fn scan_for_inner_text(
                 let decoded = decode_entity(std::str::from_utf8(r.as_ref()).unwrap_or(""));
                 if !decoded.is_empty() {
                     if depth > 0 {
-                        write_collected_text(kind, decoded, stream);
+                        write_collected_text(kind, decoded, stream)?;
                         return Ok(depth);
                     }
                     return collect_remaining_text(reader, kind, String::from(decoded), stream);
@@ -737,7 +745,7 @@ fn collect_remaining_text(
                 text_buf.push_str(decode_entity(std::str::from_utf8(r.as_ref()).unwrap_or("")));
             }
             _ => {
-                write_collected_text(kind, &text_buf, stream);
+                write_collected_text(kind, &text_buf, stream)?;
                 return Ok(0);
             }
         }
@@ -756,14 +764,24 @@ fn decode_entity(entity: &str) -> &'static str {
 }
 
 /// Write collected inner text to stream.
-fn write_collected_text(kind: ElementKind, text: &str, stream: &mut Vec<u8>) {
+fn write_collected_text(
+    kind: ElementKind,
+    text: &str,
+    stream: &mut Vec<u8>,
+) -> Result<(), KnxprodError> {
     let trimmed = text.trim();
     if !trimmed.is_empty() {
         match kind {
             ElementKind::InnerTextBase64(_) => {
-                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(trimmed) {
-                    stream.extend_from_slice(&decoded);
-                }
+                // The Data/Mask program image is security-relevant: a corrupt
+                // base64 body must fail loudly (the C# reference throws), not
+                // contribute nothing to the hash.
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(trimmed)
+                    .map_err(|e| {
+                        KnxprodError::InvalidStructure(format!("invalid base64 inner text: {e}"))
+                    })?;
+                stream.extend_from_slice(&decoded);
             }
             ElementKind::InnerTextUInt32(_) | ElementKind::InnerTextString(_) => {
                 write_string(stream, text);
@@ -771,6 +789,7 @@ fn write_collected_text(kind: ElementKind, text: &str, stream: &mut Vec<u8>) {
             ElementKind::Attrs(_, _) => {}
         }
     }
+    Ok(())
 }
 
 /// Read children of the current element until `EndElement`.
@@ -825,7 +844,7 @@ fn read_children(
 fn serialize_registry_attrs(
     info: &ElementInfo,
     start: &quick_xml::events::BytesStart<'_>,
-) -> (Vec<u8>, Option<String>, bool) {
+) -> Result<(Vec<u8>, Option<String>, bool), KnxprodError> {
     match info.kind {
         ElementKind::Attrs(attrs, sort_attr_name) => {
             let mut attr_map: HashMap<Vec<u8>, String> = HashMap::new();
@@ -846,13 +865,13 @@ fn serialize_registry_attrs(
             let mut buf = Vec::new();
             for a in attrs {
                 let raw = attr_map.get(a.xml_name.as_bytes()).map(String::as_str);
-                write_attr(&mut buf, a, raw);
+                write_attr(&mut buf, a, raw)?;
             }
-            (buf, sort_key, info.ordered)
+            Ok((buf, sort_key, info.ordered))
         }
         ElementKind::InnerTextUInt32(tag)
         | ElementKind::InnerTextString(tag)
-        | ElementKind::InnerTextBase64(tag) => (vec![tag], None, false),
+        | ElementKind::InnerTextBase64(tag) => Ok((vec![tag], None, false)),
     }
 }
 

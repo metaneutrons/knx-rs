@@ -96,7 +96,7 @@ pub async fn discover_v6_with_timeout(
     duration: Duration,
 ) -> Result<Vec<GatewayInfo>, KnxIpError> {
     if !multicast.ip().is_multicast() {
-        return Err(KnxIpError::Protocol(format!(
+        return Err(KnxIpError::InvalidConfig(format!(
             "discovery target is not multicast: {multicast}"
         )));
     }
@@ -127,9 +127,7 @@ async fn discover_on(
         service_type: ServiceType::SearchRequest,
         body: hpai.to_bytes().to_vec(),
     };
-    let bytes = frame
-        .try_to_bytes()
-        .map_err(|e| KnxIpError::Protocol(e.to_string()))?;
+    let bytes = frame.try_to_bytes()?;
     socket.send_to(&bytes, target).await?;
 
     tracing::debug!("discovery search request sent");
@@ -161,6 +159,14 @@ async fn discover_on(
     Ok(gateways)
 }
 
+// DEVICE_INFO DIB field offsets (relative to the start of the DIB, which
+// follows the control HPAI). Layout: length(1) type(1) medium(1) status(1)
+// individual_addr(2) project_id(2) serial(6) multicast(4) mac(6) name(30).
+const DIB_IA_OFFSET: usize = 4;
+const DIB_NAME_OFFSET: usize = 22;
+const DIB_NAME_LEN: usize = 30;
+const MIN_SEARCH_RESPONSE_LEN: usize = Hpai::LEN as usize + DIB_NAME_OFFSET + DIB_NAME_LEN;
+
 /// Parse a search response into gateway info.
 fn parse_search_response(data: &[u8], src: SocketAddr) -> Option<GatewayInfo> {
     let frame = KnxIpFrame::parse(data).ok()?;
@@ -181,13 +187,11 @@ fn parse_search_response(data: &[u8], src: SocketAddr) -> Option<GatewayInfo> {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(hpai.ip), hpai.port))
     };
 
-    // Parse device info DIB (starts at offset 8)
-    let (name, individual_address) = if body.len() >= 62 {
+    // Parse the DEVICE_INFO DIB (starts after the control HPAI).
+    let (name, individual_address) = if body.len() >= MIN_SEARCH_RESPONSE_LEN {
         let dib = &body[usize::from(Hpai::LEN)..];
-        // DIB structure: length(1) + type(1) + medium(1) + status(1) + individual_addr(2) + ...
-        // + serial(6) + multicast(4) + mac(6) + name(30)
-        let ia = u16::from_be_bytes([dib[4], dib[5]]);
-        let name_bytes = &dib[22..52];
+        let ia = u16::from_be_bytes([dib[DIB_IA_OFFSET], dib[DIB_IA_OFFSET + 1]]);
+        let name_bytes = &dib[DIB_NAME_OFFSET..DIB_NAME_OFFSET + DIB_NAME_LEN];
         let name = core::str::from_utf8(name_bytes)
             .unwrap_or("")
             .trim_end_matches('\0')

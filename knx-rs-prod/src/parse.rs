@@ -3,8 +3,6 @@
 
 //! XML parsing and metadata extraction for KNX product XML files.
 
-use std::path::Path;
-
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 
@@ -19,16 +17,6 @@ pub struct KnxMetadata {
     pub manufacturer_id: String,
     /// The application program ID (e.g. `M-00FA_A-AD01-01-0000`).
     pub application_id: String,
-}
-
-/// Extract metadata from a KNX product XML file.
-///
-/// # Errors
-///
-/// Returns [`KnxprodError`] if the file cannot be read or required elements are missing.
-pub fn extract_metadata(path: &Path) -> Result<KnxMetadata, KnxprodError> {
-    let content = std::fs::read_to_string(path).map_err(|e| KnxprodError::io(path, e))?;
-    extract_metadata_from_str(&content)
 }
 
 /// Extract metadata from XML content.

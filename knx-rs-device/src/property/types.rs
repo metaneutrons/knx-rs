@@ -301,6 +301,20 @@ mod tests {
     }
 
     #[test]
+    fn property_id_try_from_roundtrips() {
+        // Drift guard: every value the hand-written TryFrom accepts must map back
+        // to a variant with the same discriminant, catching a mis-typed arm.
+        for v in 0..=u8::MAX {
+            if let Ok(pid) = PropertyId::try_from(v) {
+                assert_eq!(
+                    pid as u8, v,
+                    "PropertyId {v} maps to a different discriminant"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn load_state_from_u8_roundtrip() {
         assert_eq!(LoadState::from(0), LoadState::Unloaded);
         assert_eq!(LoadState::from(1), LoadState::Loaded);

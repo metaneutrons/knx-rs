@@ -166,8 +166,8 @@ fn val_i64(value: &DptValue) -> Result<i64, DptError> {
 pub fn decode(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
     match dpt.main {
         1 => decode_dpt1(payload),
-        2 => decode_dpt2(payload),
-        3 => decode_dpt3(payload),
+        2 => decode_masked(payload, DPT2_MASK),
+        3 => decode_masked(payload, DPT3_MASK),
         4 => decode_dpt4(payload),
         5 => decode_dpt5(dpt, payload),
         6 => decode_dpt6(payload),
@@ -180,7 +180,7 @@ pub fn decode(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
         13 | 27 => decode_dpt13(payload),
         14 => decode_dpt14(payload),
         15 => decode_dpt15(payload),
-        17 | 26 | 238 => decode_dpt17(payload),
+        17 | 26 | 238 => decode_masked(payload, DPT17_MASK),
         18 => decode_dpt18(payload),
         19 => decode_dpt19(payload),
         29 => decode_dpt29(payload),
@@ -197,8 +197,8 @@ pub fn decode(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
 pub fn encode(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
     match dpt.main {
         1 => encode_dpt1(value),
-        2 => encode_dpt2(value),
-        3 => encode_dpt3(value),
+        2 => encode_masked(value, DPT2_MASK),
+        3 => encode_masked(value, DPT3_MASK),
         4 => encode_dpt4(value),
         5 => encode_dpt5(dpt, value),
         6 => encode_dpt6(value),
@@ -211,7 +211,7 @@ pub fn encode(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
         13 | 27 => encode_dpt13(value),
         14 => encode_dpt14(value),
         15 => encode_dpt15(value),
-        17 | 26 | 238 => encode_dpt17(value),
+        17 | 26 | 238 => encode_masked(value, DPT17_MASK),
         18 => encode_dpt18(value),
         19 => encode_dpt19(value),
         29 => encode_dpt29(value),
@@ -236,28 +236,25 @@ fn encode_dpt1(value: &DptValue) -> Result<Vec<u8>, DptError> {
     Ok(alloc::vec![u8::from(val_bool(value)?)])
 }
 
-// ── DPT 2: 1-bit controlled (2 bits) ─────────────────────────
+// ── Masked 1-byte unsigned DPTs (2, 3, 17) ───────────────────
 
-fn decode_dpt2(payload: &[u8]) -> Result<DptValue, DptError> {
+/// DPT 2 (1-bit controlled): 2 significant bits.
+const DPT2_MASK: u8 = 0x03;
+/// DPT 3 (3-bit controlled): 4 significant bits.
+const DPT3_MASK: u8 = 0x0F;
+/// DPT 17 (scene number): 6 significant bits (0–63).
+const DPT17_MASK: u8 = 0x3F;
+
+/// Decode a single byte masked to `mask` significant bits as a `UInt`.
+fn decode_masked(payload: &[u8], mask: u8) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
-    Ok(DptValue::UInt(u32::from(payload[0] & 0x03)))
+    Ok(DptValue::UInt(u32::from(payload[0] & mask)))
 }
 
-fn encode_dpt2(value: &DptValue) -> Result<Vec<u8>, DptError> {
+/// Encode a `UInt` into a single byte masked to `mask` significant bits.
+fn encode_masked(value: &DptValue, mask: u8) -> Result<Vec<u8>, DptError> {
     let v = val_u32(value)?;
-    Ok(alloc::vec![low_u8(v & 0x03)])
-}
-
-// ── DPT 3: 3-bit controlled (4 bits) ─────────────────────────
-
-fn decode_dpt3(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 1)?;
-    Ok(DptValue::UInt(u32::from(payload[0] & 0x0F)))
-}
-
-fn encode_dpt3(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    let v = val_u32(value)?;
-    Ok(alloc::vec![low_u8(v & 0x0F)])
+    Ok(alloc::vec![low_u8(v & u32::from(mask))])
 }
 
 // ── DPT 4: Character (1 byte) ────────────────────────────────
@@ -273,6 +270,12 @@ fn encode_dpt4(value: &DptValue) -> Result<Vec<u8>, DptError> {
 }
 
 // ── DPT 5: Unsigned 8-bit (1 byte) ───────────────────────────
+//
+// The decoded variant depends on the sub-type: 5.001 (scaling, 0–100%) and
+// 5.003 (angle, 0–360°) are physically continuous and decode to `Float`; all
+// other sub-types (e.g. 5.010 raw count) decode to `UInt`. The scaled
+// sub-types map u8 0..=255 onto the range, so round-trips are quantized to
+// 1/255 of full scale.
 
 fn decode_dpt5(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
@@ -504,18 +507,6 @@ fn encode_dpt15(value: &DptValue) -> Result<Vec<u8>, DptError> {
         }
     }
     Ok(buf.to_vec())
-}
-
-// ── DPT 17: Scene number (1 byte, 0–63) ──────────────────────
-
-fn decode_dpt17(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 1)?;
-    Ok(DptValue::UInt(u32::from(payload[0] & 0x3F)))
-}
-
-fn encode_dpt17(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    let v = val_u32(value)?;
-    Ok(alloc::vec![low_u8(v & 0x3F)])
 }
 
 // ── DPT 18: Scene control (1 byte) ───────────────────────────

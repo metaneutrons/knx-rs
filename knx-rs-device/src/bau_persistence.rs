@@ -5,7 +5,7 @@
 
 use alloc::vec::Vec;
 
-use crate::bau::Bau;
+use crate::bau::{Bau, OBJ_APP_PROGRAM};
 use crate::property::PropertyId;
 use crate::table_object::TableObject;
 
@@ -53,9 +53,9 @@ pub fn save_bau_state(bau: &Bau) -> Vec<u8> {
     bau.assoc_table_object.save(&mut buf);
     bau.app_program_object.save(&mut buf);
 
-    // Program version (5 bytes) from application program object (index 3)
+    // Program version (5 bytes) from the application program object
     let mut ver = Vec::new();
-    if let Some(obj) = bau.object(3) {
+    if let Some(obj) = bau.object(OBJ_APP_PROGRAM) {
         obj.read_property(PropertyId::ProgramVersion, 1, 1, &mut ver);
     }
     ver.resize(PROGRAM_VERSION_SIZE, 0);
@@ -105,7 +105,7 @@ pub fn restore_bau_state(bau: &mut Bau, data: &[u8]) -> Result<(), PersistenceEr
     if offset + PROGRAM_VERSION_SIZE > data.len() {
         return Err(PersistenceError::TruncatedData);
     }
-    if let Some(obj) = bau.object_mut(3) {
+    if let Some(obj) = bau.object_mut(OBJ_APP_PROGRAM) {
         obj.write_property(
             PropertyId::ProgramVersion,
             1,

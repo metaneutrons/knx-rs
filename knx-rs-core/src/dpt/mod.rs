@@ -50,6 +50,9 @@ impl Dpt {
     }
 
     /// Wire data length in bytes for this DPT's main group.
+    ///
+    /// Falls back to `1` for variable-length and unrecognised main groups; use
+    /// [`Dpt::wire_len`] to distinguish a genuine 1-byte DPT from that fallback.
     pub const fn data_length(self) -> u8 {
         match self.main {
             7 | 8 | 9 | 22 | 207 | 217 | 234 | 237 | 239 | 244 | 246 => 2,
@@ -61,6 +64,29 @@ impl Dpt {
             16 => 14,
             285 => 16,
             _ => 1,
+        }
+    }
+
+    /// Whether this DPT's main group has a variable wire length.
+    ///
+    /// DPT 28 (Unicode string) is null-terminated and has no fixed size.
+    #[must_use]
+    pub const fn is_variable_length(self) -> bool {
+        matches!(self.main, 28)
+    }
+
+    /// The fixed wire length in bytes, or `None` for variable-length DPTs.
+    ///
+    /// Unlike [`Dpt::data_length`], this is the single source of truth for
+    /// "does this DPT have a fixed size", so callers (e.g. group-object buffer
+    /// sizing) can treat variable-length DPTs explicitly instead of silently
+    /// allocating a 1-byte buffer.
+    #[must_use]
+    pub const fn wire_len(self) -> Option<u8> {
+        if self.is_variable_length() {
+            None
+        } else {
+            Some(self.data_length())
         }
     }
 }
@@ -375,3 +401,44 @@ pub const DPT_ACTIVE_ENERGY_V64: Dpt = Dpt::new(29, 10);
 pub const DPT_COLOUR_RGB: Dpt = Dpt::new(232, 600);
 /// DPT 251.600 — RGBW colour.
 pub const DPT_COLOUR_RGBW: Dpt = Dpt::new(251, 600);
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_length_matches_wire_len() {
+        // Guards against drift between Dpt::wire_len and the codec dispatch:
+        // for every fixed-length DPT, encode() must produce wire_len() bytes.
+        let cases: &[(Dpt, DptValue)] = &[
+            (DPT_SWITCH, DptValue::Bool(true)),
+            (DPT_SCALING, DptValue::Float(50.0)),
+            (DPT_VALUE_1_UCOUNT, DptValue::UInt(42)),
+            (DPT_VALUE_2_UCOUNT, DptValue::UInt(1000)),
+            (DPT_VALUE_2_COUNT, DptValue::Int(-1000)),
+            (DPT_VALUE_TEMP, DptValue::Float(21.5)),
+            (DPT_VALUE_4_UCOUNT, DptValue::UInt(100_000)),
+            (DPT_VALUE_4_COUNT, DptValue::Int(-5)),
+            (DPT_VALUE_POWER, DptValue::Float(1234.0)),
+            (DPT_SCENE_NUMBER, DptValue::UInt(5)),
+            (DPT_STRING_ASCII, DptValue::Text("hi".into())),
+        ];
+        for (dpt, value) in cases {
+            let expected = dpt.wire_len().expect("fixed-length DPT");
+            let encoded = encode(*dpt, value).expect("encode");
+            assert_eq!(
+                encoded.len(),
+                usize::from(expected),
+                "wire_len/codec length mismatch for DPT {dpt}"
+            );
+        }
+    }
+
+    #[test]
+    fn variable_length_dpt_has_no_wire_len() {
+        let dpt28 = Dpt::new(28, 1);
+        assert!(dpt28.is_variable_length());
+        assert_eq!(dpt28.wire_len(), None);
+    }
+}

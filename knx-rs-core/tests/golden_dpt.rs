@@ -105,8 +105,13 @@ fn dpt_encode_matches_cpp() {
                 }
                 passed += 1;
             }
-            Err(_) => {
-                skipped += 1;
+            Err(e) => {
+                // Vectors flagged error / empty / negative / bytes-DPT are
+                // skipped above, so a failure here is a real regression.
+                panic!(
+                    "DPT {dpt_id} encode unexpectedly failed for input {}: {e:?}",
+                    v.input
+                );
             }
         }
     }
@@ -166,8 +171,13 @@ fn dpt_decode_from_cpp_bytes() {
                 }
                 passed += 1;
             }
-            Err(_) => {
-                skipped += 1;
+            Err(e) => {
+                // Vectors flagged error / empty are skipped above, so a failure
+                // here is a real regression.
+                panic!(
+                    "DPT {dpt_id} decode unexpectedly failed for {:?}: {e:?}",
+                    v.bytes
+                );
             }
         }
     }

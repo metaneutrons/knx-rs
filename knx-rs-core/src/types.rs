@@ -118,6 +118,32 @@ pub enum DptMedium {
     Ip = 0x05,
 }
 
+// ── Control-field bit layout ─────────────────────────────────
+//
+// Single source of truth for the cEMI control-field masks, shared by the
+// `TryFrom` decoders below and the `CemiFrame` getters/setters.
+
+/// Control field 1: frame-format bit (set = standard).
+pub(crate) const CTRL1_FRAME_FORMAT_MASK: u8 = 0x80;
+/// Control field 1: repetition bit.
+pub(crate) const CTRL1_REPETITION_MASK: u8 = 0x20;
+/// Control field 1: system-broadcast bit.
+pub(crate) const CTRL1_SYSTEM_BROADCAST_MASK: u8 = 0x10;
+/// Control field 1: 2-bit priority field.
+pub(crate) const CTRL1_PRIORITY_MASK: u8 = 0x0C;
+/// Control field 1: acknowledge-request bit.
+pub(crate) const CTRL1_ACK_MASK: u8 = 0x02;
+/// Control field 1: confirm/error bit.
+pub(crate) const CTRL1_CONFIRM_MASK: u8 = 0x01;
+/// Control field 2: address-type bit (set = group).
+pub(crate) const CTRL2_ADDRESS_TYPE_MASK: u8 = 0x80;
+/// Control field 2: hop-count field (bits 6..4).
+pub(crate) const CTRL2_HOP_COUNT_MASK: u8 = 0x70;
+/// Control field 2: hop-count field shift.
+pub(crate) const CTRL2_HOP_COUNT_SHIFT: u8 = 4;
+/// Hop-count value range mask (after shifting).
+pub(crate) const HOP_COUNT_VALUE_MASK: u8 = 0x07;
+
 // ── TryFrom implementations ──────────────────────────────────
 
 /// Error for invalid wire values.
@@ -135,7 +161,7 @@ impl core::error::Error for InvalidWireValue {}
 impl TryFrom<u8> for Priority {
     type Error = InvalidWireValue;
     fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v & 0x0C {
+        match v & CTRL1_PRIORITY_MASK {
             0x00 => Ok(Self::System),
             0x04 => Ok(Self::Normal),
             0x08 => Ok(Self::Urgent),
@@ -148,7 +174,7 @@ impl TryFrom<u8> for Priority {
 impl TryFrom<u8> for FrameFormat {
     type Error = InvalidWireValue;
     fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v & 0x80 {
+        match v & CTRL1_FRAME_FORMAT_MASK {
             0x00 => Ok(Self::Extended),
             0x80 => Ok(Self::Standard),
             _ => Err(InvalidWireValue),
@@ -159,7 +185,7 @@ impl TryFrom<u8> for FrameFormat {
 impl TryFrom<u8> for AddressType {
     type Error = InvalidWireValue;
     fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v & 0x80 {
+        match v & CTRL2_ADDRESS_TYPE_MASK {
             0x00 => Ok(Self::Individual),
             0x80 => Ok(Self::Group),
             _ => Err(InvalidWireValue),

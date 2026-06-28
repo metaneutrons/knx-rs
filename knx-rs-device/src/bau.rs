@@ -30,13 +30,17 @@ use crate::transport_layer::TransportLayer;
 pub const MASK_VERSION_IP: u16 = 0x57B0;
 
 // ── Standard interface object indices (KNX spec) ─────────────
+//
+// Derived from the ObjectType discriminants so the index↔object mapping has a
+// single source of truth (the constructor builds objects in this order).
 
 /// Object index for the address table object.
-const OBJ_ADDR_TABLE: u8 = 1;
+const OBJ_ADDR_TABLE: u8 = crate::interface_object::ObjectType::AddressTable as u8;
 /// Object index for the association table object.
-const OBJ_ASSOC_TABLE: u8 = 2;
+const OBJ_ASSOC_TABLE: u8 = crate::interface_object::ObjectType::AssociationTable as u8;
 /// Object index for the application program object (first user object).
-const OBJ_APP_PROGRAM: u8 = 3;
+pub(crate) const OBJ_APP_PROGRAM: u8 =
+    crate::interface_object::ObjectType::ApplicationProgram as u8;
 
 // ── KNX restart erase codes (KNX 3/5/2) ─────────────────────
 
@@ -220,7 +224,9 @@ impl Bau {
         match object_index {
             OBJ_ADDR_TABLE => Some(&self.addr_table_object),
             OBJ_ASSOC_TABLE => Some(&self.assoc_table_object),
-            _ if object_index >= OBJ_APP_PROGRAM => Some(&self.app_program_object),
+            // Exactly the application-program object; user objects added at
+            // higher indices have no shared table.
+            OBJ_APP_PROGRAM => Some(&self.app_program_object),
             _ => None,
         }
     }
@@ -230,7 +236,7 @@ impl Bau {
         match object_index {
             OBJ_ADDR_TABLE => Some(&mut self.addr_table_object),
             OBJ_ASSOC_TABLE => Some(&mut self.assoc_table_object),
-            _ if object_index >= OBJ_APP_PROGRAM => Some(&mut self.app_program_object),
+            OBJ_APP_PROGRAM => Some(&mut self.app_program_object),
             _ => None,
         }
     }
@@ -575,8 +581,15 @@ impl Bau {
                 object_index,
                 property_id,
                 data: _,
+            } => {
+                // No interface-object function-property handler is implemented
+                // yet: the command is acknowledged with an empty state response
+                // and its data is intentionally not acted upon. Kept separate
+                // from FunctionPropertyState so a real command handler can be
+                // added here without touching the state-read path.
+                self.queue_function_property_state_response(source, object_index, property_id, &[]);
             }
-            | AppIndication::FunctionPropertyState {
+            AppIndication::FunctionPropertyState {
                 object_index,
                 property_id,
                 data: _,
@@ -620,30 +633,32 @@ impl Bau {
             let Some(go) = self.group_objects.get(asap) else {
                 break;
             };
-            let flag = go.comm_flag();
-            match flag {
-                ComFlag::WriteRequest => {
-                    let data = go.value_ref().to_vec();
-                    if let Some(tsap) = self.association_table.translate_asap(asap) {
-                        if let Some(ga) = self.address_table.get_group_address(tsap) {
-                            self.queue_group_value_write(ga, &data);
-                            if let Some(go) = self.group_objects.get_mut(asap) {
-                                go.set_comm_flag(ComFlag::Transmitting);
-                            }
-                        }
-                    }
-                }
-                ComFlag::ReadRequest => {
-                    if let Some(tsap) = self.association_table.translate_asap(asap) {
-                        if let Some(ga) = self.address_table.get_group_address(tsap) {
-                            self.queue_group_value_read(ga);
-                            if let Some(go) = self.group_objects.get_mut(asap) {
-                                go.set_comm_flag(ComFlag::Transmitting);
-                            }
-                        }
-                    }
-                }
+            // Snapshot the request; the immutable borrow ends with this clone.
+            let write_data = match go.comm_flag() {
+                ComFlag::WriteRequest => Some(go.value_ref().to_vec()),
+                ComFlag::ReadRequest => None,
                 _ => break,
+            };
+
+            // Resolve the destination group address for this ASAP.
+            let ga = self
+                .association_table
+                .translate_asap(asap)
+                .and_then(|tsap| self.address_table.get_group_address(tsap));
+
+            // The flag MUST always advance out of the pending state, otherwise
+            // next_pending() reselects the same ASAP and poll() spins forever.
+            // An unmapped ASAP transitions to Error rather than hanging.
+            let new_flag = ga.map_or(ComFlag::Error, |ga| {
+                match &write_data {
+                    Some(data) => self.queue_group_value_write(ga, data),
+                    None => self.queue_group_value_read(ga),
+                }
+                ComFlag::Transmitting
+            });
+
+            if let Some(go) = self.group_objects.get_mut(asap) {
+                go.set_comm_flag(new_flag);
             }
         }
     }
@@ -951,15 +966,19 @@ impl Bau {
         self.handle_property_read(source, object_index, property_id, count, start_index);
     }
 
+    /// Read `len` bytes at `addr` from the memory area, or `None` if out of
+    /// range. Uses checked arithmetic so an attacker-influenced `addr + len`
+    /// (e.g. a 32-bit extended-memory address) cannot wrap and bypass the bound.
+    fn mem_slice(&self, addr: usize, len: usize) -> Option<&[u8]> {
+        let end = addr.checked_add(len)?;
+        self.memory_area.get(addr..end)
+    }
+
     fn handle_memory_read(&mut self, source: IndividualAddress, count: u8, address: u16) {
-        let addr = address as usize;
-        let len = count as usize;
         // Always send response — empty data on out-of-bounds (C++ ref behavior)
-        let data = if addr + len <= self.memory_area.len() {
-            self.memory_area[addr..addr + len].to_vec()
-        } else {
-            Vec::new()
-        };
+        let data = self
+            .mem_slice(address as usize, count as usize)
+            .map_or_else(Vec::new, <[u8]>::to_vec);
         self.queue_memory_response(source, address, &data);
     }
 
@@ -1051,16 +1070,12 @@ impl Bau {
     }
 
     fn handle_memory_ext_read(&mut self, source: IndividualAddress, count: u8, address: u32) {
-        let addr = address as usize;
-        let len = count as usize;
-        let (return_code, data) = if addr + len <= self.memory_area.len() {
-            (
-                MEM_EXT_RETURN_OK,
-                self.memory_area[addr..addr + len].to_vec(),
-            )
-        } else {
-            (MEM_EXT_RETURN_ERROR, Vec::new()) // out of range
-        };
+        let (return_code, data) = self
+            .mem_slice(address as usize, count as usize)
+            .map_or_else(
+                || (MEM_EXT_RETURN_ERROR, Vec::new()), // out of range
+                |slice| (MEM_EXT_RETURN_OK, slice.to_vec()),
+            );
         let payload =
             application_layer::encode_memory_ext_read_response(return_code, address, &data);
         self.queue_individual_frame(source, Priority::System, &payload);

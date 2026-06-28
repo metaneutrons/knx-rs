@@ -26,12 +26,14 @@ const fn check_len(data: &[u8], expected: usize) -> Result<(), AppLayerError> {
 /// Returns `AppLayerError::MalformedData` if the bytes are too short or the APCI is unrecognized.
 /// Propagates errors from [`parse_indication`].
 pub fn parse_raw_apdu(data: &[u8]) -> Result<AppIndication, AppLayerError> {
-    if data.len() < 2 {
-        return Err(AppLayerError::MalformedData);
-    }
-    let apci_raw = u16::from(data[0]) << 8 | u16::from(data[1]);
-    let apdu_type = ApduType::from_raw(apci_raw).ok_or(AppLayerError::MalformedData)?;
-    parse_indication(apdu_type, &data[1..])
+    // Decode via the core APDU parser so the data handed to parse_indication is
+    // the stripped payload (short value extracted, APCI header removed) — the
+    // same representation the live path produces, avoiding a leading-APCI-byte
+    // mismatch between the two entry points.
+    let npdu_length = u8::try_from(data.len().saturating_sub(1)).unwrap_or(u8::MAX);
+    let apdu =
+        knx_rs_core::apdu::Apdu::parse(data, npdu_length).ok_or(AppLayerError::MalformedData)?;
+    parse_indication(apdu.apdu_type, &apdu.data)
 }
 
 /// Parse an APDU type + data into an `AppIndication`.
@@ -246,10 +248,12 @@ fn parse_system_network_parameter_read(data: &[u8]) -> Result<AppIndication, App
     check_len(data, 4)?;
     let object_type = u16::from_be_bytes([data[0], data[1]]);
     let pid_raw = u16::from_be_bytes([data[2], data[3]]);
+    // Layout: object_type(2) + property_id<<4 (2) + test_info; the PID word
+    // occupies data[2..4], so test_info begins at offset 4.
     Ok(AppIndication::SystemNetworkParameterRead {
         object_type,
         property_id: pid_raw >> 4,
-        test_info: data[3..].to_vec(),
+        test_info: data[4..].to_vec(),
     })
 }
 
@@ -711,12 +715,11 @@ mod tests {
     #[test]
     fn roundtrip_group_value_write() {
         let encoded = encode_group_value_write(&[0xAA, 0xBB]);
-        // parse_raw_apdu strips byte 0, passes &data[1..] to parse_indication
-        // parse_group_value_write keeps the APCI low byte + trailing data
+        // parse_raw_apdu decodes via the core APDU parser, so the payload is
+        // stripped of the APCI header — identical to the live path.
         let parsed = parse_raw_apdu(&encoded).unwrap();
         if let AppIndication::GroupValueWrite { data, .. } = parsed {
-            // data[0] is APCI low byte (0x80), then payload
-            assert_eq!(&data[1..], &[0xAA, 0xBB]);
+            assert_eq!(data, &[0xAA, 0xBB]);
         } else {
             panic!("expected GroupValueWrite");
         }
@@ -1015,9 +1018,10 @@ mod tests {
 
     #[test]
     fn parse_system_network_parameter_read() {
+        // object_type(2)=0x0007, pid<<4 (2)=0x0110 (PID 0x11), test_info=[0xAB,0xCD]
         let ind = parse_indication(
             ApduType::SystemNetworkParameterRead,
-            &[0x00, 0x07, 0x01, 0x10],
+            &[0x00, 0x07, 0x01, 0x10, 0xAB, 0xCD],
         )
         .unwrap();
         assert!(matches!(
@@ -1029,7 +1033,7 @@ mod tests {
             }
         ));
         if let AppIndication::SystemNetworkParameterRead { test_info, .. } = ind {
-            assert_eq!(test_info, &[0x10]);
+            assert_eq!(test_info, &[0xAB, 0xCD]);
         }
     }
 

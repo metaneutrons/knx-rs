@@ -18,6 +18,7 @@ knx-rs-core.workspace = true
 tokio = { workspace = true, features = ["net", "time", "sync", "macros", "rt"] }
 tracing.workspace = true
 thiserror.workspace = true
+socket2.workspace = true
 
 [dev-dependencies]
 knx-rs-device.workspace = true
