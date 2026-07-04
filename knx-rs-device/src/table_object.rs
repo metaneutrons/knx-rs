@@ -81,6 +81,22 @@ impl TableObject {
         }
     }
 
+    /// Create a table object that is already `Loaded` with no memory segment.
+    ///
+    /// Used for logical-only tables — e.g. a compiled-in group-object table that
+    /// ETS never downloads. The table lives in firmware, so there is no memory
+    /// segment (`data_size == 0`), but the object must report `LoadState::Loaded`
+    /// (the C++ reference reports its group-object table Loaded without a
+    /// download; see `bau_systemB_device.cpp`).
+    pub const fn new_loaded() -> Self {
+        Self {
+            state: LoadState::Loaded,
+            error: LoadError::NoFault,
+            data_offset: 0,
+            data_size: 0,
+        }
+    }
+
     /// Reset data offset and size to zero.
     const fn reset_data(&mut self) {
         self.data_offset = 0;

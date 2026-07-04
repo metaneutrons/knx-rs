@@ -34,13 +34,22 @@ pub const MASK_VERSION_IP: u16 = 0x57B0;
 // Derived from the ObjectType discriminants so the index↔object mapping has a
 // single source of truth (the constructor builds objects in this order).
 
+// Physical interface-object INDICES for the System B object layout
+// (0=Device, 1=AddrTable, 2=AssocTable, 3=GroupObjTable/OT9, 4=AppProgram). ETS
+// addresses interface objects by position, so these are the vec/`table_object`
+// indices — NOT ObjectType discriminants. They coincide for addr/assoc (index ==
+// OT), but the OT9 group-object table sits at index 3 ahead of the application
+// program (OT3), pushing the app program to index 4 where ETS/`.knxprod` address it.
+
 /// Object index for the address table object.
-const OBJ_ADDR_TABLE: u8 = crate::interface_object::ObjectType::AddressTable as u8;
+const OBJ_ADDR_TABLE: u8 = 1;
 /// Object index for the association table object.
-const OBJ_ASSOC_TABLE: u8 = crate::interface_object::ObjectType::AssociationTable as u8;
-/// Object index for the application program object (first user object).
-pub(crate) const OBJ_APP_PROGRAM: u8 =
-    crate::interface_object::ObjectType::ApplicationProgram as u8;
+const OBJ_ASSOC_TABLE: u8 = 2;
+/// Object index for the group object table object (`ObjectType` 9).
+const OBJ_GROUP_OBJ_TABLE: u8 = 3;
+/// Object index for the application program object. Index 4 (NOT the OT3
+/// discriminant): ETS and the `.knxprod` `LdCtrl*` ops address it as `ObjIdx="4"`.
+pub(crate) const OBJ_APP_PROGRAM: u8 = 4;
 
 // ── KNX restart erase codes (KNX 3/5/2) ─────────────────────
 
@@ -95,7 +104,11 @@ pub struct Bau {
     pub(crate) assoc_table_object: TableObject,
     /// Application program table object (Load State Machine for ETS programming).
     pub(crate) app_program_object: TableObject,
-    /// Group object table.
+    /// Group object table object (OT9 Load State Machine). For a compiled-in
+    /// (logical-only) group-object table this stays `Loaded`; it exists so ETS
+    /// sees an OT9 object at index 3, keeping the app program at index 4.
+    pub(crate) group_object_table_object: TableObject,
+    /// Group object table (logical descriptor data, compiled into firmware).
     pub(crate) group_object_table: GroupObjectTable,
     /// Group objects.
     pub(crate) group_objects: GroupObjectStore,
@@ -114,20 +127,33 @@ impl Bau {
     /// can be added with `add_object()`.
     pub fn new(device: InterfaceObject, group_object_count: u16, default_go_size: usize) -> Self {
         use crate::application_program::new_application_program_object;
+        use crate::group_object_table::new_group_object_table_object;
         use crate::interface_object::ObjectType;
 
-        // Standard object layout: 0=Device, 1=AddrTable, 2=AssocTable, 3=AppProgram
+        // System B object layout: 0=Device, 1=AddrTable, 2=AssocTable,
+        // 3=GroupObjTable (OT9), 4=AppProgram. The OT9 object at index 3 keeps
+        // the application program at index 4, where ETS/`.knxprod` address it.
         let addr_table_obj = InterfaceObject::new(ObjectType::AddressTable);
         let assoc_table_obj = InterfaceObject::new(ObjectType::AssociationTable);
+        let group_obj_table_obj = new_group_object_table_object();
         let app_program_obj = new_application_program_object();
 
         Self {
-            objects: vec![device, addr_table_obj, assoc_table_obj, app_program_obj],
+            objects: vec![
+                device,
+                addr_table_obj,
+                assoc_table_obj,
+                group_obj_table_obj,
+                app_program_obj,
+            ],
             address_table: AddressTable::new(),
             association_table: AssociationTable::new(),
             addr_table_object: TableObject::new(),
             assoc_table_object: TableObject::new(),
             app_program_object: TableObject::new(),
+            // Logical-only group-object table: compiled into firmware, never
+            // downloaded, so its load-state machine reports Loaded from the start.
+            group_object_table_object: TableObject::new_loaded(),
             group_object_table: GroupObjectTable::new(),
             group_objects: GroupObjectStore::new(group_object_count, default_go_size),
             transport: TransportLayer::new(),
@@ -224,6 +250,7 @@ impl Bau {
         match object_index {
             OBJ_ADDR_TABLE => Some(&self.addr_table_object),
             OBJ_ASSOC_TABLE => Some(&self.assoc_table_object),
+            OBJ_GROUP_OBJ_TABLE => Some(&self.group_object_table_object),
             // Exactly the application-program object; user objects added at
             // higher indices have no shared table.
             OBJ_APP_PROGRAM => Some(&self.app_program_object),
@@ -236,6 +263,7 @@ impl Bau {
         match object_index {
             OBJ_ADDR_TABLE => Some(&mut self.addr_table_object),
             OBJ_ASSOC_TABLE => Some(&mut self.assoc_table_object),
+            OBJ_GROUP_OBJ_TABLE => Some(&mut self.group_object_table_object),
             OBJ_APP_PROGRAM => Some(&mut self.app_program_object),
             _ => None,
         }
@@ -2429,6 +2457,106 @@ mod tests {
             &bau.memory_area[6..16],
             &[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02]
         );
+    }
+
+    #[test]
+    fn system_b_object_layout_ot9_at_index_3_app_program_at_index_4() {
+        // System B interface-object order: 0=Device,1=Addr,2=Assoc,3=OT9,4=App.
+        let bau = test_bau();
+
+        let mut ot = Vec::new();
+        bau.object(OBJ_GROUP_OBJ_TABLE).unwrap().read_property(
+            PropertyId::ObjectType,
+            1,
+            1,
+            &mut ot,
+        );
+        assert_eq!(
+            ot,
+            &[0x00, 0x09],
+            "index 3 must be the OT9 group object table"
+        );
+        // Its load-state machine is logically Loaded (the table is compiled in).
+        assert_eq!(
+            bau.group_object_table_object.load_state(),
+            LoadState::Loaded,
+            "logical-only GO table must report Loaded without a download"
+        );
+        // The LoadStateControl read-back (served via the table-property intercept)
+        // must also report Loaded so an ETS verify of OT9 succeeds.
+        assert_eq!(
+            bau.try_intercept_table_property(OBJ_GROUP_OBJ_TABLE, PropertyId::LoadStateControl, 1),
+            Some(alloc::vec![LoadState::Loaded as u8])
+        );
+
+        let mut app_ot = Vec::new();
+        bau.object(OBJ_APP_PROGRAM).unwrap().read_property(
+            PropertyId::ObjectType,
+            1,
+            1,
+            &mut app_ot,
+        );
+        assert_eq!(
+            app_ot,
+            &[0x00, 0x03],
+            "index 4 must be the OT3 application program"
+        );
+    }
+
+    #[test]
+    fn frame_driven_app_program_download_targets_object_index_4() {
+        // snapdog's own .knxprod addresses the application program at ObjIdx="4"
+        // (LdCtrlRelSegment LsmIdx=4 / LdCtrlWriteRelMem ObjIdx=4 /
+        // LdCtrlLoadImageProp ObjIdx=4 PropId=27). With OT9 absent the app program
+        // sat at index 3 and object index 4 was None, so ETS's load-state writes to
+        // ObjIdx 4 were silently dropped and the program never loaded — a
+        // self-inflicted download blocker. This drives that exact recipe.
+        const ETS: u16 = 0xFFB1;
+        const DEV: u16 = 0x1101;
+        const LSC: u8 = PropertyId::LoadStateControl as u8;
+
+        let mut bau = test_bau();
+        let send = |bau: &mut Bau, apdu: &[u8]| {
+            let frame = CemiFrame::parse(&ind_frame(ETS, DEV, apdu)).unwrap();
+            bau.process_frame(&frame, 0);
+        };
+
+        assert_eq!(
+            OBJ_APP_PROGRAM, 4,
+            "ETS addresses the app program at index 4"
+        );
+        assert_eq!(bau.app_program_object.load_state(), LoadState::Unloaded);
+        // The read target for LdCtrlLoadImageProp ObjIdx=4 must exist.
+        assert!(
+            bau.object(OBJ_APP_PROGRAM).is_some(),
+            "object index 4 must exist for the ETS MCB verify"
+        );
+
+        // StartLoading → relative-segment alloc (4 bytes) → param write → LoadCompleted.
+        send(&mut bau, &prop_write_apdu(OBJ_APP_PROGRAM, LSC, 1, 1, &[1]));
+        send(
+            &mut bau,
+            &prop_write_apdu(
+                OBJ_APP_PROGRAM,
+                LSC,
+                1,
+                1,
+                &[0x03, 0x0B, 0x00, 0x00, 0x00, 0x04, 0x01, 0x00],
+            ),
+        );
+        send(
+            &mut bau,
+            &mem_write_apdu(4, 0x0000, &[0xDE, 0xAD, 0xBE, 0xEF]),
+        );
+        send(&mut bau, &prop_write_apdu(OBJ_APP_PROGRAM, LSC, 1, 1, &[2]));
+
+        // Without the index fix this stays Unloaded (index 4 was None → dropped).
+        assert_eq!(
+            bau.app_program_object.load_state(),
+            LoadState::Loaded,
+            "app program at index 4 must load via the ETS ObjIdx=4 procedure"
+        );
+        assert_eq!(&bau.memory_area[0..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
     }
 
     #[test]
