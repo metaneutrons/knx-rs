@@ -53,10 +53,24 @@ pub(crate) const OBJ_APP_PROGRAM: u8 = 4;
 
 // ── KNX restart erase codes (KNX 3/5/2) ─────────────────────
 
-/// Erase code: confirmed restart (reset table objects).
-const ERASE_CONFIRMED_RESTART: u8 = 1;
-/// Erase code range: factory reset upper bound.
-const ERASE_FACTORY_RESET_MAX: u8 = 4;
+// KNX master-reset erase codes (KNX 3/5/2, EraseCode enum). Non-contiguous —
+// FactoryReset is 0x02, not the top of a 1..4 range.
+/// Confirmed restart: restart only, no data reset.
+const ERASE_CONFIRMED_RESTART: u8 = 0x01;
+/// Factory reset: full reset including the individual address.
+const ERASE_FACTORY_RESET: u8 = 0x02;
+/// Reset the individual address to the unprogrammed default.
+const ERASE_RESET_IA: u8 = 0x03;
+/// Reset the application program.
+const ERASE_RESET_AP: u8 = 0x04;
+/// Reset parameters.
+const ERASE_RESET_PARAM: u8 = 0x05;
+/// Reset group links (address + association tables).
+const ERASE_RESET_LINKS: u8 = 0x06;
+/// Factory reset keeping the individual address.
+const ERASE_FACTORY_RESET_WITHOUT_IA: u8 = 0x07;
+/// Unprogrammed default individual address (15.15.255).
+const DEFAULT_INDIVIDUAL_ADDRESS: u16 = 0xFFFF;
 
 // ── KNX system network parameter constants ───────────────────
 
@@ -68,8 +82,12 @@ const OBJECT_TYPE_DEVICE: u16 = 0;
 const DOMAIN_ADDRESS_IP: u16 = 0;
 /// Restart response: no error.
 const RESTART_ERROR_CODE_OK: u8 = 0;
-/// Restart response: zero process time.
+/// Restart response: unsupported erase code (KNX ref `invalidEraseCode`).
+const RESTART_ERROR_CODE_UNSUPPORTED: u8 = 0x02;
+/// Restart response: zero process time (used on error).
 const RESTART_PROCESS_TIME_ZERO: u16 = 0;
+/// Restart response: default process time in seconds (KNX ref `kRestartProcessTime`).
+const RESTART_PROCESS_TIME_DEFAULT: u16 = 3;
 /// Default ADC value (no ADC hardware).
 const ADC_VALUE_DEFAULT: u16 = 0;
 /// Authorization level: full access (no restrictions).
@@ -1106,19 +1124,84 @@ impl Bau {
     }
 
     fn handle_restart_master_reset(&mut self, source: IndividualAddress, erase_code: u8) {
-        if let ERASE_CONFIRMED_RESTART..=ERASE_FACTORY_RESET_MAX = erase_code {
-            self.addr_table_object = TableObject::new();
-            self.assoc_table_object = TableObject::new();
-            self.app_program_object = TableObject::new();
-            self.address_table = AddressTable::new();
-            self.association_table = AssociationTable::new();
-            self.memory_area.clear();
-        }
-        let payload = application_layer::encode_restart_response(
-            RESTART_ERROR_CODE_OK,
-            RESTART_PROCESS_TIME_ZERO,
-        );
+        let error_code = Self::master_reset_error_code(erase_code);
+        let process_time = if error_code == RESTART_ERROR_CODE_OK {
+            RESTART_PROCESS_TIME_DEFAULT
+        } else {
+            RESTART_PROCESS_TIME_ZERO
+        };
+
+        // Send the response first — ETS waits for the RestartMasterResetResponse
+        // before the connection drops (mirrors the C++ restartResponse ordering).
+        let payload = application_layer::encode_restart_response(error_code, process_time);
         self.queue_individual_frame(source, Priority::System, &payload);
+
+        if error_code != RESTART_ERROR_CODE_OK {
+            return; // Unsupported erase code: no reset, no restart.
+        }
+
+        self.apply_master_reset(erase_code);
+        // A master reset reboots in the C++ reference; the soft-device analogue is
+        // to flag the host and drop the connection (as a basic restart does).
+        self.restart_pending = true;
+        self.transport.disconnect_request();
+    }
+
+    /// Validate a master-reset erase code (mirrors
+    /// `bau_systemB.cpp::checkmasterResetValidity`): codes 1..=7 are supported
+    /// (error `0x00`); anything else (including `Void` = 0) is unsupported (`0x02`).
+    const fn master_reset_error_code(erase_code: u8) -> u8 {
+        match erase_code {
+            ERASE_CONFIRMED_RESTART..=ERASE_FACTORY_RESET_WITHOUT_IA => RESTART_ERROR_CODE_OK,
+            _ => RESTART_ERROR_CODE_UNSUPPORTED,
+        }
+    }
+
+    /// Apply the reset scope for a validated erase code. The C++ reference stubs
+    /// the actual erasure (returns success without wiping); this performs a
+    /// conservative, per-code reset. Confirmed restart never erases.
+    fn apply_master_reset(&mut self, erase_code: u8) {
+        #[expect(
+            clippy::match_same_arms,
+            reason = "ConfirmedRestart is an explicit documented no-op, distinct \
+                      from the unreachable catch-all for pre-validated codes"
+        )]
+        match erase_code {
+            ERASE_CONFIRMED_RESTART => {} // Restart only — no data reset.
+            ERASE_RESET_IA => {
+                device_object::set_individual_address(
+                    self.device_mut(),
+                    DEFAULT_INDIVIDUAL_ADDRESS,
+                );
+            }
+            ERASE_RESET_LINKS => self.reset_link_tables(),
+            ERASE_RESET_AP | ERASE_RESET_PARAM => {
+                self.app_program_object = TableObject::new();
+            }
+            // Factory reset: full configuration wipe. FactoryReset(2) also clears
+            // the individual address; FactoryResetWithoutIA(7) keeps it.
+            ERASE_FACTORY_RESET | ERASE_FACTORY_RESET_WITHOUT_IA => {
+                self.reset_link_tables();
+                self.app_program_object = TableObject::new();
+                self.memory_area.clear();
+                if erase_code == ERASE_FACTORY_RESET {
+                    device_object::set_individual_address(
+                        self.device_mut(),
+                        DEFAULT_INDIVIDUAL_ADDRESS,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Reset the group-link tables (address + association) and their load-state
+    /// objects to unloaded/empty.
+    fn reset_link_tables(&mut self) {
+        self.addr_table_object = TableObject::new();
+        self.assoc_table_object = TableObject::new();
+        self.address_table = AddressTable::new();
+        self.association_table = AssociationTable::new();
     }
 
     fn handle_property_description_read(
@@ -1845,12 +1928,21 @@ mod tests {
     }
 
     #[test]
-    fn restart_master_reset_clears_memory() {
+    fn restart_master_reset_factory_clears_memory_but_confirmed_restart_does_not() {
         let mut bau = handler_test_bau();
         bau.handle_memory_write(0x0000, &[0xDE, 0xAD, 0xBE, 0xEF]);
         assert_eq!(bau.memory_area.len(), 4);
 
-        bau.handle_restart_master_reset(SRC_1102, 1);
+        // ConfirmedRestart (1) must NOT erase anything.
+        bau.handle_restart_master_reset(SRC_1102, ERASE_CONFIRMED_RESTART);
+        assert_eq!(
+            bau.memory_area.len(),
+            4,
+            "confirmed restart must not clear memory"
+        );
+
+        // FactoryReset (2) wipes the parameter memory.
+        bau.handle_restart_master_reset(SRC_1102, ERASE_FACTORY_RESET);
         assert!(bau.memory_area.is_empty());
     }
 
@@ -1862,7 +1954,12 @@ mod tests {
         assert_eq!(bau.addr_table_object.load_state(), LoadState::Loaded);
         assert_eq!(bau.assoc_table_object.load_state(), LoadState::Loaded);
 
-        bau.handle_restart_master_reset(SRC_1102, 1);
+        // ConfirmedRestart leaves the load state intact.
+        bau.handle_restart_master_reset(SRC_1102, ERASE_CONFIRMED_RESTART);
+        assert_eq!(bau.addr_table_object.load_state(), LoadState::Loaded);
+
+        // FactoryReset unloads every table object.
+        bau.handle_restart_master_reset(SRC_1102, ERASE_FACTORY_RESET);
         assert_eq!(bau.addr_table_object.load_state(), LoadState::Unloaded);
         assert_eq!(bau.assoc_table_object.load_state(), LoadState::Unloaded);
         assert_eq!(bau.app_program_object.load_state(), LoadState::Unloaded);
@@ -1876,6 +1973,91 @@ mod tests {
             .next_outgoing_frame()
             .expect("expected restart response");
         assert_eq!(resp.destination_address_raw(), 0x1102);
+    }
+
+    #[test]
+    fn master_reset_validity_and_response_bytes() {
+        // Erase codes 1..=7 are supported (error 0x00, process time 3); Void (0)
+        // and >= 8 are unsupported (error 0x02, process time 0). The response
+        // always sets the response bit (low APCI octet 0xA1).
+        for code in 0u8..=9 {
+            let mut bau = handler_test_bau();
+            bau.handle_restart_master_reset(SRC_1102, code);
+            let resp = bau.next_outgoing_frame().expect("a response frame");
+            let p = resp.payload();
+            assert_eq!(p[0], 0x03, "code {code}: APCI high byte");
+            assert_eq!(p[1], 0xA1, "code {code}: response bit set");
+
+            let supported =
+                (ERASE_CONFIRMED_RESTART..=ERASE_FACTORY_RESET_WITHOUT_IA).contains(&code);
+            let expected_err = if supported { 0x00 } else { 0x02 };
+            let expected_pt: [u8; 2] = if supported {
+                [0x00, 0x03]
+            } else {
+                [0x00, 0x00]
+            };
+            assert_eq!(p[2], expected_err, "code {code}: error byte");
+            assert_eq!(&p[3..5], &expected_pt, "code {code}: process time");
+        }
+    }
+
+    #[test]
+    fn master_reset_per_code_scope() {
+        // ResetIA (3): only the individual address is reset to the default.
+        let mut bau = handler_test_bau();
+        mark_configured(&mut bau);
+        bau.handle_memory_write(0x0000, &[0xAA]);
+        bau.handle_restart_master_reset(SRC_1102, ERASE_RESET_IA);
+        assert_eq!(bau.individual_address().raw(), DEFAULT_INDIVIDUAL_ADDRESS);
+        assert_eq!(
+            bau.addr_table_object.load_state(),
+            LoadState::Loaded,
+            "ResetIA must not touch the link tables"
+        );
+        assert_eq!(bau.memory_area.len(), 1, "ResetIA must not clear memory");
+
+        // ResetLinks (6): address + association tables are cleared, IA kept.
+        let mut bau = handler_test_bau();
+        mark_configured(&mut bau);
+        let ia = bau.individual_address().raw();
+        bau.handle_restart_master_reset(SRC_1102, ERASE_RESET_LINKS);
+        assert_eq!(bau.addr_table_object.load_state(), LoadState::Unloaded);
+        assert_eq!(bau.assoc_table_object.load_state(), LoadState::Unloaded);
+        assert_eq!(
+            bau.app_program_object.load_state(),
+            LoadState::Loaded,
+            "ResetLinks must not unload the application program"
+        );
+        assert_eq!(
+            bau.individual_address().raw(),
+            ia,
+            "ResetLinks keeps the IA"
+        );
+
+        // ResetAP (4): only the application program is unloaded.
+        let mut bau = handler_test_bau();
+        mark_configured(&mut bau);
+        bau.handle_restart_master_reset(SRC_1102, ERASE_RESET_AP);
+        assert_eq!(bau.app_program_object.load_state(), LoadState::Unloaded);
+        assert_eq!(
+            bau.addr_table_object.load_state(),
+            LoadState::Loaded,
+            "ResetAP must not clear the link tables"
+        );
+
+        // FactoryResetWithoutIA (7): full wipe but the IA is preserved.
+        let mut bau = handler_test_bau();
+        mark_configured(&mut bau);
+        let ia = bau.individual_address().raw();
+        bau.handle_memory_write(0x0000, &[0xAA]);
+        bau.handle_restart_master_reset(SRC_1102, ERASE_FACTORY_RESET_WITHOUT_IA);
+        assert!(bau.memory_area.is_empty());
+        assert_eq!(bau.addr_table_object.load_state(), LoadState::Unloaded);
+        assert_eq!(
+            bau.individual_address().raw(),
+            ia,
+            "FactoryResetWithoutIA keeps the IA"
+        );
     }
 
     #[test]

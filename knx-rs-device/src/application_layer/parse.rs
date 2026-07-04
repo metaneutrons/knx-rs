@@ -569,7 +569,9 @@ mod tests {
         let [hi, lo] = expected_apci(ApduType::RestartMasterReset);
         let result = encode_restart_response(0x01, 0x0064);
         assert_eq!(result[0], hi);
-        assert_eq!(result[1], lo);
+        // The response bit (0x20) is set: low APCI octet is 0xA1 (0x81 | 0x20).
+        assert_eq!(result[1], lo | 0x20);
+        assert_eq!(result[1], 0xA1);
         assert_eq!(result[2], 0x01);
         assert_eq!(&result[3..5], &[0x00, 0x64]);
     }

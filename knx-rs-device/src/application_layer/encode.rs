@@ -101,8 +101,11 @@ pub fn encode_key_response(level: u8) -> Vec<u8> {
 /// Encode a `RestartResponse` APDU payload (master reset response).
 pub fn encode_restart_response(error_code: u8, process_time: u16) -> Vec<u8> {
     let [hi, lo] = apci_bytes(ApduType::RestartMasterReset);
+    // Set the restart-response bit (bit 5, 0x20): the low APCI octet becomes 0xA1
+    // (0x81 | 0x20), matching the C++ reference `data[0] |= (1 << 5) | 1`. ETS
+    // reads this bit to distinguish a response from a request.
     let t = process_time.to_be_bytes();
-    alloc::vec![hi, lo, error_code, t[0], t[1]]
+    alloc::vec![hi, lo | 0x20, error_code, t[0], t[1]]
 }
 
 /// Encode a `PropertyDescriptionResponse` APDU payload.
