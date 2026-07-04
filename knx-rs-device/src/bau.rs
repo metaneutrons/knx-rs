@@ -118,6 +118,9 @@ pub struct Bau {
     memory_area: Vec<u8>,
     /// Outgoing frame queue.
     outbox: VecDeque<CemiFrame>,
+    /// Set when an `A_Restart` requests a device restart; the host consumes it via
+    /// [`take_restart_pending`](Self::take_restart_pending) to persist and re-init.
+    restart_pending: bool,
 }
 
 impl Bau {
@@ -159,9 +162,25 @@ impl Bau {
             transport: TransportLayer::new(),
             memory_area: Vec::new(),
             outbox: VecDeque::new(),
+            restart_pending: false,
         };
         bau.install_io_list();
         bau
+    }
+
+    /// Whether an `A_Restart` has requested a device restart since the last
+    /// [`take_restart_pending`](Self::take_restart_pending). Read-only peek.
+    pub const fn restart_requested(&self) -> bool {
+        self.restart_pending
+    }
+
+    /// Consume the pending-restart flag: returns `true` if an `A_Restart` was
+    /// received since the last call, and clears it. The host should persist any
+    /// downloaded state and re-initialize its `KNX` stack when this returns `true`.
+    pub const fn take_restart_pending(&mut self) -> bool {
+        let pending = self.restart_pending;
+        self.restart_pending = false;
+        pending
     }
 
     /// Populate the device object's `PID_IO_LIST` (property 71) from the current
@@ -513,9 +532,25 @@ impl Bau {
             AppIndication::KeyWrite { level, key: _ } => {
                 self.queue_key_response(source, level);
             }
-            // Restart (non-master-reset) is handled at the transport level, not here.
+            AppIndication::Restart => {
+                self.handle_basic_restart();
+            }
             _ => {}
         }
+    }
+
+    /// Handle a plain `A_Restart` (`BasicRestart`, APCI 0x380).
+    ///
+    /// Emits NO response (only a master reset returns a `RestartMasterResetResponse`).
+    /// Actively drops the open connection so the programming tool sees it go away
+    /// — the observable analogue of the reboot in the C++ reference, where the
+    /// restart tears down the `T_Connect` ETS opened — and flags a restart for the
+    /// host to act on (persist downloaded state, re-initialize). A malformed
+    /// `A_Restart` with reserved bits set never reaches here: the exact APCI match
+    /// (0x380) rejects it during decode.
+    fn handle_basic_restart(&mut self) {
+        self.transport.disconnect_request();
+        self.restart_pending = true;
     }
 
     fn dispatch_property_services(&mut self, source: IndividualAddress, indication: AppIndication) {
@@ -771,38 +806,50 @@ impl Bau {
     }
 
     /// Consume transport layer actions and convert them to outgoing frames.
+    ///
+    /// Loops until no actions remain: dispatching a connected indication (e.g. an
+    /// `A_Restart`) can itself queue new transport actions (a `T_Disconnect`), and
+    /// draining them in the same call emits the frame promptly instead of leaving
+    /// it until the next poll. Terminates because no drained action re-queues
+    /// unboundedly.
     fn drain_transport_actions(&mut self) {
         use crate::transport_layer::Action;
-        for action in self.transport.take_actions() {
-            match action {
-                Action::SendControl {
-                    destination,
-                    tpdu_type,
-                    seq_no,
-                } => {
-                    self.queue_control_frame(destination, tpdu_type, seq_no);
-                }
-                Action::SendDataConnected {
-                    destination,
-                    seq_no,
-                    priority,
-                    apdu,
-                } => {
-                    self.queue_data_connected_frame(destination, seq_no, priority, &apdu);
-                }
-                Action::ConnectIndication { .. }
-                | Action::ConnectConfirm { .. }
-                | Action::DisconnectIndication { .. }
-                | Action::DataConnectedConfirm => {}
-                Action::DataConnectedIndication {
-                    source,
-                    priority: _,
-                    apdu,
-                } => {
-                    // Connected data received — parse and dispatch
-                    if let Ok(parsed) = application_layer::parse_raw_apdu(&apdu) {
-                        // Create a minimal frame for dispatch_indication (source needed)
-                        self.dispatch_connected_indication(source, parsed);
+        loop {
+            let actions = self.transport.take_actions();
+            if actions.is_empty() {
+                break;
+            }
+            for action in actions {
+                match action {
+                    Action::SendControl {
+                        destination,
+                        tpdu_type,
+                        seq_no,
+                    } => {
+                        self.queue_control_frame(destination, tpdu_type, seq_no);
+                    }
+                    Action::SendDataConnected {
+                        destination,
+                        seq_no,
+                        priority,
+                        apdu,
+                    } => {
+                        self.queue_data_connected_frame(destination, seq_no, priority, &apdu);
+                    }
+                    Action::ConnectIndication { .. }
+                    | Action::ConnectConfirm { .. }
+                    | Action::DisconnectIndication { .. }
+                    | Action::DataConnectedConfirm => {}
+                    Action::DataConnectedIndication {
+                        source,
+                        priority: _,
+                        apdu,
+                    } => {
+                        // Connected data received — parse and dispatch
+                        if let Ok(parsed) = application_layer::parse_raw_apdu(&apdu) {
+                            // Create a minimal frame for dispatch_indication (source needed)
+                            self.dispatch_connected_indication(source, parsed);
+                        }
                     }
                 }
             }
@@ -2581,6 +2628,62 @@ mod tests {
             bau.next_outgoing_frame().is_some(),
             "group traffic flows after activation"
         );
+    }
+
+    #[test]
+    fn basic_restart_drops_connection_and_flags_host() {
+        use knx_rs_core::message::{ApduType, TpduType};
+
+        let mut bau = test_bau();
+        // ETS opens a management connection.
+        let connect = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x00, 0x80, 0x00,
+        ])
+        .unwrap();
+        bau.process_frame(&connect, 0);
+        assert_eq!(
+            bau.transport.state(),
+            crate::transport_layer::State::OpenIdle
+        );
+        while bau.next_outgoing_frame().is_some() {} // drain the connect ACK
+        assert!(!bau.restart_requested());
+
+        // Connected A_Restart (BasicRestart, APCI 0x380) at sequence 0.
+        let restart = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x01, 0x43, 0x80,
+        ])
+        .unwrap();
+        bau.process_frame(&restart, 0);
+
+        // A basic restart emits NO A_Restart/RestartMasterReset response, and it
+        // actively drops the connection with a T_Disconnect.
+        let mut saw_disconnect = false;
+        while let Some(f) = bau.next_outgoing_frame() {
+            match f.tpdu() {
+                Some(Tpdu::Control { tpdu_type, .. }) => {
+                    if tpdu_type == TpduType::Disconnect {
+                        saw_disconnect = true;
+                    }
+                }
+                Some(Tpdu::Data { apdu, .. }) => assert!(
+                    !matches!(
+                        apdu.apdu_type,
+                        ApduType::Restart | ApduType::RestartMasterReset
+                    ),
+                    "basic restart must emit no restart response"
+                ),
+                None => {}
+            }
+        }
+        assert!(
+            saw_disconnect,
+            "basic restart must drop the open connection (T_Disconnect)"
+        );
+        assert_eq!(bau.transport.state(), crate::transport_layer::State::Closed);
+
+        // The host learns a restart was requested exactly once, then it clears.
+        assert!(bau.take_restart_pending());
+        assert!(!bau.take_restart_pending());
     }
 
     #[test]
