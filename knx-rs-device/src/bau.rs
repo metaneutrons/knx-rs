@@ -2286,6 +2286,151 @@ mod tests {
         assert_eq!(bau.association_table.translate_asap(1), Some(1));
     }
 
+    // ── Frame-driven System-B download harness ───────────────────────────────
+    //
+    // Unlike `full_ets_download_flow` (which calls the load/memory handlers
+    // directly), these reconstruct the exact cEMI frames ETS puts on the bus and
+    // drive them through the public `process_frame` entry point. That routes
+    // every APDU through `CemiFrame::parse` → `Apdu::parse` (`decode_apci`) →
+    // `parse_indication` → dispatch — the same wire path the live stack runs.
+    // `decode_apci` is where a basic-memory APDU's 6-bit count and its
+    // address/data used to be shifted by one byte; a download driven through
+    // frames (rather than direct calls) is the only thing that pins that decode.
+
+    /// Build a connectionless (`T_Data_Individual`) `L_Data.ind` cEMI frame
+    /// carrying `apdu` (bytes starting at the APCI header). The NPDU length octet
+    /// is `apdu.len() - 1`, per the cEMI convention (the TPCI octet is excluded).
+    fn ind_frame(src: u16, dst: u16, apdu: &[u8]) -> Vec<u8> {
+        let mut f = vec![
+            0x29,
+            0x00,
+            0xB0,
+            0x60,
+            (src >> 8) as u8,
+            (src & 0xFF) as u8,
+            (dst >> 8) as u8,
+            (dst & 0xFF) as u8,
+            u8::try_from(apdu.len() - 1).unwrap(),
+        ];
+        f.extend_from_slice(apdu);
+        f
+    }
+
+    /// APCI header `[hi, lo]` for a service: `hi` is the two APCI bits that share
+    /// byte 0 with the TPCI, `lo` is the low 8 APCI bits.
+    fn apci_hdr(t: knx_rs_core::message::ApduType) -> [u8; 2] {
+        let b = (t as u16).to_be_bytes();
+        [b[0] & 0x03, b[1]]
+    }
+
+    /// `A_PropertyValue_Write` APDU (long form): object / PID / count / start
+    /// index, followed by the element data.
+    fn prop_write_apdu(obj: u8, pid: u8, count: u8, start: u16, data: &[u8]) -> Vec<u8> {
+        let [hi, lo] = apci_hdr(knx_rs_core::message::ApduType::PropertyValueWrite);
+        let mut a = vec![
+            hi,
+            lo,
+            obj,
+            pid,
+            (count << 4) | ((start >> 8) as u8 & 0x0F),
+            (start & 0xFF) as u8,
+        ];
+        a.extend_from_slice(data);
+        a
+    }
+
+    /// `A_Memory_Write` APDU — the byte count packs into byte 1's low 6 bits,
+    /// then the 2-byte address and the payload. This is the frame whose decode
+    /// the fix repaired (byte 1 must survive into the parser at `data[0]`).
+    fn mem_write_apdu(count: u8, address: u16, data: &[u8]) -> Vec<u8> {
+        let [hi, lo] = apci_hdr(knx_rs_core::message::ApduType::MemoryWrite);
+        let mut a = vec![
+            hi,
+            lo | (count & 0x3F),
+            (address >> 8) as u8,
+            (address & 0xFF) as u8,
+        ];
+        a.extend_from_slice(data);
+        a
+    }
+
+    #[test]
+    fn frame_driven_system_b_download_configures_device() {
+        const ETS: u16 = 0xFFB1; // 15.15.177 — a typical ETS management address
+        const DEV: u16 = 0x1101; // the device's own individual address (test_bau)
+        const LSC: u8 = PropertyId::LoadStateControl as u8;
+
+        let mut bau = test_bau();
+        // Start from a blank device — nothing pre-loaded.
+        bau.address_table = AddressTable::new();
+        bau.association_table = AssociationTable::new();
+        assert!(!bau.configured(), "precondition: unconfigured");
+
+        let send = |bau: &mut Bau, apdu: &[u8]| {
+            let frame = CemiFrame::parse(&ind_frame(ETS, DEV, apdu)).unwrap();
+            bau.process_frame(&frame, 0);
+        };
+
+        // ── Address table (object 1) ──
+        send(&mut bau, &prop_write_apdu(OBJ_ADDR_TABLE, LSC, 1, 1, &[1])); // StartLoading
+        send(
+            &mut bau,
+            &prop_write_apdu(
+                OBJ_ADDR_TABLE,
+                LSC,
+                1,
+                1,
+                &[0x03, 0x0B, 0x00, 0x00, 0x00, 0x06, 0x01, 0x00],
+            ),
+        ); // AdditionalLoadControls: relative allocation of 6 bytes
+        send(
+            &mut bau,
+            &mem_write_apdu(6, 0x0000, &[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]),
+        ); // 2 group addresses → the frame the decode fix repaired
+        send(&mut bau, &prop_write_apdu(OBJ_ADDR_TABLE, LSC, 1, 1, &[2])); // LoadCompleted
+
+        // Proof the memory write landed at the right offset with the right bytes:
+        // the address table now translates the downloaded group addresses.
+        assert_eq!(bau.address_table.get_tsap(0x0801), Some(1));
+        assert_eq!(bau.address_table.get_tsap(0x0802), Some(2));
+        assert_eq!(
+            &bau.memory_area[0..6],
+            &[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]
+        );
+
+        // ── Association table (object 2) ──
+        send(&mut bau, &prop_write_apdu(OBJ_ASSOC_TABLE, LSC, 1, 1, &[1]));
+        send(
+            &mut bau,
+            &prop_write_apdu(
+                OBJ_ASSOC_TABLE,
+                LSC,
+                1,
+                1,
+                &[0x03, 0x0B, 0x00, 0x00, 0x00, 0x0A, 0x01, 0x06],
+            ),
+        );
+        send(
+            &mut bau,
+            &mem_write_apdu(
+                10,
+                0x0006,
+                &[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02],
+            ),
+        );
+        send(&mut bau, &prop_write_apdu(OBJ_ASSOC_TABLE, LSC, 1, 1, &[2]));
+
+        assert!(
+            bau.configured(),
+            "device must be configured after a full frame-driven download"
+        );
+        assert_eq!(bau.association_table.translate_asap(1), Some(1));
+        assert_eq!(
+            &bau.memory_area[6..16],
+            &[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02]
+        );
+    }
+
     #[test]
     fn group_value_write_size_mismatch() {
         let mut bau = test_bau();

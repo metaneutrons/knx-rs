@@ -127,7 +127,7 @@ fn parse_device_descriptor_read(data: &[u8]) -> AppIndication {
 fn parse_memory_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
     check_len(data, 3)?;
     Ok(AppIndication::MemoryRead {
-        count: data[0] & MASK_4BIT,
+        count: data[0] & MASK_6BIT,
         address: u16::from_be_bytes([data[1], data[2]]),
     })
 }
@@ -135,7 +135,7 @@ fn parse_memory_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
 fn parse_memory_write(data: &[u8]) -> Result<AppIndication, AppLayerError> {
     check_len(data, 3)?;
     Ok(AppIndication::MemoryWrite {
-        count: data[0] & MASK_4BIT,
+        count: data[0] & MASK_6BIT,
         address: u16::from_be_bytes([data[1], data[2]]),
         data: data[3..].to_vec(),
     })
@@ -1257,7 +1257,7 @@ mod tests {
 
     #[test]
     fn parse_max_length_memory_write() {
-        // MemoryWrite with 15 bytes of data (max for 4-bit count field)
+        // MemoryWrite with 15 bytes of data.
         let mut payload = alloc::vec![0x0F, 0x00, 0x10]; // count=15, address=0x0010
         payload.extend_from_slice(&[0xAA; 15]);
         let ind = parse_indication(ApduType::MemoryWrite, &payload).unwrap();
@@ -1267,13 +1267,31 @@ mod tests {
             data,
         } = ind
         {
-            assert_eq!(count, 15, "count should be 15 (max 4-bit value)");
+            assert_eq!(count, 15);
             assert_eq!(address, 0x0010);
             assert_eq!(data.len(), 15);
             assert!(data.iter().all(|&b| b == 0xAA));
         } else {
             panic!("expected MemoryWrite");
         }
+    }
+
+    #[test]
+    fn parse_memory_write_count_is_6_bit() {
+        // The basic-memory byte-count field is 6 bits wide (C++ ref: `number &
+        // 0x3f`), not 4. A count of 0x30 (48) must survive intact — the old
+        // 4-bit mask truncated it to 0, silently dropping the write length.
+        let mut payload = alloc::vec![0x30, 0x01, 0x00]; // count=48, address=0x0100
+        payload.extend_from_slice(&[0xCC; 48]);
+        let ind = parse_indication(ApduType::MemoryWrite, &payload).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::MemoryWrite {
+                count: 0x30,
+                address: 0x0100,
+                ..
+            }
+        ));
     }
 
     #[test]
