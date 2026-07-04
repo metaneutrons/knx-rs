@@ -45,7 +45,14 @@ const MCB_ACCESS: u8 = 0xFF;
 
 /// Minimum data length for `AdditionalLoadControls` (opcode + size + fill mode + fill byte).
 const ALC_MIN_LENGTH: usize = 8;
-/// Opcode for `AllocAbsDataSeg` in `AdditionalLoadControls`.
+/// Opcode `0x0B` in `AdditionalLoadControls` — **Data Relative Allocation**
+/// (`LdCtrlRelSegment`). Reserves a table segment: the device allocates it at the
+/// current end of `memory_area` (reported to ETS via PID 7 `TableReference`), and
+/// ETS then writes the table bytes there with `A_Memory_Write`. This is the
+/// segment style System-B / `MergedProcedure` products use. (Matches the `OpenKNX`
+/// C++ `TableObject::additionalLoadControls`, which labels 0x0B "Data Relative
+/// Allocation" — the previous `AllocAbsDataSeg` label here was wrong and is what
+/// made a review believe the relative-segment path was unimplemented.)
 const ALC_OPCODE_ALLOC: u8 = 0x0B;
 /// Fill mode value indicating memory should be filled.
 const ALC_FILL_ENABLED: u8 = 0x01;
