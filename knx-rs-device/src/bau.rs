@@ -22,7 +22,7 @@ use crate::device_object;
 use crate::group_object::{ComFlag, GroupObjectStore};
 use crate::group_object_table::{GroupObjectDescriptor, GroupObjectTable};
 use crate::interface_object::InterfaceObject;
-use crate::property::{Property, PropertyId};
+use crate::property::{AccessLevel, DataProperty, Property, PropertyDataType, PropertyId};
 use crate::table_object::{MAX_MEMORY_SIZE, TableObject};
 use crate::transport_layer::TransportLayer;
 
@@ -138,7 +138,7 @@ impl Bau {
         let group_obj_table_obj = new_group_object_table_object();
         let app_program_obj = new_application_program_object();
 
-        Self {
+        let mut bau = Self {
             objects: vec![
                 device,
                 addr_table_obj,
@@ -159,6 +159,43 @@ impl Bau {
             transport: TransportLayer::new(),
             memory_area: Vec::new(),
             outbox: VecDeque::new(),
+        };
+        bau.install_io_list();
+        bau
+    }
+
+    /// Populate the device object's `PID_IO_LIST` (property 71) from the current
+    /// interface-object layout, so ETS can enumerate the device's objects.
+    ///
+    /// Element `i` is object `i`'s `ObjectType` as a big-endian `u16`, in index
+    /// order — e.g. `[Device(0), AddrTable(1), AssocTable(2), GroupObjTable(9),
+    /// AppProgram(3)]`. `max_elements` is set to the element count so the
+    /// `startIndex == 0` element-count read (which `handle_property_read` derives
+    /// from `max_elements`) matches the number of readable elements.
+    ///
+    /// Called once at construction. Objects appended later via [`add_object`] are
+    /// not reflected (the standard System B object set is fixed at construction).
+    ///
+    /// [`add_object`]: Self::add_object
+    fn install_io_list(&mut self) {
+        let bytes: Vec<u8> = self
+            .objects
+            .iter()
+            .flat_map(|o| (o.object_type() as u16).to_be_bytes())
+            .collect();
+        let count = u16::try_from(self.objects.len()).unwrap_or(u16::MAX);
+        if let Some(device) = self.objects.first_mut() {
+            device.add_property(
+                DataProperty::new(
+                    PropertyId::IoList,
+                    false,
+                    PropertyDataType::UnsignedInt,
+                    count,
+                    AccessLevel::None,
+                    &bytes,
+                )
+                .into(),
+            );
         }
     }
 
@@ -2557,6 +2594,85 @@ mod tests {
             "app program at index 4 must load via the ETS ObjIdx=4 procedure"
         );
         assert_eq!(&bau.memory_area[0..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    /// `A_PropertyValue_Read` APDU (long form): object / PID / count / start index.
+    fn prop_read_apdu(obj: u8, pid: u8, count: u8, start: u16) -> Vec<u8> {
+        let [hi, lo] = apci_hdr(knx_rs_core::message::ApduType::PropertyValueRead);
+        vec![
+            hi,
+            lo,
+            obj,
+            pid,
+            (count << 4) | ((start >> 8) as u8 & 0x0F),
+            (start & 0xFF) as u8,
+        ]
+    }
+
+    /// Drain one queued `A_PropertyValue_Response` and return its (element count,
+    /// value bytes). The response APDU is `[obj, pid, count<<4|start_hi, start_lo,
+    /// ..value]` after the core strips the 2 APCI bytes.
+    fn drain_prop_response(bau: &mut Bau) -> (u8, Vec<u8>) {
+        let frame = bau
+            .next_outgoing_frame()
+            .expect("a property response frame");
+        let Some(Tpdu::Data { apdu, .. }) = frame.tpdu() else {
+            panic!("expected a data TPDU");
+        };
+        assert!(apdu.data.len() >= 4, "property response header present");
+        (apdu.data[2] >> 4, apdu.data[4..].to_vec())
+    }
+
+    #[test]
+    fn device_serves_pid_io_list() {
+        const ETS: u16 = 0xFFB1;
+        const DEV: u16 = 0x1101;
+        const IO_LIST: u8 = PropertyId::IoList as u8;
+
+        // Expected list mirrors the System B object layout: Device(0), Addr(1),
+        // Assoc(2), GroupObjTable(9), AppProgram(3) — the OT9 object is present, and
+        // there is no IP-parameter object on this device (unlike the C++ 6-element list).
+        let expected = [0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x09, 0x00, 0x03];
+
+        let mut bau = test_bau();
+        let send = |bau: &mut Bau, apdu: &[u8]| {
+            let frame = CemiFrame::parse(&ind_frame(ETS, DEV, apdu)).unwrap();
+            bau.process_frame(&frame, 0);
+        };
+
+        // Drift guard: the served list must equal each object's ObjectType, in order.
+        let mut direct = Vec::new();
+        bau.device()
+            .read_property(PropertyId::IoList, 1, 5, &mut direct);
+        assert_eq!(direct, &expected, "IO list must mirror the object layout");
+        for i in 0..5u8 {
+            let ot = u16::from_be_bytes([expected[i as usize * 2], expected[i as usize * 2 + 1]]);
+            assert_eq!(
+                bau.object(i).unwrap().object_type() as u16,
+                ot,
+                "IO list element {i} must equal object {i}'s type"
+            );
+        }
+
+        // Wire path: startIndex==0 returns the element count (5) as a 2-byte word.
+        send(&mut bau, &prop_read_apdu(0, IO_LIST, 1, 0));
+        assert_eq!(drain_prop_response(&mut bau), (1, alloc::vec![0x00, 0x05]));
+
+        // Wire path: startIndex==1, count=5 returns all five 2-byte object types.
+        send(&mut bau, &prop_read_apdu(0, IO_LIST, 5, 1));
+        let (count, value) = drain_prop_response(&mut bau);
+        assert_eq!(count, 5);
+        assert_eq!(value, &expected);
+
+        // PropertyDescriptionRead reports PDT UnsignedInt (0x04), 5 max elements, read-only.
+        let desc = bau
+            .device()
+            .property(PropertyId::IoList)
+            .unwrap()
+            .description();
+        assert_eq!(desc.data_type as u8, 0x04);
+        assert_eq!(desc.max_elements, 5);
+        assert!(!desc.write_enable);
     }
 
     #[test]
