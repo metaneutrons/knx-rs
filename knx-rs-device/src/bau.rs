@@ -759,8 +759,15 @@ impl Bau {
     /// Check if the device is fully configured (all tables loaded).
     pub fn configured(&self) -> bool {
         use crate::property::LoadState;
+        // System B activation gate (mirrors bau_systemB_device.cpp::configured):
+        // group communication is enabled only when every downloadable table AND
+        // the application program report Loaded. The group-object table is
+        // logical-only on this device (compiled in) and initialized Loaded, so in
+        // practice this reduces to addr table + assoc table + application program.
         self.addr_table_object.load_state() == LoadState::Loaded
             && self.assoc_table_object.load_state() == LoadState::Loaded
+            && self.group_object_table_object.load_state() == LoadState::Loaded
+            && self.app_program_object.load_state() == LoadState::Loaded
     }
 
     /// Consume transport layer actions and convert them to outgoing frames.
@@ -1567,6 +1574,21 @@ mod tests {
         bau
     }
 
+    /// Drive the address, association, and application-program table objects to
+    /// `Loaded` — the minimum for `configured()` (the group-object table is
+    /// logical-Loaded from construction). Use in fixtures that need the device
+    /// activated without exercising a full download.
+    fn mark_configured(bau: &mut Bau) {
+        for to in [
+            &mut bau.addr_table_object,
+            &mut bau.assoc_table_object,
+            &mut bau.app_program_object,
+        ] {
+            to.handle_load_event(&[1], 0); // StartLoading
+            to.handle_load_event(&[2], 0); // LoadCompleted
+        }
+    }
+
     const SRC_1102: IndividualAddress = IndividualAddress::from_raw(0x1102);
     const SRC_1101: IndividualAddress = IndividualAddress::from_raw(0x1101);
 
@@ -1604,10 +1626,7 @@ mod tests {
     fn poll_sends_pending_writes() {
         let mut bau = test_bau();
         // Mark tables as loaded so configured() returns true
-        bau.addr_table_object.handle_load_event(&[1], 0);
-        bau.addr_table_object.handle_load_event(&[2], 0);
-        bau.assoc_table_object.handle_load_event(&[1], 0);
-        bau.assoc_table_object.handle_load_event(&[2], 0);
+        mark_configured(&mut bau);
 
         bau.group_objects_mut()
             .get_mut(1)
@@ -1792,10 +1811,7 @@ mod tests {
     fn restart_master_reset_resets_table_objects() {
         let mut bau = handler_test_bau();
         // Transition tables to Loaded state
-        bau.addr_table_object.handle_load_event(&[1], 0);
-        bau.addr_table_object.handle_load_event(&[2], 0);
-        bau.assoc_table_object.handle_load_event(&[1], 0);
-        bau.assoc_table_object.handle_load_event(&[2], 0);
+        mark_configured(&mut bau);
         assert_eq!(bau.addr_table_object.load_state(), LoadState::Loaded);
         assert_eq!(bau.assoc_table_object.load_state(), LoadState::Loaded);
 
@@ -2014,6 +2030,10 @@ mod tests {
         let tbl_data2 = bau.assoc_table_object.data(&bau.memory_area).to_vec();
         bau.association_table.load(&tbl_data2);
 
+        // Application program must load too (persisted via its table-object state).
+        bau.app_program_object.handle_load_event(&[1], 0);
+        bau.app_program_object.handle_load_event(&[2], 16);
+
         // Write some extra memory
         bau.handle_memory_write(0x0010, &[0xCA, 0xFE]);
 
@@ -2139,10 +2159,7 @@ mod tests {
     fn poll_processes_read_requests() {
         let mut bau = test_bau();
         // Mark tables as loaded
-        bau.addr_table_object.handle_load_event(&[1], 0);
-        bau.addr_table_object.handle_load_event(&[2], 0);
-        bau.assoc_table_object.handle_load_event(&[1], 0);
-        bau.assoc_table_object.handle_load_event(&[2], 0);
+        mark_configured(&mut bau);
 
         bau.group_objects_mut()
             .get_mut(1)
@@ -2347,6 +2364,11 @@ mod tests {
         let tbl2 = bau.assoc_table_object.data(&bau.memory_area).to_vec();
         bau.association_table.load(&tbl2);
 
+        // Application program (object 4) must also load before the device activates.
+        assert!(!bau.configured(), "app program still unloaded");
+        bau.app_program_object.handle_load_event(&[1], 0);
+        bau.app_program_object.handle_load_event(&[2], 16);
+
         assert!(bau.configured());
         assert_eq!(bau.association_table.translate_asap(1), Some(1));
     }
@@ -2485,6 +2507,30 @@ mod tests {
         );
         send(&mut bau, &prop_write_apdu(OBJ_ASSOC_TABLE, LSC, 1, 1, &[2]));
 
+        // Not configured yet — the application program (object 4) is still Unloaded.
+        assert!(
+            !bau.configured(),
+            "must not be configured until the application program is loaded"
+        );
+
+        // ── Application program (object 4) ── the snapdog .knxprod ObjIdx=4 step.
+        send(&mut bau, &prop_write_apdu(OBJ_APP_PROGRAM, LSC, 1, 1, &[1]));
+        send(
+            &mut bau,
+            &prop_write_apdu(
+                OBJ_APP_PROGRAM,
+                LSC,
+                1,
+                1,
+                &[0x03, 0x0B, 0x00, 0x00, 0x00, 0x04, 0x01, 0x10],
+            ),
+        );
+        send(
+            &mut bau,
+            &mem_write_apdu(4, 0x0010, &[0xDE, 0xAD, 0xBE, 0xEF]),
+        );
+        send(&mut bau, &prop_write_apdu(OBJ_APP_PROGRAM, LSC, 1, 1, &[2]));
+
         assert!(
             bau.configured(),
             "device must be configured after a full frame-driven download"
@@ -2493,6 +2539,47 @@ mod tests {
         assert_eq!(
             &bau.memory_area[6..16],
             &[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02]
+        );
+        assert_eq!(&bau.memory_area[16..20], &[0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn configured_requires_app_program_loaded() {
+        // System B activation gate: a device with address + association tables
+        // loaded but the application program still Unloaded is NOT activated and
+        // must not participate in group communication (mirrors C++ configured()).
+        let mut bau = test_bau();
+        bau.addr_table_object.handle_load_event(&[1], 0);
+        bau.addr_table_object.handle_load_event(&[2], 0);
+        bau.assoc_table_object.handle_load_event(&[1], 0);
+        bau.assoc_table_object.handle_load_event(&[2], 0);
+
+        assert!(
+            !bau.configured(),
+            "addr+assoc loaded but app program Unloaded must NOT be configured"
+        );
+        // Group communication must not flow while unconfigured.
+        bau.group_objects_mut()
+            .get_mut(1)
+            .unwrap()
+            .write_value(&[1]);
+        bau.poll(0);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "no group traffic before activation"
+        );
+
+        // Loading the application program activates the device.
+        bau.app_program_object.handle_load_event(&[1], 0);
+        bau.app_program_object.handle_load_event(&[2], 0);
+        assert!(
+            bau.configured(),
+            "configured once the application program reaches Loaded"
+        );
+        bau.poll(0);
+        assert!(
+            bau.next_outgoing_frame().is_some(),
+            "group traffic flows after activation"
         );
     }
 
@@ -2704,10 +2791,7 @@ mod tests {
             0x00, 0x03, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02, 0x00, 0x03, 0x00, 0x03,
         ]);
         // Mark tables as loaded for configured() check
-        bau.addr_table_object.handle_load_event(&[1], 0);
-        bau.addr_table_object.handle_load_event(&[2], 0);
-        bau.assoc_table_object.handle_load_event(&[1], 0);
-        bau.assoc_table_object.handle_load_event(&[2], 0);
+        mark_configured(&mut bau);
 
         // Set WriteRequest on GO 1, 2, 3
         bau.group_objects_mut()
