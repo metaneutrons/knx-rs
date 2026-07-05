@@ -49,20 +49,53 @@ pub fn sign_application(split: &SplitResult) -> Result<SplitResult, KnxprodError
         ))
     })?;
 
-    // Patch the XML:
-    // 1. Replace Hash="..." attribute value
+    // Compile the fingerprint regex once — reused for the app and every sibling.
+    let fp_re = fingerprint_regex(&old_fingerprint);
+
+    // Patch the application XML: Hash attribute, then the fingerprint in its Id
+    // and all internal refs.
     let patched = patch_hash_attribute(&xml, &new_hash_b64);
-    // 2. Replace old fingerprint with new in _A-XXXX-YY-FFFF pattern only
-    let patched = patch_fingerprint(&patched, &old_fingerprint, &new_fingerprint);
+    let patched = patch_fingerprint(&fp_re, &patched, &new_fingerprint);
 
     // Compute new filename
     let new_filename = filename.replace(&old_fingerprint, &new_fingerprint);
     let new_path = app_path.with_file_name(&new_filename);
 
-    // Write patched XML (to new path, then remove old if different)
+    // Write patched XML to the new path, then remove the old one. Propagate a
+    // removal failure: a leftover old app XML would be re-patched by the
+    // sibling loop below and archived alongside the new one, yielding a
+    // duplicate/ETS-rejected `.knxprod`.
     std::fs::write(&new_path, patched.as_bytes()).map_err(|e| KnxprodError::io(&new_path, e))?;
     if new_path != *app_path {
-        let _ = std::fs::remove_file(app_path);
+        std::fs::remove_file(app_path).map_err(|e| KnxprodError::io(app_path, e))?;
+    }
+
+    // The same fingerprint appears in the Catalog/Hardware (and Baggages) files —
+    // as ApplicationProgramRef (`_A-`) and Hardware2Program (`_HP-`) ids. ETS keys
+    // its lookup dictionaries on these, so they must be patched to the new
+    // fingerprint too, or import fails with "the given key was not present in the
+    // dictionary".
+    let manu_dir = app_path
+        .parent()
+        .ok_or_else(|| KnxprodError::InvalidStructure("application path has no parent".into()))?;
+    for entry in std::fs::read_dir(manu_dir).map_err(|e| KnxprodError::io(manu_dir, e))? {
+        let sibling = entry.map_err(|e| KnxprodError::io(manu_dir, e))?.path();
+        if sibling == new_path
+            || !sibling.is_file()
+            || sibling
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_none_or(|ext| !ext.eq_ignore_ascii_case("xml"))
+        {
+            continue;
+        }
+        let content =
+            std::fs::read_to_string(&sibling).map_err(|e| KnxprodError::io(&sibling, e))?;
+        let fixed = patch_fingerprint(&fp_re, &content, &new_fingerprint);
+        if fixed != content {
+            std::fs::write(&sibling, fixed.as_bytes())
+                .map_err(|e| KnxprodError::io(&sibling, e))?;
+        }
     }
 
     Ok(SplitResult {
@@ -87,13 +120,20 @@ fn patch_hash_attribute(xml: &str, new_hash: &str) -> String {
         .into_owned()
 }
 
-/// Replace the fingerprint in `_A-XXXX-YY-FFFF` patterns throughout the XML.
-/// Only targets the specific 4-hex-char fingerprint position, not arbitrary occurrences.
+/// Build the fingerprint-replacement regex for `old_fp`, matching both
+/// application-program (`_A-XXXX-YY-FFFF`) and hardware-to-program
+/// (`_HP-XXXX-YY-FFFF`) ids. Both embed the app fingerprint and ETS keys its
+/// lookup dictionaries on them; the regex targets only the 4-hex-char
+/// fingerprint position, not arbitrary occurrences.
 #[allow(clippy::expect_used)]
-fn patch_fingerprint(xml: &str, old_fp: &str, new_fp: &str) -> String {
+fn fingerprint_regex(old_fp: &str) -> Regex {
     let escaped = regex::escape(old_fp);
-    let pattern = format!(r"(?i)(_A-[0-9A-Fa-f]{{4}}-[0-9A-Fa-f]{{2}}-){escaped}");
-    let re = Regex::new(&pattern).expect("valid regex");
+    let pattern = format!(r"(?i)(_(?:A|HP)-[0-9A-Fa-f]{{4}}-[0-9A-Fa-f]{{2}}-){escaped}");
+    Regex::new(&pattern).expect("valid regex")
+}
+
+/// Replace the matched fingerprint with `new_fp` using a pre-compiled regex.
+fn patch_fingerprint(re: &Regex, xml: &str, new_fp: &str) -> String {
     re.replace_all(xml, format!("${{1}}{new_fp}")).into_owned()
 }
 
@@ -140,5 +180,56 @@ mod tests {
         // Note: re-hashing the patched XML gives a DIFFERENT hash because
         // the fingerprint replacement changed Id values throughout the XML.
         // This is expected — ETS computes the hash once and patches once.
+    }
+
+    #[test]
+    fn sign_patches_fingerprint_in_catalog_and_hardware() {
+        let xml = include_str!("../tests/fixtures/leakage_app.xml");
+        let fp = hash_application_program(xml).unwrap().fingerprint_hex();
+
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("M-0083_A-014F-10-0000.xml");
+        std::fs::write(&app, xml).unwrap();
+        let catalog = dir.path().join("Catalog.xml");
+        let hardware = dir.path().join("Hardware.xml");
+        std::fs::write(
+            &catalog,
+            r#"<CatalogItem Id="M-0083_H-1_HP-014F-10-0000_CI-1" Hardware2ProgramRefId="M-0083_H-1_HP-014F-10-0000" />"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &hardware,
+            r#"<Hardware2Program Id="M-0083_H-1_HP-014F-10-0000"><ApplicationProgramRef RefId="M-0083_A-014F-10-0000" /></Hardware2Program>"#,
+        )
+        .unwrap();
+
+        let split = SplitResult {
+            catalog: catalog.clone(),
+            hardware: hardware.clone(),
+            application: app,
+        };
+        sign_application(&split).unwrap();
+
+        // The stale `-0000` fingerprint must be gone from BOTH the `_A-` (app ref)
+        // and `_HP-` (hardware-to-program) ids in Catalog and Hardware.
+        let c = std::fs::read_to_string(&catalog).unwrap();
+        let h = std::fs::read_to_string(&hardware).unwrap();
+        assert!(
+            c.contains(&format!("HP-014F-10-{fp}")),
+            "catalog HP id patched"
+        );
+        assert!(
+            !c.contains("HP-014F-10-0000"),
+            "no stale fp left in catalog"
+        );
+        assert!(
+            h.contains(&format!("_A-014F-10-{fp}")),
+            "hardware app ref patched"
+        );
+        assert!(
+            h.contains(&format!("HP-014F-10-{fp}")),
+            "hardware HP id patched"
+        );
+        assert!(!h.contains("-0000"), "no stale fp left in hardware");
     }
 }
