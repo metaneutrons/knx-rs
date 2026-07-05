@@ -10,7 +10,7 @@
 //! reverse-engineering concern (unlike the `.signature`, see [`crate::signature`]).
 //!
 //! Obtain it from a local ETS copy via [`KnxMaster::from_path`], or download it
-//! with the `fetch` feature via [`KnxMaster::download`].
+//! with the `fetch` feature via `KnxMaster::download`.
 
 use std::path::{Path, PathBuf};
 

@@ -161,10 +161,12 @@ fn collect_entries(
     rel: &mut Vec<String>,
     out: &mut Vec<(String, String)>,
 ) -> Result<(), KnxprodError> {
-    let mut items: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| KnxprodError::io(dir, e))?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .collect();
+    // Propagate per-entry errors: a dropped entry would silently produce an
+    // incomplete (ETS-rejected) signature that is hard to debug.
+    let mut items: Vec<PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|e| KnxprodError::io(dir, e))? {
+        items.push(entry.map_err(|e| KnxprodError::io(dir, e))?.path());
+    }
     items.sort();
     for p in items {
         let name = p
@@ -236,7 +238,11 @@ pub fn verify_directory_signature(
     public_key: &rsa::RsaPublicKey,
 ) -> Result<bool, KnxprodError> {
     let raw = std::fs::read(sig_file).map_err(|e| KnxprodError::io(sig_file, e))?;
-    let b64 = raw.strip_prefix(&UTF8_BOM).unwrap_or(&raw);
+    // ETS `.signature` files are `BOM || base64(sig)`; require the BOM so a
+    // malformed file is rejected rather than silently mis-parsed.
+    let b64 = raw
+        .strip_prefix(&UTF8_BOM)
+        .ok_or_else(|| KnxprodError::Signing("signature file missing UTF-8 BOM".into()))?;
     let sig_bytes = BASE64_STANDARD
         .decode(b64)
         .map_err(|e| KnxprodError::Signing(format!("bad base64 signature: {e}")))?;
