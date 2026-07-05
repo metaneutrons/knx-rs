@@ -1,19 +1,24 @@
 # knx-rs-prod
 
-Cross-platform `.knxprod` generator for KNX ETS product databases — no Windows, no ETS, no .NET required.
+Cross-platform `.knxprod` builder for KNX ETS product databases — pure Rust, no .NET, no Wine, no Windows VM.
 
 Part of the [knx-rs](https://github.com/metaneutrons/knx-rs) repository.
 
 ## What it does
 
-Takes a monolithic KNX product XML and generates a signed `.knxprod` ZIP archive importable by ETS. The XML can come from [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) or be generated from Rust code via an xtask (see [knx-rs README](https://github.com/metaneutrons/knx-rs#generating-knxprod-files)).
-
-The pipeline:
+Takes a monolithic KNX product XML (from [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer), or generated from Rust — see the [knx-rs README](https://github.com/metaneutrons/knx-rs#generating-knxprod-files)) and produces a **signed, ETS-importable** `.knxprod`:
 
 1. **Parse** — extract metadata (namespace, manufacturer ID, application ID)
 2. **Split** — split monolithic XML into Catalog.xml, Hardware.xml, Application.xml
-3. **Sign** — compute registration-relevant MD5 hash, patch fingerprint into IDs
-4. **Package** — ZIP into `.knxprod`
+3. **Hash** — compute the registration-relevant MD5 `Hash` and patch the fingerprint into IDs
+4. **Sign** — RSA-sign the `M-XXXX` folder into `M-XXXX.signature` and embed `knx_master.xml`
+5. **Package** — ZIP into `.knxprod`
+
+## Signing (bring your own ETS key)
+
+ETS validates each product against an RSA-1024 `M-XXXX.signature` produced by the closed-source `Knx.Ets.XmlSigning.dll`, whose signing key is not public. `knx-rs-prod` reimplements the signing **algorithm** — reproducing ETS's output byte-for-byte (verified against a reference `.knxprod`) — but **never ships a key**. You supply a key extracted from **your own licensed ETS installation** (PEM or the .NET `<RSAKeyValue>` XML that `RSA.ToXmlString(true)` emits); it never enters this crate.
+
+Without `--key`, the tool still runs steps 1–3 and 5, producing an **unsigned** archive (not importable by ETS as-is) — e.g. to hand off to OpenKNXproducer for the signing step. Tracking: [issue #9](https://github.com/metaneutrons/knx-rs/issues/9).
 
 ## The hard part: hashing
 
@@ -36,21 +41,35 @@ All 89 registration-relevant element types from the ETS registry are implemented
 ### CLI
 
 ```sh
-cargo install knx-rs-prod
+cargo install knx-rs-prod            # add `--features fetch` for --fetch-master
+
+# Signed, ETS-importable (bring your own ETS key):
+knx-rs-prod MyDevice.xml -o MyDevice.knxprod \
+    --key signing-key.pem --knx-master knx_master.xml
+
+# Unsigned (hash + package only):
 knx-rs-prod MyDevice.xml -o MyDevice.knxprod
 ```
+
+`--key` accepts PEM or .NET `<RSAKeyValue>` XML. `knx_master.xml` is the public KNX master file for your schema version — pass a local copy with `--knx-master`, or `--fetch-master` (requires `--features fetch`) to download it from `update.knx.org`.
 
 ### As a library
 
 ```rust
 use std::path::Path;
-use knx_rs_prod::generate_knxprod;
+use knx_rs_prod::{generate_signed_knxprod, signature::SigningKey, knx_master::KnxMaster};
 
-generate_knxprod(
+let key = SigningKey::from_path(Path::new("signing-key.pem")).unwrap();
+let master = KnxMaster::from_path(Path::new("knx_master.xml")).unwrap();
+generate_signed_knxprod(
     Path::new("MyDevice.xml"),
     Path::new("MyDevice.knxprod"),
-).expect("failed to generate knxprod");
+    &key,
+    &master,
+).expect("failed to generate signed knxprod");
 ```
+
+`generate_knxprod(input, output)` is the unsigned variant.
 
 ### Hash only
 
