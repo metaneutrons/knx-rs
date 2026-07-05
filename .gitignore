@@ -6,3 +6,4 @@ Cargo.lock
 test-vectors/generate
 test-vectors/*.json
 .vscode/
+*.pem
