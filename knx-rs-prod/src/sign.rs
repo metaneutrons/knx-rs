@@ -49,11 +49,13 @@ pub fn sign_application(split: &SplitResult) -> Result<SplitResult, KnxprodError
         ))
     })?;
 
-    // Patch the XML:
-    // 1. Replace Hash="..." attribute value
+    // Compile the fingerprint regex once — reused for the app and every sibling.
+    let fp_re = fingerprint_regex(&old_fingerprint);
+
+    // Patch the application XML: Hash attribute, then the fingerprint in its Id
+    // and all internal refs.
     let patched = patch_hash_attribute(&xml, &new_hash_b64);
-    // 2. Replace old fingerprint with new in _A-XXXX-YY-FFFF pattern only
-    let patched = patch_fingerprint(&patched, &old_fingerprint, &new_fingerprint);
+    let patched = patch_fingerprint(&fp_re, &patched, &new_fingerprint);
 
     // Compute new filename
     let new_filename = filename.replace(&old_fingerprint, &new_fingerprint);
@@ -75,12 +77,18 @@ pub fn sign_application(split: &SplitResult) -> Result<SplitResult, KnxprodError
         .ok_or_else(|| KnxprodError::InvalidStructure("application path has no parent".into()))?;
     for entry in std::fs::read_dir(manu_dir).map_err(|e| KnxprodError::io(manu_dir, e))? {
         let sibling = entry.map_err(|e| KnxprodError::io(manu_dir, e))?.path();
-        if sibling == new_path || sibling.extension().and_then(|s| s.to_str()) != Some("xml") {
+        if sibling == new_path
+            || !sibling.is_file()
+            || sibling
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_none_or(|ext| !ext.eq_ignore_ascii_case("xml"))
+        {
             continue;
         }
         let content =
             std::fs::read_to_string(&sibling).map_err(|e| KnxprodError::io(&sibling, e))?;
-        let fixed = patch_fingerprint(&content, &old_fingerprint, &new_fingerprint);
+        let fixed = patch_fingerprint(&fp_re, &content, &new_fingerprint);
         if fixed != content {
             std::fs::write(&sibling, fixed.as_bytes())
                 .map_err(|e| KnxprodError::io(&sibling, e))?;
@@ -109,15 +117,20 @@ fn patch_hash_attribute(xml: &str, new_hash: &str) -> String {
         .into_owned()
 }
 
-/// Replace the fingerprint in application-program (`_A-XXXX-YY-FFFF`) and
-/// hardware-to-program (`_HP-XXXX-YY-FFFF`) ids throughout the XML. Both embed
-/// the app fingerprint, and ETS keys its lookup dictionaries on them; targets
-/// only the 4-hex-char fingerprint position, not arbitrary occurrences.
+/// Build the fingerprint-replacement regex for `old_fp`, matching both
+/// application-program (`_A-XXXX-YY-FFFF`) and hardware-to-program
+/// (`_HP-XXXX-YY-FFFF`) ids. Both embed the app fingerprint and ETS keys its
+/// lookup dictionaries on them; the regex targets only the 4-hex-char
+/// fingerprint position, not arbitrary occurrences.
 #[allow(clippy::expect_used)]
-fn patch_fingerprint(xml: &str, old_fp: &str, new_fp: &str) -> String {
+fn fingerprint_regex(old_fp: &str) -> Regex {
     let escaped = regex::escape(old_fp);
     let pattern = format!(r"(?i)(_(?:A|HP)-[0-9A-Fa-f]{{4}}-[0-9A-Fa-f]{{2}}-){escaped}");
-    let re = Regex::new(&pattern).expect("valid regex");
+    Regex::new(&pattern).expect("valid regex")
+}
+
+/// Replace the matched fingerprint with `new_fp` using a pre-compiled regex.
+fn patch_fingerprint(re: &Regex, xml: &str, new_fp: &str) -> String {
     re.replace_all(xml, format!("${{1}}{new_fp}")).into_owned()
 }
 
