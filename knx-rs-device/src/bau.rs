@@ -102,8 +102,12 @@ const MEM_EXT_RETURN_OK: u8 = 0x00;
 const MEM_EXT_RETURN_ERROR: u8 = 0xFD;
 /// KNX `ReturnCodes::Success` — service executed successfully.
 const RETURN_CODE_SUCCESS: u8 = 0x00;
+/// KNX `ReturnCodes::AccessReadOnly` — write access to a read-only resource.
+const RETURN_CODE_ACCESS_READ_ONLY: u8 = 0xFB;
 /// KNX `ReturnCodes::AddressVoid` — the addressed resource/property is not present.
 const RETURN_CODE_ADDRESS_VOID: u8 = 0xFD;
+/// KNX `ReturnCodes::GenericError` — the service/command failed.
+const RETURN_CODE_WRITE_FAILED: u8 = 0xFF;
 /// Broadcast group address (raw value 0).
 const BROADCAST_GA: u16 = 0;
 
@@ -1578,8 +1582,12 @@ impl Bau {
         }
     }
 
-    /// Apply an extended property write and return the KNX return code (`0x00`
-    /// success, `0xFD` `AddressVoid` when the object/property does not exist).
+    /// Apply an extended property write and return the KNX return code:
+    /// - `0x00` `Success`;
+    /// - `0xFD` `AddressVoid` when the object or property does not exist;
+    /// - `0xFB` `AccessReadOnly` when the property exists but is read-only;
+    /// - `0xFF` `GenericError` when a writable property rejects the request
+    ///   (e.g. out-of-range start index or too-short data).
     fn apply_ext_property_write(&mut self, params: &ExtPropertyParams, data: &[u8]) -> u8 {
         let Some(idx) = self.find_object_by_type(params.object_type, params.object_instance) else {
             return RETURN_CODE_ADDRESS_VOID;
@@ -1593,10 +1601,19 @@ impl Bau {
         let Some(obj) = self.objects.get_mut(idx as usize) else {
             return RETURN_CODE_ADDRESS_VOID;
         };
+        // Distinguish a missing resource (AddressVoid) from an existing property
+        // that rejects the write — the latter is a read-only violation or a bad
+        // request, never "address does not exist".
+        let Some(writable) = obj.property(pid_enum).map(Property::write_enable) else {
+            return RETURN_CODE_ADDRESS_VOID;
+        };
+        if !writable {
+            return RETURN_CODE_ACCESS_READ_ONLY;
+        }
         if obj.write_property(pid_enum, params.start_index, params.count, data) > 0 {
             RETURN_CODE_SUCCESS
         } else {
-            RETURN_CODE_ADDRESS_VOID
+            RETURN_CODE_WRITE_FAILED
         }
     }
 
@@ -2337,6 +2354,43 @@ mod tests {
         // Out-of-range must be ReturnCodes::AddressVoid (0xFD), not 0x01
         // (SuccessWithCrc). p[2] is the return code.
         assert_eq!(resp.payload()[2], 0xFD);
+    }
+
+    #[test]
+    fn ext_property_write_return_codes_distinguish_readonly_from_missing() {
+        let mut bau = test_bau();
+        let params = |ot: u16, pid: u16| ExtPropertyParams {
+            object_type: ot,
+            object_instance: 1,
+            property_id: pid,
+            count: 1,
+            start_index: 1,
+        };
+
+        // Nonexistent object type → AddressVoid.
+        assert_eq!(
+            bau.apply_ext_property_write(&params(0x0099, 1), &[0]),
+            RETURN_CODE_ADDRESS_VOID
+        );
+        // Device object exists, but ProgramVersion is not one of its properties → AddressVoid.
+        assert_eq!(
+            bau.apply_ext_property_write(&params(0, PropertyId::ProgramVersion as u16), &[0u8; 5]),
+            RETURN_CODE_ADDRESS_VOID
+        );
+        // ManufacturerId exists on the device object but is read-only → AccessReadOnly
+        // (NOT AddressVoid — the resource is present).
+        assert_eq!(
+            bau.apply_ext_property_write(&params(0, PropertyId::ManufacturerId as u16), &[0u8; 2]),
+            RETURN_CODE_ACCESS_READ_ONLY
+        );
+        // Writable ProgramVersion on the application program (OT3) → Success.
+        assert_eq!(
+            bau.apply_ext_property_write(
+                &params(3, PropertyId::ProgramVersion as u16),
+                &[1, 2, 3, 4, 5]
+            ),
+            RETURN_CODE_SUCCESS
+        );
     }
 
     #[test]
