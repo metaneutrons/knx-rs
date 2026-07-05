@@ -28,8 +28,8 @@ pub use encode::{
     encode_key_response, encode_memory_ext_read_response, encode_memory_ext_write_response,
     encode_memory_response, encode_property_description_response,
     encode_property_ext_description_response, encode_property_response,
-    encode_property_value_ext_response, encode_raw_apdu, encode_restart_response,
-    encode_system_network_parameter_response,
+    encode_property_value_ext_response, encode_property_value_ext_write_con_response,
+    encode_raw_apdu, encode_restart_response, encode_system_network_parameter_response,
 };
 pub use parse::{parse_indication, parse_raw_apdu};
 pub use types::{AppIndication, AppLayerError};

@@ -13,7 +13,7 @@ use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
 use knx_rs_core::cemi::CemiFrame;
 use knx_rs_core::message::MessageCode;
 use knx_rs_core::tpdu::Tpdu;
-use knx_rs_core::types::Priority;
+use knx_rs_core::types::{AddressType, Confirm, Priority};
 
 use crate::address_table::AddressTable;
 use crate::application_layer::{self, AppIndication};
@@ -22,7 +22,7 @@ use crate::device_object;
 use crate::group_object::{ComFlag, GroupObjectStore};
 use crate::group_object_table::{GroupObjectDescriptor, GroupObjectTable};
 use crate::interface_object::InterfaceObject;
-use crate::property::{Property, PropertyId};
+use crate::property::{AccessLevel, DataProperty, Property, PropertyDataType, PropertyId};
 use crate::table_object::{MAX_MEMORY_SIZE, TableObject};
 use crate::transport_layer::TransportLayer;
 
@@ -34,41 +34,80 @@ pub const MASK_VERSION_IP: u16 = 0x57B0;
 // Derived from the ObjectType discriminants so the index↔object mapping has a
 // single source of truth (the constructor builds objects in this order).
 
+// Physical interface-object INDICES for the System B object layout
+// (0=Device, 1=AddrTable, 2=AssocTable, 3=GroupObjTable/OT9, 4=AppProgram). ETS
+// addresses interface objects by position, so these are the vec/`table_object`
+// indices — NOT ObjectType discriminants. They coincide for addr/assoc (index ==
+// OT), but the OT9 group-object table sits at index 3 ahead of the application
+// program (OT3), pushing the app program to index 4 where ETS/`.knxprod` address it.
+
 /// Object index for the address table object.
-const OBJ_ADDR_TABLE: u8 = crate::interface_object::ObjectType::AddressTable as u8;
+const OBJ_ADDR_TABLE: u8 = 1;
 /// Object index for the association table object.
-const OBJ_ASSOC_TABLE: u8 = crate::interface_object::ObjectType::AssociationTable as u8;
-/// Object index for the application program object (first user object).
-pub(crate) const OBJ_APP_PROGRAM: u8 =
-    crate::interface_object::ObjectType::ApplicationProgram as u8;
+const OBJ_ASSOC_TABLE: u8 = 2;
+/// Object index for the group object table object (`ObjectType` 9).
+const OBJ_GROUP_OBJ_TABLE: u8 = 3;
+/// Object index for the application program object. Index 4 (NOT the OT3
+/// discriminant): ETS and the `.knxprod` `LdCtrl*` ops address it as `ObjIdx="4"`.
+pub(crate) const OBJ_APP_PROGRAM: u8 = 4;
 
 // ── KNX restart erase codes (KNX 3/5/2) ─────────────────────
 
-/// Erase code: confirmed restart (reset table objects).
-const ERASE_CONFIRMED_RESTART: u8 = 1;
-/// Erase code range: factory reset upper bound.
-const ERASE_FACTORY_RESET_MAX: u8 = 4;
+// KNX master-reset erase codes (KNX 3/5/2, EraseCode enum). Non-contiguous —
+// FactoryReset is 0x02, not the top of a 1..4 range.
+/// Confirmed restart: restart only, no data reset.
+const ERASE_CONFIRMED_RESTART: u8 = 0x01;
+/// Factory reset: full reset including the individual address.
+const ERASE_FACTORY_RESET: u8 = 0x02;
+/// Reset the individual address to the unprogrammed default.
+const ERASE_RESET_IA: u8 = 0x03;
+/// Reset the application program.
+const ERASE_RESET_AP: u8 = 0x04;
+/// Reset parameters.
+const ERASE_RESET_PARAM: u8 = 0x05;
+/// Reset group links (address + association tables).
+const ERASE_RESET_LINKS: u8 = 0x06;
+/// Factory reset keeping the individual address.
+const ERASE_FACTORY_RESET_WITHOUT_IA: u8 = 0x07;
+/// Unprogrammed default individual address (15.15.255).
+const DEFAULT_INDIVIDUAL_ADDRESS: u16 = 0xFFFF;
 
 // ── KNX system network parameter constants ───────────────────
 
 /// Property ID for serial number (KNX system network parameter read).
 const PID_SERIAL_NUMBER: u16 = 11;
+/// `A_SystemNetworkParameter_Read` operand `NM_Read_SerialNumber_By_ProgrammingMode`
+/// (KNX 3/5/2): read the serial number of devices currently in programming mode.
+const NM_READ_SERIAL_BY_PROG_MODE: u8 = 0x01;
 /// Object type for the device object.
 const OBJECT_TYPE_DEVICE: u16 = 0;
 /// Domain address for IP devices (always 0).
 const DOMAIN_ADDRESS_IP: u16 = 0;
 /// Restart response: no error.
 const RESTART_ERROR_CODE_OK: u8 = 0;
-/// Restart response: zero process time.
+/// Restart response: unsupported erase code (KNX ref `invalidEraseCode`).
+const RESTART_ERROR_CODE_UNSUPPORTED: u8 = 0x02;
+/// Restart response: zero process time (used on error).
 const RESTART_PROCESS_TIME_ZERO: u16 = 0;
+/// Restart response: default process time in seconds (KNX ref `kRestartProcessTime`).
+const RESTART_PROCESS_TIME_DEFAULT: u16 = 3;
 /// Default ADC value (no ADC hardware).
 const ADC_VALUE_DEFAULT: u16 = 0;
 /// Authorization level: full access (no restrictions).
 const AUTH_LEVEL_FULL: u8 = 0;
-/// Memory extended read/write return code: success.
-const MEM_EXT_RETURN_OK: u8 = 0;
-/// Memory extended read/write return code: error (out of range).
-const MEM_EXT_RETURN_ERROR: u8 = 1;
+/// Memory extended read/write return code: success (KNX `ReturnCodes::Success`).
+const MEM_EXT_RETURN_OK: u8 = 0x00;
+/// Memory extended read/write return code: address out of range (KNX
+/// `ReturnCodes::AddressVoid`). NB 0x01 is `SuccessWithCrc`, not an error.
+const MEM_EXT_RETURN_ERROR: u8 = 0xFD;
+/// KNX `ReturnCodes::Success` — service executed successfully.
+const RETURN_CODE_SUCCESS: u8 = 0x00;
+/// KNX `ReturnCodes::AccessReadOnly` — write access to a read-only resource.
+const RETURN_CODE_ACCESS_READ_ONLY: u8 = 0xFB;
+/// KNX `ReturnCodes::AddressVoid` — the addressed resource/property is not present.
+const RETURN_CODE_ADDRESS_VOID: u8 = 0xFD;
+/// KNX `ReturnCodes::GenericError` — the service/command failed.
+const RETURN_CODE_WRITE_FAILED: u8 = 0xFF;
 /// Broadcast group address (raw value 0).
 const BROADCAST_GA: u16 = 0;
 
@@ -95,7 +134,11 @@ pub struct Bau {
     pub(crate) assoc_table_object: TableObject,
     /// Application program table object (Load State Machine for ETS programming).
     pub(crate) app_program_object: TableObject,
-    /// Group object table.
+    /// Group object table object (OT9 Load State Machine). For a compiled-in
+    /// (logical-only) group-object table this stays `Loaded`; it exists so ETS
+    /// sees an OT9 object at index 3, keeping the app program at index 4.
+    pub(crate) group_object_table_object: TableObject,
+    /// Group object table (logical descriptor data, compiled into firmware).
     pub(crate) group_object_table: GroupObjectTable,
     /// Group objects.
     pub(crate) group_objects: GroupObjectStore,
@@ -105,6 +148,39 @@ pub struct Bau {
     memory_area: Vec<u8>,
     /// Outgoing frame queue.
     outbox: VecDeque<CemiFrame>,
+    /// Set when an `A_Restart` requests a device restart; the host consumes it via
+    /// [`take_restart_pending`](Self::take_restart_pending) to persist and re-init.
+    restart_pending: bool,
+}
+
+/// The destination address type a connectionless application service must be
+/// carried on to be acted upon (mirrors the C++ `dataGroupIndication` /
+/// `dataBroadcastIndication` / `dataIndividualIndication` split).
+#[derive(PartialEq, Eq)]
+enum AddrScope {
+    /// A non-broadcast group address.
+    Group,
+    /// The broadcast address (group address 0).
+    Broadcast,
+    /// This device's own individual address.
+    Individual,
+}
+
+/// The address scope a connectionless `indication`'s service must be received on.
+const fn required_scope(indication: &AppIndication) -> AddrScope {
+    match indication {
+        AppIndication::GroupValueWrite { .. }
+        | AppIndication::GroupValueRead { .. }
+        | AppIndication::GroupValueResponse { .. } => AddrScope::Group,
+        AppIndication::IndividualAddressWrite { .. }
+        | AppIndication::IndividualAddressRead
+        | AppIndication::IndividualAddressSerialNumberRead { .. }
+        | AppIndication::IndividualAddressSerialNumberWrite { .. }
+        | AppIndication::SystemNetworkParameterRead { .. } => AddrScope::Broadcast,
+        // Management, memory, property, descriptor, restart and authorize/key are
+        // point-to-point services addressed to this device's individual address.
+        _ => AddrScope::Individual,
+    }
 }
 
 impl Bau {
@@ -114,25 +190,91 @@ impl Bau {
     /// can be added with `add_object()`.
     pub fn new(device: InterfaceObject, group_object_count: u16, default_go_size: usize) -> Self {
         use crate::application_program::new_application_program_object;
+        use crate::group_object_table::new_group_object_table_object;
         use crate::interface_object::ObjectType;
 
-        // Standard object layout: 0=Device, 1=AddrTable, 2=AssocTable, 3=AppProgram
+        // System B object layout: 0=Device, 1=AddrTable, 2=AssocTable,
+        // 3=GroupObjTable (OT9), 4=AppProgram. The OT9 object at index 3 keeps
+        // the application program at index 4, where ETS/`.knxprod` address it.
         let addr_table_obj = InterfaceObject::new(ObjectType::AddressTable);
         let assoc_table_obj = InterfaceObject::new(ObjectType::AssociationTable);
+        let group_obj_table_obj = new_group_object_table_object();
         let app_program_obj = new_application_program_object();
 
-        Self {
-            objects: vec![device, addr_table_obj, assoc_table_obj, app_program_obj],
+        let mut bau = Self {
+            objects: vec![
+                device,
+                addr_table_obj,
+                assoc_table_obj,
+                group_obj_table_obj,
+                app_program_obj,
+            ],
             address_table: AddressTable::new(),
             association_table: AssociationTable::new(),
             addr_table_object: TableObject::new(),
             assoc_table_object: TableObject::new(),
             app_program_object: TableObject::new(),
+            // Logical-only group-object table: compiled into firmware, never
+            // downloaded, so its load-state machine reports Loaded from the start.
+            group_object_table_object: TableObject::new_loaded(),
             group_object_table: GroupObjectTable::new(),
             group_objects: GroupObjectStore::new(group_object_count, default_go_size),
             transport: TransportLayer::new(),
             memory_area: Vec::new(),
             outbox: VecDeque::new(),
+            restart_pending: false,
+        };
+        bau.install_io_list();
+        bau
+    }
+
+    /// Whether an `A_Restart` has requested a device restart since the last
+    /// [`take_restart_pending`](Self::take_restart_pending). Read-only peek.
+    pub const fn restart_requested(&self) -> bool {
+        self.restart_pending
+    }
+
+    /// Consume the pending-restart flag: returns `true` if an `A_Restart` was
+    /// received since the last call, and clears it. The host should persist any
+    /// downloaded state and re-initialize its `KNX` stack when this returns `true`.
+    pub const fn take_restart_pending(&mut self) -> bool {
+        let pending = self.restart_pending;
+        self.restart_pending = false;
+        pending
+    }
+
+    /// Populate the device object's `PID_IO_LIST` (property 71) from the current
+    /// interface-object layout, so ETS can enumerate the device's objects.
+    ///
+    /// Element `i` is object `i`'s `ObjectType` as a big-endian `u16`, in index
+    /// order — e.g. `[Device(0), AddrTable(1), AssocTable(2), GroupObjTable(9),
+    /// AppProgram(3)]`. `max_elements` is set to the element count so the
+    /// `startIndex == 0` element-count read (which `handle_property_read` derives
+    /// from `max_elements`) matches the number of readable elements.
+    ///
+    /// Called once at construction. Objects appended later via [`add_object`] are
+    /// not reflected (the standard System B object set is fixed at construction).
+    ///
+    /// [`add_object`]: Self::add_object
+    fn install_io_list(&mut self) {
+        let bytes: Vec<u8> = self
+            .objects
+            .iter()
+            .flat_map(|o| (o.object_type() as u16).to_be_bytes())
+            .collect();
+        let count = u16::try_from(self.objects.len()).unwrap_or(u16::MAX);
+        if let Some(device) = self.objects.first_mut() {
+            device.add_property(
+                DataProperty::new(
+                    PropertyId::IoList,
+                    false,
+                    PropertyDataType::UnsignedInt,
+                    count,
+                    AccessLevel::None,
+                    &bytes,
+                )
+                .into(),
+            );
         }
     }
 
@@ -224,6 +366,7 @@ impl Bau {
         match object_index {
             OBJ_ADDR_TABLE => Some(&self.addr_table_object),
             OBJ_ASSOC_TABLE => Some(&self.assoc_table_object),
+            OBJ_GROUP_OBJ_TABLE => Some(&self.group_object_table_object),
             // Exactly the application-program object; user objects added at
             // higher indices have no shared table.
             OBJ_APP_PROGRAM => Some(&self.app_program_object),
@@ -236,6 +379,7 @@ impl Bau {
         match object_index {
             OBJ_ADDR_TABLE => Some(&mut self.addr_table_object),
             OBJ_ASSOC_TABLE => Some(&mut self.assoc_table_object),
+            OBJ_GROUP_OBJ_TABLE => Some(&mut self.group_object_table_object),
             OBJ_APP_PROGRAM => Some(&mut self.app_program_object),
             _ => None,
         }
@@ -251,6 +395,15 @@ impl Bau {
     /// `now_ms` is the current monotonic time in milliseconds, used for
     /// transport layer timeouts and retry logic.
     pub fn process_frame(&mut self, frame: &CemiFrame, now_ms: u64) {
+        // An L_Data.con is the local confirmation of a frame WE sent, not an
+        // incoming service. Route it to the transmit-confirmation path and never
+        // fall through to indication dispatch — otherwise the device would parse
+        // its own echoed group write as a fresh incoming write.
+        if frame.message_code_raw() == MessageCode::LDataCon as u8 {
+            self.handle_transmit_confirmation(frame);
+            return;
+        }
+
         let Some(tpdu) = frame.tpdu() else { return };
 
         match &tpdu {
@@ -325,12 +478,32 @@ impl Bau {
                 now_ms,
             );
         } else {
-            // Connectionless: DataGroup, DataBroadcast, DataIndividual
+            // Connectionless: DataGroup, DataBroadcast, DataIndividual. Gate by
+            // address type (mirrors the C++ data{Group,Broadcast,Individual}
+            // Indication split): group services only on a group address, broadcast
+            // services only on the broadcast address, and management/memory/
+            // property services only when the frame is addressed to THIS device's
+            // individual address — never to another device's, or as a broadcast.
             let Ok(indication) = application_layer::parse_indication(apdu.apdu_type, &apdu.data)
             else {
                 return;
             };
+            if !self.indication_in_scope(frame, &indication) {
+                return;
+            }
             self.dispatch_indication(frame, source, indication);
+        }
+    }
+
+    /// Whether a connectionless `indication` arrived on the destination address
+    /// type its service requires (see [`required_scope`]).
+    fn indication_in_scope(&self, frame: &CemiFrame, indication: &AppIndication) -> bool {
+        let is_group = frame.address_type() == AddressType::Group;
+        let dst = frame.destination_address_raw();
+        match required_scope(indication) {
+            AddrScope::Group => is_group && dst != 0,
+            AddrScope::Broadcast => is_group && dst == 0,
+            AddrScope::Individual => !is_group && dst == self.individual_address().raw(),
         }
     }
 
@@ -448,9 +621,25 @@ impl Bau {
             AppIndication::KeyWrite { level, key: _ } => {
                 self.queue_key_response(source, level);
             }
-            // Restart (non-master-reset) is handled at the transport level, not here.
+            AppIndication::Restart => {
+                self.handle_basic_restart();
+            }
             _ => {}
         }
+    }
+
+    /// Handle a plain `A_Restart` (`BasicRestart`, APCI 0x380).
+    ///
+    /// Emits NO response (only a master reset returns a `RestartMasterResetResponse`).
+    /// Actively drops the open connection so the programming tool sees it go away
+    /// — the observable analogue of the reboot in the C++ reference, where the
+    /// restart tears down the `T_Connect` ETS opened — and flags a restart for the
+    /// host to act on (persist downloaded state, re-initialize). A malformed
+    /// `A_Restart` with reserved bits set never reaches here: the exact APCI match
+    /// (0x380) rejects it during decode.
+    fn handle_basic_restart(&mut self) {
+        self.transport.disconnect_request();
+        self.restart_pending = true;
     }
 
     fn dispatch_property_services(&mut self, source: IndividualAddress, indication: AppIndication) {
@@ -640,25 +829,59 @@ impl Bau {
                 _ => break,
             };
 
-            // Resolve the destination group address for this ASAP.
-            let ga = self
-                .association_table
-                .translate_asap(asap)
-                .and_then(|tsap| self.address_table.get_group_address(tsap));
-
             // The flag MUST always advance out of the pending state, otherwise
             // next_pending() reselects the same ASAP and poll() spins forever.
             // An unmapped ASAP transitions to Error rather than hanging.
-            let new_flag = ga.map_or(ComFlag::Error, |ga| {
-                match &write_data {
-                    Some(data) => self.queue_group_value_write(ga, data),
-                    None => self.queue_group_value_read(ga),
-                }
-                ComFlag::Transmitting
-            });
+            let new_flag = self
+                .resolve_group_address(asap)
+                .map_or(ComFlag::Error, |ga| {
+                    match &write_data {
+                        Some(data) => self.queue_group_value_write(ga, data),
+                        None => self.queue_group_value_read(ga),
+                    }
+                    ComFlag::Transmitting
+                });
 
             if let Some(go) = self.group_objects.get_mut(asap) {
                 go.set_comm_flag(new_flag);
+            }
+        }
+    }
+
+    /// Resolve the destination group address a group object (`asap`) sends to,
+    /// via the association table (ASAP → TSAP) and address table (TSAP → GA).
+    fn resolve_group_address(&self, asap: u16) -> Option<u16> {
+        self.association_table
+            .translate_asap(asap)
+            .and_then(|tsap| self.address_table.get_group_address(tsap))
+    }
+
+    /// Handle an `L_Data.con` (local transmit confirmation) for a frame the device
+    /// sent. For a group-addressed confirmation, advance the group object that is
+    /// transmitting to that group address out of `Transmitting` — to `Ok` on a
+    /// positive confirmation, `Error` on a negative one (cEMI ctrl1 bit 0). This
+    /// is what lets the application observe that a sent value went out (or failed)
+    /// instead of leaving the object stuck in `Transmitting`.
+    fn handle_transmit_confirmation(&mut self, frame: &CemiFrame) {
+        if frame.address_type() != AddressType::Group {
+            return; // Only group sends carry group-object transmit state.
+        }
+        let ga = frame.destination_address_raw();
+        let success = frame.confirm() == Confirm::NoError;
+        // Find the object currently transmitting to this GA. Correlating by group
+        // address (rather than a send-order queue) keeps the state in the object's
+        // own flag — no unbounded bookkeeping if a confirmation never arrives.
+        for asap in 1..=self.group_objects.count() {
+            let is_match = self
+                .group_objects
+                .get(asap)
+                .is_some_and(|go| go.comm_flag() == ComFlag::Transmitting)
+                && self.resolve_group_address(asap) == Some(ga);
+            if is_match {
+                if let Some(go) = self.group_objects.get_mut(asap) {
+                    go.transmit_done(success);
+                }
+                break;
             }
         }
     }
@@ -694,43 +917,62 @@ impl Bau {
     /// Check if the device is fully configured (all tables loaded).
     pub fn configured(&self) -> bool {
         use crate::property::LoadState;
+        // System B activation gate (mirrors bau_systemB_device.cpp::configured):
+        // group communication is enabled only when every downloadable table AND
+        // the application program report Loaded. The group-object table is
+        // logical-only on this device (compiled in) and initialized Loaded, so in
+        // practice this reduces to addr table + assoc table + application program.
         self.addr_table_object.load_state() == LoadState::Loaded
             && self.assoc_table_object.load_state() == LoadState::Loaded
+            && self.group_object_table_object.load_state() == LoadState::Loaded
+            && self.app_program_object.load_state() == LoadState::Loaded
     }
 
     /// Consume transport layer actions and convert them to outgoing frames.
+    ///
+    /// Loops until no actions remain: dispatching a connected indication (e.g. an
+    /// `A_Restart`) can itself queue new transport actions (a `T_Disconnect`), and
+    /// draining them in the same call emits the frame promptly instead of leaving
+    /// it until the next poll. Terminates because no drained action re-queues
+    /// unboundedly.
     fn drain_transport_actions(&mut self) {
         use crate::transport_layer::Action;
-        for action in self.transport.take_actions() {
-            match action {
-                Action::SendControl {
-                    destination,
-                    tpdu_type,
-                    seq_no,
-                } => {
-                    self.queue_control_frame(destination, tpdu_type, seq_no);
-                }
-                Action::SendDataConnected {
-                    destination,
-                    seq_no,
-                    priority,
-                    apdu,
-                } => {
-                    self.queue_data_connected_frame(destination, seq_no, priority, &apdu);
-                }
-                Action::ConnectIndication { .. }
-                | Action::ConnectConfirm { .. }
-                | Action::DisconnectIndication { .. }
-                | Action::DataConnectedConfirm => {}
-                Action::DataConnectedIndication {
-                    source,
-                    priority: _,
-                    apdu,
-                } => {
-                    // Connected data received — parse and dispatch
-                    if let Ok(parsed) = application_layer::parse_raw_apdu(&apdu) {
-                        // Create a minimal frame for dispatch_indication (source needed)
-                        self.dispatch_connected_indication(source, parsed);
+        loop {
+            let actions = self.transport.take_actions();
+            if actions.is_empty() {
+                break;
+            }
+            for action in actions {
+                match action {
+                    Action::SendControl {
+                        destination,
+                        tpdu_type,
+                        seq_no,
+                    } => {
+                        self.queue_control_frame(destination, tpdu_type, seq_no);
+                    }
+                    Action::SendDataConnected {
+                        destination,
+                        seq_no,
+                        priority,
+                        apdu,
+                    } => {
+                        self.queue_data_connected_frame(destination, seq_no, priority, &apdu);
+                    }
+                    Action::ConnectIndication { .. }
+                    | Action::ConnectConfirm { .. }
+                    | Action::DisconnectIndication { .. }
+                    | Action::DataConnectedConfirm => {}
+                    Action::DataConnectedIndication {
+                        source,
+                        priority: _,
+                        apdu,
+                    } => {
+                        // Connected data received — parse and dispatch
+                        if let Ok(parsed) = application_layer::parse_raw_apdu(&apdu) {
+                            // Create a minimal frame for dispatch_indication (source needed)
+                            self.dispatch_connected_indication(source, parsed);
+                        }
                     }
                 }
             }
@@ -876,6 +1118,11 @@ impl Bau {
             PropertyId::LoadStateControl => Some(vec![to.load_state() as u8]),
             PropertyId::TableReference => Some(to.table_reference().to_be_bytes().to_vec()),
             PropertyId::McbTable => Some(to.mcb_table(&self.memory_area).to_vec()),
+            // Serve the live load error from the table object's own state (so it
+            // reflects a real download fault), for every table object including
+            // the address/association tables whose bare InterfaceObjects carry no
+            // static ErrorCode property.
+            PropertyId::ErrorCode => Some(vec![to.error_code() as u8]),
             _ => None,
         }
     }
@@ -987,19 +1234,84 @@ impl Bau {
     }
 
     fn handle_restart_master_reset(&mut self, source: IndividualAddress, erase_code: u8) {
-        if let ERASE_CONFIRMED_RESTART..=ERASE_FACTORY_RESET_MAX = erase_code {
-            self.addr_table_object = TableObject::new();
-            self.assoc_table_object = TableObject::new();
-            self.app_program_object = TableObject::new();
-            self.address_table = AddressTable::new();
-            self.association_table = AssociationTable::new();
-            self.memory_area.clear();
-        }
-        let payload = application_layer::encode_restart_response(
-            RESTART_ERROR_CODE_OK,
-            RESTART_PROCESS_TIME_ZERO,
-        );
+        let error_code = Self::master_reset_error_code(erase_code);
+        let process_time = if error_code == RESTART_ERROR_CODE_OK {
+            RESTART_PROCESS_TIME_DEFAULT
+        } else {
+            RESTART_PROCESS_TIME_ZERO
+        };
+
+        // Send the response first — ETS waits for the RestartMasterResetResponse
+        // before the connection drops (mirrors the C++ restartResponse ordering).
+        let payload = application_layer::encode_restart_response(error_code, process_time);
         self.queue_individual_frame(source, Priority::System, &payload);
+
+        if error_code != RESTART_ERROR_CODE_OK {
+            return; // Unsupported erase code: no reset, no restart.
+        }
+
+        self.apply_master_reset(erase_code);
+        // A master reset reboots in the C++ reference; the soft-device analogue is
+        // to flag the host and drop the connection (as a basic restart does).
+        self.restart_pending = true;
+        self.transport.disconnect_request();
+    }
+
+    /// Validate a master-reset erase code (mirrors
+    /// `bau_systemB.cpp::checkmasterResetValidity`): codes 1..=7 are supported
+    /// (error `0x00`); anything else (including `Void` = 0) is unsupported (`0x02`).
+    const fn master_reset_error_code(erase_code: u8) -> u8 {
+        match erase_code {
+            ERASE_CONFIRMED_RESTART..=ERASE_FACTORY_RESET_WITHOUT_IA => RESTART_ERROR_CODE_OK,
+            _ => RESTART_ERROR_CODE_UNSUPPORTED,
+        }
+    }
+
+    /// Apply the reset scope for a validated erase code. The C++ reference stubs
+    /// the actual erasure (returns success without wiping); this performs a
+    /// conservative, per-code reset. Confirmed restart never erases.
+    fn apply_master_reset(&mut self, erase_code: u8) {
+        #[expect(
+            clippy::match_same_arms,
+            reason = "ConfirmedRestart is an explicit documented no-op, distinct \
+                      from the unreachable catch-all for pre-validated codes"
+        )]
+        match erase_code {
+            ERASE_CONFIRMED_RESTART => {} // Restart only — no data reset.
+            ERASE_RESET_IA => {
+                device_object::set_individual_address(
+                    self.device_mut(),
+                    DEFAULT_INDIVIDUAL_ADDRESS,
+                );
+            }
+            ERASE_RESET_LINKS => self.reset_link_tables(),
+            ERASE_RESET_AP | ERASE_RESET_PARAM => {
+                self.app_program_object = TableObject::new();
+            }
+            // Factory reset: full configuration wipe. FactoryReset(2) also clears
+            // the individual address; FactoryResetWithoutIA(7) keeps it.
+            ERASE_FACTORY_RESET | ERASE_FACTORY_RESET_WITHOUT_IA => {
+                self.reset_link_tables();
+                self.app_program_object = TableObject::new();
+                self.memory_area.clear();
+                if erase_code == ERASE_FACTORY_RESET {
+                    device_object::set_individual_address(
+                        self.device_mut(),
+                        DEFAULT_INDIVIDUAL_ADDRESS,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Reset the group-link tables (address + association) and their load-state
+    /// objects to unloaded/empty.
+    fn reset_link_tables(&mut self) {
+        self.addr_table_object = TableObject::new();
+        self.assoc_table_object = TableObject::new();
+        self.address_table = AddressTable::new();
+        self.association_table = AssociationTable::new();
     }
 
     fn handle_property_description_read(
@@ -1115,8 +1427,16 @@ impl Bau {
         property_id: u16,
         test_info: &[u8],
     ) {
-        // Only respond to PID_SERIAL_NUMBER on device object
-        if object_type == OBJECT_TYPE_DEVICE && property_id == PID_SERIAL_NUMBER {
+        // KNX 3/5/2: only answer the serial-number-by-programming-mode operand
+        // (test_info[1]; test_info[0] is 4 reserved bits), for the device serial
+        // number, and ONLY while in programming mode. Without the operand+prog-mode
+        // gate every unprogrammed device on the bus would answer this broadcast.
+        let operand = test_info.get(1).copied().unwrap_or(0);
+        if operand == NM_READ_SERIAL_BY_PROG_MODE
+            && object_type == OBJECT_TYPE_DEVICE
+            && property_id == PID_SERIAL_NUMBER
+            && device_object::prog_mode(self.device())
+        {
             let serial = device_object::serial_number(self.device());
             let payload = application_layer::encode_system_network_parameter_response(
                 object_type,
@@ -1153,22 +1473,30 @@ impl Bau {
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
-    fn queue_adc_response(&mut self, destination: IndividualAddress, channel: u8, count: u8) {
-        let payload = application_layer::encode_adc_response(channel, count, ADC_VALUE_DEFAULT);
+    fn queue_adc_response(&mut self, destination: IndividualAddress, channel: u8, _count: u8) {
+        // No ADC hardware: the response read-count and value are both 0 (the C++
+        // reference hardcodes read-count 0 rather than echoing the request count).
+        let payload = application_layer::encode_adc_response(channel, 0, ADC_VALUE_DEFAULT);
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
     /// Find an interface object index by object type and instance number.
+    ///
+    /// The object instance is **1-based** on the wire (instance 1 = the first
+    /// object of that type), per KNX extended-property services. The C++ reference
+    /// ignores the instance entirely (one object per type), so matching the first
+    /// object for instance 1 is the faithful behavior; higher instances select
+    /// further objects of the same type if present.
     fn find_object_by_type(&self, object_type: u16, instance: u16) -> Option<u8> {
         let target = crate::interface_object::ObjectType::try_from(object_type).ok()?;
         let mut instance_count = 0u16;
         for (i, obj) in self.objects.iter().enumerate() {
             let Ok(idx) = u8::try_from(i) else { break };
             if obj.object_type() == target {
+                instance_count += 1;
                 if instance_count == instance {
                     return Some(idx);
                 }
-                instance_count += 1;
             }
         }
         None
@@ -1238,37 +1566,54 @@ impl Bau {
         data: &[u8],
         confirmed: bool,
     ) {
-        let obj_idx = self.find_object_by_type(params.object_type, params.object_instance);
-        if let Some(idx) = obj_idx {
-            let Ok(pid) = u8::try_from(params.property_id) else {
-                if confirmed {
-                    self.queue_ext_property_error(
-                        source,
-                        params.object_type,
-                        params.object_instance,
-                        params.property_id,
-                        params.start_index,
-                    );
-                }
-                return;
-            };
-            if let Ok(pid_enum) = PropertyId::try_from(pid) {
-                if let Some(obj) = self.objects.get_mut(idx as usize) {
-                    obj.write_property(pid_enum, params.start_index, params.count, data);
-                }
-            }
-        }
+        let return_code = self.apply_ext_property_write(params, data);
         if confirmed {
-            // Send write confirmation response
-            let payload = application_layer::encode_property_value_ext_response(
+            // Confirm with a PropertyValueExtWriteConResponse carrying the return
+            // code (NOT a PropertyValueExtResponse) — matching the C++ reference.
+            let payload = application_layer::encode_property_value_ext_write_con_response(
                 params.object_type,
                 params.object_instance,
                 params.property_id,
                 params.count,
                 params.start_index,
-                &[],
+                return_code,
             );
             self.queue_individual_frame(source, Priority::System, &payload);
+        }
+    }
+
+    /// Apply an extended property write and return the KNX return code:
+    /// - `0x00` `Success`;
+    /// - `0xFD` `AddressVoid` when the object or property does not exist;
+    /// - `0xFB` `AccessReadOnly` when the property exists but is read-only;
+    /// - `0xFF` `GenericError` when a writable property rejects the request
+    ///   (e.g. out-of-range start index or too-short data).
+    fn apply_ext_property_write(&mut self, params: &ExtPropertyParams, data: &[u8]) -> u8 {
+        let Some(idx) = self.find_object_by_type(params.object_type, params.object_instance) else {
+            return RETURN_CODE_ADDRESS_VOID;
+        };
+        let Ok(pid) = u8::try_from(params.property_id) else {
+            return RETURN_CODE_ADDRESS_VOID;
+        };
+        let Ok(pid_enum) = PropertyId::try_from(pid) else {
+            return RETURN_CODE_ADDRESS_VOID;
+        };
+        let Some(obj) = self.objects.get_mut(idx as usize) else {
+            return RETURN_CODE_ADDRESS_VOID;
+        };
+        // Distinguish a missing resource (AddressVoid) from an existing property
+        // that rejects the write — the latter is a read-only violation or a bad
+        // request, never "address does not exist".
+        let Some(writable) = obj.property(pid_enum).map(Property::write_enable) else {
+            return RETURN_CODE_ADDRESS_VOID;
+        };
+        if !writable {
+            return RETURN_CODE_ACCESS_READ_ONLY;
+        }
+        if obj.write_property(pid_enum, params.start_index, params.count, data) > 0 {
+            RETURN_CODE_SUCCESS
+        } else {
+            RETURN_CODE_WRITE_FAILED
         }
     }
 
@@ -1502,6 +1847,21 @@ mod tests {
         bau
     }
 
+    /// Drive the address, association, and application-program table objects to
+    /// `Loaded` — the minimum for `configured()` (the group-object table is
+    /// logical-Loaded from construction). Use in fixtures that need the device
+    /// activated without exercising a full download.
+    fn mark_configured(bau: &mut Bau) {
+        for to in [
+            &mut bau.addr_table_object,
+            &mut bau.assoc_table_object,
+            &mut bau.app_program_object,
+        ] {
+            to.handle_load_event(&[1], 0); // StartLoading
+            to.handle_load_event(&[2], 0); // LoadCompleted
+        }
+    }
+
     const SRC_1102: IndividualAddress = IndividualAddress::from_raw(0x1102);
     const SRC_1101: IndividualAddress = IndividualAddress::from_raw(0x1101);
 
@@ -1539,10 +1899,7 @@ mod tests {
     fn poll_sends_pending_writes() {
         let mut bau = test_bau();
         // Mark tables as loaded so configured() returns true
-        bau.addr_table_object.handle_load_event(&[1], 0);
-        bau.addr_table_object.handle_load_event(&[2], 0);
-        bau.assoc_table_object.handle_load_event(&[1], 0);
-        bau.assoc_table_object.handle_load_event(&[2], 0);
+        mark_configured(&mut bau);
 
         bau.group_objects_mut()
             .get_mut(1)
@@ -1714,12 +2071,21 @@ mod tests {
     }
 
     #[test]
-    fn restart_master_reset_clears_memory() {
+    fn restart_master_reset_factory_clears_memory_but_confirmed_restart_does_not() {
         let mut bau = handler_test_bau();
         bau.handle_memory_write(0x0000, &[0xDE, 0xAD, 0xBE, 0xEF]);
         assert_eq!(bau.memory_area.len(), 4);
 
-        bau.handle_restart_master_reset(SRC_1102, 1);
+        // ConfirmedRestart (1) must NOT erase anything.
+        bau.handle_restart_master_reset(SRC_1102, ERASE_CONFIRMED_RESTART);
+        assert_eq!(
+            bau.memory_area.len(),
+            4,
+            "confirmed restart must not clear memory"
+        );
+
+        // FactoryReset (2) wipes the parameter memory.
+        bau.handle_restart_master_reset(SRC_1102, ERASE_FACTORY_RESET);
         assert!(bau.memory_area.is_empty());
     }
 
@@ -1727,14 +2093,16 @@ mod tests {
     fn restart_master_reset_resets_table_objects() {
         let mut bau = handler_test_bau();
         // Transition tables to Loaded state
-        bau.addr_table_object.handle_load_event(&[1], 0);
-        bau.addr_table_object.handle_load_event(&[2], 0);
-        bau.assoc_table_object.handle_load_event(&[1], 0);
-        bau.assoc_table_object.handle_load_event(&[2], 0);
+        mark_configured(&mut bau);
         assert_eq!(bau.addr_table_object.load_state(), LoadState::Loaded);
         assert_eq!(bau.assoc_table_object.load_state(), LoadState::Loaded);
 
-        bau.handle_restart_master_reset(SRC_1102, 1);
+        // ConfirmedRestart leaves the load state intact.
+        bau.handle_restart_master_reset(SRC_1102, ERASE_CONFIRMED_RESTART);
+        assert_eq!(bau.addr_table_object.load_state(), LoadState::Loaded);
+
+        // FactoryReset unloads every table object.
+        bau.handle_restart_master_reset(SRC_1102, ERASE_FACTORY_RESET);
         assert_eq!(bau.addr_table_object.load_state(), LoadState::Unloaded);
         assert_eq!(bau.assoc_table_object.load_state(), LoadState::Unloaded);
         assert_eq!(bau.app_program_object.load_state(), LoadState::Unloaded);
@@ -1748,6 +2116,91 @@ mod tests {
             .next_outgoing_frame()
             .expect("expected restart response");
         assert_eq!(resp.destination_address_raw(), 0x1102);
+    }
+
+    #[test]
+    fn master_reset_validity_and_response_bytes() {
+        // Erase codes 1..=7 are supported (error 0x00, process time 3); Void (0)
+        // and >= 8 are unsupported (error 0x02, process time 0). The response
+        // always sets the response bit (low APCI octet 0xA1).
+        for code in 0u8..=9 {
+            let mut bau = handler_test_bau();
+            bau.handle_restart_master_reset(SRC_1102, code);
+            let resp = bau.next_outgoing_frame().expect("a response frame");
+            let p = resp.payload();
+            assert_eq!(p[0], 0x03, "code {code}: APCI high byte");
+            assert_eq!(p[1], 0xA1, "code {code}: response bit set");
+
+            let supported =
+                (ERASE_CONFIRMED_RESTART..=ERASE_FACTORY_RESET_WITHOUT_IA).contains(&code);
+            let expected_err = if supported { 0x00 } else { 0x02 };
+            let expected_pt: [u8; 2] = if supported {
+                [0x00, 0x03]
+            } else {
+                [0x00, 0x00]
+            };
+            assert_eq!(p[2], expected_err, "code {code}: error byte");
+            assert_eq!(&p[3..5], &expected_pt, "code {code}: process time");
+        }
+    }
+
+    #[test]
+    fn master_reset_per_code_scope() {
+        // ResetIA (3): only the individual address is reset to the default.
+        let mut bau = handler_test_bau();
+        mark_configured(&mut bau);
+        bau.handle_memory_write(0x0000, &[0xAA]);
+        bau.handle_restart_master_reset(SRC_1102, ERASE_RESET_IA);
+        assert_eq!(bau.individual_address().raw(), DEFAULT_INDIVIDUAL_ADDRESS);
+        assert_eq!(
+            bau.addr_table_object.load_state(),
+            LoadState::Loaded,
+            "ResetIA must not touch the link tables"
+        );
+        assert_eq!(bau.memory_area.len(), 1, "ResetIA must not clear memory");
+
+        // ResetLinks (6): address + association tables are cleared, IA kept.
+        let mut bau = handler_test_bau();
+        mark_configured(&mut bau);
+        let ia = bau.individual_address().raw();
+        bau.handle_restart_master_reset(SRC_1102, ERASE_RESET_LINKS);
+        assert_eq!(bau.addr_table_object.load_state(), LoadState::Unloaded);
+        assert_eq!(bau.assoc_table_object.load_state(), LoadState::Unloaded);
+        assert_eq!(
+            bau.app_program_object.load_state(),
+            LoadState::Loaded,
+            "ResetLinks must not unload the application program"
+        );
+        assert_eq!(
+            bau.individual_address().raw(),
+            ia,
+            "ResetLinks keeps the IA"
+        );
+
+        // ResetAP (4): only the application program is unloaded.
+        let mut bau = handler_test_bau();
+        mark_configured(&mut bau);
+        bau.handle_restart_master_reset(SRC_1102, ERASE_RESET_AP);
+        assert_eq!(bau.app_program_object.load_state(), LoadState::Unloaded);
+        assert_eq!(
+            bau.addr_table_object.load_state(),
+            LoadState::Loaded,
+            "ResetAP must not clear the link tables"
+        );
+
+        // FactoryResetWithoutIA (7): full wipe but the IA is preserved.
+        let mut bau = handler_test_bau();
+        mark_configured(&mut bau);
+        let ia = bau.individual_address().raw();
+        bau.handle_memory_write(0x0000, &[0xAA]);
+        bau.handle_restart_master_reset(SRC_1102, ERASE_FACTORY_RESET_WITHOUT_IA);
+        assert!(bau.memory_area.is_empty());
+        assert_eq!(bau.addr_table_object.load_state(), LoadState::Unloaded);
+        assert_eq!(
+            bau.individual_address().raw(),
+            ia,
+            "FactoryResetWithoutIA keeps the IA"
+        );
     }
 
     #[test]
@@ -1893,11 +2346,126 @@ mod tests {
     }
 
     #[test]
+    fn memory_ext_read_out_of_range_returns_address_void() {
+        let mut bau = test_bau();
+        // No memory allocated → any read is out of range.
+        bau.handle_memory_ext_read(SRC_1102, 4, 0x00_1000);
+        let resp = bau.next_outgoing_frame().expect("ext read response");
+        // Out-of-range must be ReturnCodes::AddressVoid (0xFD), not 0x01
+        // (SuccessWithCrc). p[2] is the return code.
+        assert_eq!(resp.payload()[2], 0xFD);
+    }
+
+    #[test]
+    fn ext_property_write_return_codes_distinguish_readonly_from_missing() {
+        let mut bau = test_bau();
+        let params = |ot: u16, pid: u16| ExtPropertyParams {
+            object_type: ot,
+            object_instance: 1,
+            property_id: pid,
+            count: 1,
+            start_index: 1,
+        };
+
+        // Nonexistent object type → AddressVoid.
+        assert_eq!(
+            bau.apply_ext_property_write(&params(0x0099, 1), &[0]),
+            RETURN_CODE_ADDRESS_VOID
+        );
+        // Device object exists, but ProgramVersion is not one of its properties → AddressVoid.
+        assert_eq!(
+            bau.apply_ext_property_write(&params(0, PropertyId::ProgramVersion as u16), &[0u8; 5]),
+            RETURN_CODE_ADDRESS_VOID
+        );
+        // ManufacturerId exists on the device object but is read-only → AccessReadOnly
+        // (NOT AddressVoid — the resource is present).
+        assert_eq!(
+            bau.apply_ext_property_write(&params(0, PropertyId::ManufacturerId as u16), &[0u8; 2]),
+            RETURN_CODE_ACCESS_READ_ONLY
+        );
+        // Writable ProgramVersion on the application program (OT3) → Success.
+        assert_eq!(
+            bau.apply_ext_property_write(
+                &params(3, PropertyId::ProgramVersion as u16),
+                &[1, 2, 3, 4, 5]
+            ),
+            RETURN_CODE_SUCCESS
+        );
+    }
+
+    #[test]
+    fn property_value_ext_write_con_response_carries_return_code() {
+        use knx_rs_core::message::ApduType;
+        let mut bau = test_bau();
+
+        // Write ProgramVersion (5 bytes) to the application program (OT3) via the
+        // extended, confirmed service. object_type=3, instance=1, pid=0x0D
+        // (ProgramVersion), count=1, start_index=1, then 5 data bytes.
+        // Ext header: ot(2)=0x0003, oi_hi(1)=0x00, oi_lo|pid_hi(1)=0x10, pid_lo(1)=0x0D,
+        // count(1)=0x01, start_index(2)=0x0001, data(5).
+        let apdu = &[
+            0x01, 0xCE, // A_PropertyValueExtWriteCon (0x1CE)
+            0x00, 0x03, 0x00, 0x10, 0x0D, 0x01, 0x00,
+            0x01, // ot=3, oi=1, pid=0x0D, count=1, si=1
+            0x11, 0x22, 0x33, 0x44, 0x55, // program version (5-byte element)
+        ];
+        let frame = CemiFrame::new_l_data(
+            MessageCode::LDataInd,
+            SRC_1102,
+            DestinationAddress::Individual(IndividualAddress::from_raw(0x1101)),
+            Priority::System,
+            apdu,
+        );
+        bau.process_frame(&frame, 0);
+
+        let resp = bau.next_outgoing_frame().expect("write-con response");
+        let apdu = resp.tpdu().and_then(|t| match t {
+            Tpdu::Data { apdu, .. } => Some(apdu),
+            Tpdu::Control { .. } => None,
+        });
+        let apdu = apdu.expect("data tpdu");
+        // Must be a PropertyValueExtWriteConResponse (0x1CF), not the plain
+        // PropertyValueExtResponse (0x1CD).
+        assert_eq!(apdu.apdu_type, ApduType::PropertyValueExtWriteConResponse);
+        // Its trailing byte is the return code — 0x00 (Success) for a real property.
+        assert_eq!(*apdu.data.last().unwrap(), RETURN_CODE_SUCCESS);
+    }
+
+    #[test]
     fn handle_memory_ext_write_roundtrip() {
         let mut bau = test_bau();
         bau.handle_memory_ext_write(SRC_1102, 0x0020, &[0xCA, 0xFE]);
         assert_eq!(bau.memory_area[0x20], 0xCA);
         assert_eq!(bau.memory_area[0x21], 0xFE);
+    }
+
+    #[test]
+    fn system_network_parameter_read_gated_on_prog_mode_and_operand() {
+        let mut bau = test_bau();
+        // test_info = [reserved, operand, ..]; operand 0x01 = serial-by-prog-mode.
+        let progmode = [0x00, NM_READ_SERIAL_BY_PROG_MODE];
+        let other = [0x00, 0x02]; // NM_Read_SerialNumber_By_ExFactoryState
+
+        // Right operand but NOT in prog mode → no reply.
+        bau.handle_system_network_parameter_read(OBJECT_TYPE_DEVICE, PID_SERIAL_NUMBER, &progmode);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "no reply outside programming mode"
+        );
+
+        device_object::set_prog_mode(bau.device_mut(), true);
+
+        // Wrong operand in prog mode → no reply.
+        bau.handle_system_network_parameter_read(OBJECT_TYPE_DEVICE, PID_SERIAL_NUMBER, &other);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "no reply for a non-programming-mode operand"
+        );
+
+        // Right operand + prog mode → a broadcast reply carrying the serial.
+        bau.handle_system_network_parameter_read(OBJECT_TYPE_DEVICE, PID_SERIAL_NUMBER, &progmode);
+        let resp = bau.next_outgoing_frame().expect("serial reply");
+        assert_eq!(resp.destination_address_raw(), 0, "reply is a broadcast");
     }
 
     #[test]
@@ -1948,6 +2516,10 @@ mod tests {
         bau.assoc_table_object.handle_load_event(&[2], 16);
         let tbl_data2 = bau.assoc_table_object.data(&bau.memory_area).to_vec();
         bau.association_table.load(&tbl_data2);
+
+        // Application program must load too (persisted via its table-object state).
+        bau.app_program_object.handle_load_event(&[1], 0);
+        bau.app_program_object.handle_load_event(&[2], 16);
 
         // Write some extra memory
         bau.handle_memory_write(0x0010, &[0xCA, 0xFE]);
@@ -2066,6 +2638,10 @@ mod tests {
         // AdcResponse APCI 0x1C0, value should be 0
         assert_eq!(p[0] & 0x03, 0x01);
         assert_eq!(p[1] & 0xC0, 0xC0); // AdcResponse APCI low high bits
+        assert_eq!(
+            p[2], 0x00,
+            "read-count byte is hardcoded 0 (no ADC hardware)"
+        );
         assert_eq!(p[3], 0x00); // value high
         assert_eq!(p[4], 0x00); // value low
     }
@@ -2074,10 +2650,7 @@ mod tests {
     fn poll_processes_read_requests() {
         let mut bau = test_bau();
         // Mark tables as loaded
-        bau.addr_table_object.handle_load_event(&[1], 0);
-        bau.addr_table_object.handle_load_event(&[2], 0);
-        bau.assoc_table_object.handle_load_event(&[1], 0);
-        bau.assoc_table_object.handle_load_event(&[2], 0);
+        mark_configured(&mut bau);
 
         bau.group_objects_mut()
             .get_mut(1)
@@ -2282,8 +2855,639 @@ mod tests {
         let tbl2 = bau.assoc_table_object.data(&bau.memory_area).to_vec();
         bau.association_table.load(&tbl2);
 
+        // Application program (object 4) must also load before the device activates.
+        assert!(!bau.configured(), "app program still unloaded");
+        bau.app_program_object.handle_load_event(&[1], 0);
+        bau.app_program_object.handle_load_event(&[2], 16);
+
         assert!(bau.configured());
         assert_eq!(bau.association_table.translate_asap(1), Some(1));
+    }
+
+    // ── Frame-driven System-B download harness ───────────────────────────────
+    //
+    // Unlike `full_ets_download_flow` (which calls the load/memory handlers
+    // directly), these reconstruct the exact cEMI frames ETS puts on the bus and
+    // drive them through the public `process_frame` entry point. That routes
+    // every APDU through `CemiFrame::parse` → `Apdu::parse` (`decode_apci`) →
+    // `parse_indication` → dispatch — the same wire path the live stack runs.
+    // `decode_apci` is where a basic-memory APDU's 6-bit count and its
+    // address/data used to be shifted by one byte; a download driven through
+    // frames (rather than direct calls) is the only thing that pins that decode.
+
+    /// Build a connectionless (`T_Data_Individual`) `L_Data.ind` cEMI frame
+    /// carrying `apdu` (bytes starting at the APCI header). The NPDU length octet
+    /// is `apdu.len() - 1`, per the cEMI convention (the TPCI octet is excluded).
+    fn ind_frame(src: u16, dst: u16, apdu: &[u8]) -> Vec<u8> {
+        let mut f = vec![
+            0x29,
+            0x00,
+            0xB0,
+            0x60,
+            (src >> 8) as u8,
+            (src & 0xFF) as u8,
+            (dst >> 8) as u8,
+            (dst & 0xFF) as u8,
+            u8::try_from(apdu.len() - 1).unwrap(),
+        ];
+        f.extend_from_slice(apdu);
+        f
+    }
+
+    /// Build a broadcast `L_Data.ind` frame (group addressing, destination 0).
+    fn bcast_frame(src: u16, apdu: &[u8]) -> Vec<u8> {
+        let mut f = vec![
+            0x29,
+            0x00,
+            0xB0,
+            0xE0, // group addressing
+            (src >> 8) as u8,
+            (src & 0xFF) as u8,
+            0x00,
+            0x00, // broadcast address
+            u8::try_from(apdu.len() - 1).unwrap(),
+        ];
+        f.extend_from_slice(apdu);
+        f
+    }
+
+    /// APCI header `[hi, lo]` for a service: `hi` is the two APCI bits that share
+    /// byte 0 with the TPCI, `lo` is the low 8 APCI bits.
+    fn apci_hdr(t: knx_rs_core::message::ApduType) -> [u8; 2] {
+        let b = (t as u16).to_be_bytes();
+        [b[0] & 0x03, b[1]]
+    }
+
+    /// `A_PropertyValue_Write` APDU (long form): object / PID / count / start
+    /// index, followed by the element data.
+    fn prop_write_apdu(obj: u8, pid: u8, count: u8, start: u16, data: &[u8]) -> Vec<u8> {
+        let [hi, lo] = apci_hdr(knx_rs_core::message::ApduType::PropertyValueWrite);
+        let mut a = vec![
+            hi,
+            lo,
+            obj,
+            pid,
+            (count << 4) | ((start >> 8) as u8 & 0x0F),
+            (start & 0xFF) as u8,
+        ];
+        a.extend_from_slice(data);
+        a
+    }
+
+    /// `A_Memory_Write` APDU — the byte count packs into byte 1's low 6 bits,
+    /// then the 2-byte address and the payload. This is the frame whose decode
+    /// the fix repaired (byte 1 must survive into the parser at `data[0]`).
+    fn mem_write_apdu(count: u8, address: u16, data: &[u8]) -> Vec<u8> {
+        let [hi, lo] = apci_hdr(knx_rs_core::message::ApduType::MemoryWrite);
+        let mut a = vec![
+            hi,
+            lo | (count & 0x3F),
+            (address >> 8) as u8,
+            (address & 0xFF) as u8,
+        ];
+        a.extend_from_slice(data);
+        a
+    }
+
+    #[test]
+    fn frame_driven_system_b_download_configures_device() {
+        const ETS: u16 = 0xFFB1; // 15.15.177 — a typical ETS management address
+        const DEV: u16 = 0x1101; // the device's own individual address (test_bau)
+        const LSC: u8 = PropertyId::LoadStateControl as u8;
+
+        let mut bau = test_bau();
+        // Start from a blank device — nothing pre-loaded.
+        bau.address_table = AddressTable::new();
+        bau.association_table = AssociationTable::new();
+        assert!(!bau.configured(), "precondition: unconfigured");
+
+        let send = |bau: &mut Bau, apdu: &[u8]| {
+            let frame = CemiFrame::parse(&ind_frame(ETS, DEV, apdu)).unwrap();
+            bau.process_frame(&frame, 0);
+        };
+
+        // ── Address table (object 1) ──
+        send(&mut bau, &prop_write_apdu(OBJ_ADDR_TABLE, LSC, 1, 1, &[1])); // StartLoading
+        send(
+            &mut bau,
+            &prop_write_apdu(
+                OBJ_ADDR_TABLE,
+                LSC,
+                1,
+                1,
+                &[0x03, 0x0B, 0x00, 0x00, 0x00, 0x06, 0x01, 0x00],
+            ),
+        ); // AdditionalLoadControls: relative allocation of 6 bytes
+        send(
+            &mut bau,
+            &mem_write_apdu(6, 0x0000, &[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]),
+        ); // 2 group addresses → the frame the decode fix repaired
+        send(&mut bau, &prop_write_apdu(OBJ_ADDR_TABLE, LSC, 1, 1, &[2])); // LoadCompleted
+
+        // Proof the memory write landed at the right offset with the right bytes:
+        // the address table now translates the downloaded group addresses.
+        assert_eq!(bau.address_table.get_tsap(0x0801), Some(1));
+        assert_eq!(bau.address_table.get_tsap(0x0802), Some(2));
+        assert_eq!(
+            &bau.memory_area[0..6],
+            &[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]
+        );
+
+        // ── Association table (object 2) ──
+        send(&mut bau, &prop_write_apdu(OBJ_ASSOC_TABLE, LSC, 1, 1, &[1]));
+        send(
+            &mut bau,
+            &prop_write_apdu(
+                OBJ_ASSOC_TABLE,
+                LSC,
+                1,
+                1,
+                &[0x03, 0x0B, 0x00, 0x00, 0x00, 0x0A, 0x01, 0x06],
+            ),
+        );
+        send(
+            &mut bau,
+            &mem_write_apdu(
+                10,
+                0x0006,
+                &[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02],
+            ),
+        );
+        send(&mut bau, &prop_write_apdu(OBJ_ASSOC_TABLE, LSC, 1, 1, &[2]));
+
+        // Not configured yet — the application program (object 4) is still Unloaded.
+        assert!(
+            !bau.configured(),
+            "must not be configured until the application program is loaded"
+        );
+
+        // ── Application program (object 4) ── the snapdog .knxprod ObjIdx=4 step.
+        send(&mut bau, &prop_write_apdu(OBJ_APP_PROGRAM, LSC, 1, 1, &[1]));
+        send(
+            &mut bau,
+            &prop_write_apdu(
+                OBJ_APP_PROGRAM,
+                LSC,
+                1,
+                1,
+                &[0x03, 0x0B, 0x00, 0x00, 0x00, 0x04, 0x01, 0x10],
+            ),
+        );
+        send(
+            &mut bau,
+            &mem_write_apdu(4, 0x0010, &[0xDE, 0xAD, 0xBE, 0xEF]),
+        );
+        send(&mut bau, &prop_write_apdu(OBJ_APP_PROGRAM, LSC, 1, 1, &[2]));
+
+        assert!(
+            bau.configured(),
+            "device must be configured after a full frame-driven download"
+        );
+        assert_eq!(bau.association_table.translate_asap(1), Some(1));
+        assert_eq!(
+            &bau.memory_area[6..16],
+            &[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02]
+        );
+        assert_eq!(&bau.memory_area[16..20], &[0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn configured_requires_app_program_loaded() {
+        // System B activation gate: a device with address + association tables
+        // loaded but the application program still Unloaded is NOT activated and
+        // must not participate in group communication (mirrors C++ configured()).
+        let mut bau = test_bau();
+        bau.addr_table_object.handle_load_event(&[1], 0);
+        bau.addr_table_object.handle_load_event(&[2], 0);
+        bau.assoc_table_object.handle_load_event(&[1], 0);
+        bau.assoc_table_object.handle_load_event(&[2], 0);
+
+        assert!(
+            !bau.configured(),
+            "addr+assoc loaded but app program Unloaded must NOT be configured"
+        );
+        // Group communication must not flow while unconfigured.
+        bau.group_objects_mut()
+            .get_mut(1)
+            .unwrap()
+            .write_value(&[1]);
+        bau.poll(0);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "no group traffic before activation"
+        );
+
+        // Loading the application program activates the device.
+        bau.app_program_object.handle_load_event(&[1], 0);
+        bau.app_program_object.handle_load_event(&[2], 0);
+        assert!(
+            bau.configured(),
+            "configured once the application program reaches Loaded"
+        );
+        bau.poll(0);
+        assert!(
+            bau.next_outgoing_frame().is_some(),
+            "group traffic flows after activation"
+        );
+    }
+
+    #[test]
+    fn transmit_confirmation_clears_transmitting_state() {
+        let mut bau = test_bau();
+        mark_configured(&mut bau);
+
+        // Write GO 1 and poll → it sends to GA 0x0801 and enters Transmitting.
+        bau.group_objects_mut()
+            .get_mut(1)
+            .unwrap()
+            .write_value(&[1]);
+        bau.poll(0);
+        let frame = bau.next_outgoing_frame().expect("group write frame");
+        assert_eq!(frame.destination_address_raw(), 0x0801);
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Transmitting
+        );
+
+        // A positive L_Data.con (MC 0x2E, ctrl1 bit0=0) for GA 0x0801 → Ok.
+        let con_ok = CemiFrame::parse(&[
+            0x2E, 0x00, 0xBC, 0xE0, 0x11, 0x01, 0x08, 0x01, 0x01, 0x00, 0x80,
+        ])
+        .unwrap();
+        bau.process_frame(&con_ok, 0);
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Ok,
+            "positive .con must advance the object to Ok"
+        );
+
+        // Re-send, then a negative .con (ctrl1 bit0=1) marks it Error.
+        bau.group_objects_mut()
+            .get_mut(1)
+            .unwrap()
+            .write_value(&[1]);
+        bau.poll(0);
+        let _ = bau.next_outgoing_frame();
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Transmitting
+        );
+        let con_err = CemiFrame::parse(&[
+            0x2E, 0x00, 0xBD, 0xE0, 0x11, 0x01, 0x08, 0x01, 0x01, 0x00, 0x80,
+        ])
+        .unwrap();
+        bau.process_frame(&con_err, 0);
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Error,
+            "negative .con must mark the object Error"
+        );
+    }
+
+    #[test]
+    fn transmit_confirmation_not_dispatched_as_write() {
+        // A .con echoes a frame WE sent; it must not be parsed as an incoming
+        // GroupValueWrite that updates the object with our own payload.
+        let mut bau = test_bau();
+        mark_configured(&mut bau);
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Uninitialized
+        );
+
+        let con = CemiFrame::parse(&[
+            0x2E, 0x00, 0xBC, 0xE0, 0x11, 0x01, 0x08, 0x01, 0x02, 0x00, 0x80, 0xAA,
+        ])
+        .unwrap();
+        bau.process_frame(&con, 0);
+
+        assert_ne!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Updated,
+            "a .con must not be dispatched as an incoming write"
+        );
+        assert_ne!(bau.group_objects().get(1).unwrap().value_ref(), &[0xAA]);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "a .con must not produce a response"
+        );
+    }
+
+    #[test]
+    fn basic_restart_drops_connection_and_flags_host() {
+        use knx_rs_core::message::{ApduType, TpduType};
+
+        let mut bau = test_bau();
+        // ETS opens a management connection.
+        let connect = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x00, 0x80, 0x00,
+        ])
+        .unwrap();
+        bau.process_frame(&connect, 0);
+        assert_eq!(
+            bau.transport.state(),
+            crate::transport_layer::State::OpenIdle
+        );
+        while bau.next_outgoing_frame().is_some() {} // drain the connect ACK
+        assert!(!bau.restart_requested());
+
+        // Connected A_Restart (BasicRestart, APCI 0x380) at sequence 0.
+        let restart = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x01, 0x43, 0x80,
+        ])
+        .unwrap();
+        bau.process_frame(&restart, 0);
+
+        // A basic restart emits NO A_Restart/RestartMasterReset response, and it
+        // actively drops the connection with a T_Disconnect.
+        let mut saw_disconnect = false;
+        while let Some(f) = bau.next_outgoing_frame() {
+            match f.tpdu() {
+                Some(Tpdu::Control { tpdu_type, .. }) => {
+                    if tpdu_type == TpduType::Disconnect {
+                        saw_disconnect = true;
+                    }
+                }
+                Some(Tpdu::Data { apdu, .. }) => assert!(
+                    !matches!(
+                        apdu.apdu_type,
+                        ApduType::Restart | ApduType::RestartMasterReset
+                    ),
+                    "basic restart must emit no restart response"
+                ),
+                None => {}
+            }
+        }
+        assert!(
+            saw_disconnect,
+            "basic restart must drop the open connection (T_Disconnect)"
+        );
+        assert_eq!(bau.transport.state(), crate::transport_layer::State::Closed);
+
+        // The host learns a restart was requested exactly once, then it clears.
+        assert!(bau.take_restart_pending());
+        assert!(!bau.take_restart_pending());
+    }
+
+    #[test]
+    fn system_b_object_layout_ot9_at_index_3_app_program_at_index_4() {
+        // System B interface-object order: 0=Device,1=Addr,2=Assoc,3=OT9,4=App.
+        let bau = test_bau();
+
+        let mut ot = Vec::new();
+        bau.object(OBJ_GROUP_OBJ_TABLE).unwrap().read_property(
+            PropertyId::ObjectType,
+            1,
+            1,
+            &mut ot,
+        );
+        assert_eq!(
+            ot,
+            &[0x00, 0x09],
+            "index 3 must be the OT9 group object table"
+        );
+        // Its load-state machine is logically Loaded (the table is compiled in).
+        assert_eq!(
+            bau.group_object_table_object.load_state(),
+            LoadState::Loaded,
+            "logical-only GO table must report Loaded without a download"
+        );
+        // The LoadStateControl read-back (served via the table-property intercept)
+        // must also report Loaded so an ETS verify of OT9 succeeds.
+        assert_eq!(
+            bau.try_intercept_table_property(OBJ_GROUP_OBJ_TABLE, PropertyId::LoadStateControl, 1),
+            Some(alloc::vec![LoadState::Loaded as u8])
+        );
+
+        let mut app_ot = Vec::new();
+        bau.object(OBJ_APP_PROGRAM).unwrap().read_property(
+            PropertyId::ObjectType,
+            1,
+            1,
+            &mut app_ot,
+        );
+        assert_eq!(
+            app_ot,
+            &[0x00, 0x03],
+            "index 4 must be the OT3 application program"
+        );
+    }
+
+    #[test]
+    fn frame_driven_app_program_download_targets_object_index_4() {
+        // snapdog's own .knxprod addresses the application program at ObjIdx="4"
+        // (LdCtrlRelSegment LsmIdx=4 / LdCtrlWriteRelMem ObjIdx=4 /
+        // LdCtrlLoadImageProp ObjIdx=4 PropId=27). With OT9 absent the app program
+        // sat at index 3 and object index 4 was None, so ETS's load-state writes to
+        // ObjIdx 4 were silently dropped and the program never loaded — a
+        // self-inflicted download blocker. This drives that exact recipe.
+        const ETS: u16 = 0xFFB1;
+        const DEV: u16 = 0x1101;
+        const LSC: u8 = PropertyId::LoadStateControl as u8;
+
+        let mut bau = test_bau();
+        let send = |bau: &mut Bau, apdu: &[u8]| {
+            let frame = CemiFrame::parse(&ind_frame(ETS, DEV, apdu)).unwrap();
+            bau.process_frame(&frame, 0);
+        };
+
+        assert_eq!(
+            OBJ_APP_PROGRAM, 4,
+            "ETS addresses the app program at index 4"
+        );
+        assert_eq!(bau.app_program_object.load_state(), LoadState::Unloaded);
+        // The read target for LdCtrlLoadImageProp ObjIdx=4 must exist.
+        assert!(
+            bau.object(OBJ_APP_PROGRAM).is_some(),
+            "object index 4 must exist for the ETS MCB verify"
+        );
+
+        // StartLoading → relative-segment alloc (4 bytes) → param write → LoadCompleted.
+        send(&mut bau, &prop_write_apdu(OBJ_APP_PROGRAM, LSC, 1, 1, &[1]));
+        send(
+            &mut bau,
+            &prop_write_apdu(
+                OBJ_APP_PROGRAM,
+                LSC,
+                1,
+                1,
+                &[0x03, 0x0B, 0x00, 0x00, 0x00, 0x04, 0x01, 0x00],
+            ),
+        );
+        send(
+            &mut bau,
+            &mem_write_apdu(4, 0x0000, &[0xDE, 0xAD, 0xBE, 0xEF]),
+        );
+        send(&mut bau, &prop_write_apdu(OBJ_APP_PROGRAM, LSC, 1, 1, &[2]));
+
+        // Without the index fix this stays Unloaded (index 4 was None → dropped).
+        assert_eq!(
+            bau.app_program_object.load_state(),
+            LoadState::Loaded,
+            "app program at index 4 must load via the ETS ObjIdx=4 procedure"
+        );
+        assert_eq!(&bau.memory_area[0..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    /// `A_PropertyValue_Read` APDU (long form): object / PID / count / start index.
+    fn prop_read_apdu(obj: u8, pid: u8, count: u8, start: u16) -> Vec<u8> {
+        let [hi, lo] = apci_hdr(knx_rs_core::message::ApduType::PropertyValueRead);
+        vec![
+            hi,
+            lo,
+            obj,
+            pid,
+            (count << 4) | ((start >> 8) as u8 & 0x0F),
+            (start & 0xFF) as u8,
+        ]
+    }
+
+    /// Drain one queued `A_PropertyValue_Response` and return its (element count,
+    /// value bytes). The response APDU is `[obj, pid, count<<4|start_hi, start_lo,
+    /// ..value]` after the core strips the 2 APCI bytes.
+    fn drain_prop_response(bau: &mut Bau) -> (u8, Vec<u8>) {
+        let frame = bau
+            .next_outgoing_frame()
+            .expect("a property response frame");
+        let Some(Tpdu::Data { apdu, .. }) = frame.tpdu() else {
+            panic!("expected a data TPDU");
+        };
+        assert!(apdu.data.len() >= 4, "property response header present");
+        (apdu.data[2] >> 4, apdu.data[4..].to_vec())
+    }
+
+    #[test]
+    fn management_service_to_other_ia_is_ignored() {
+        let mut bau = test_bau(); // our IA is 0x1101
+        let apdu = prop_read_apdu(0, PropertyId::ObjectType as u8, 1, 1);
+
+        // A PropertyValueRead addressed to another device (0x1234) must be ignored.
+        let other = CemiFrame::parse(&ind_frame(0xFFB1, 0x1234, &apdu)).unwrap();
+        bau.process_frame(&other, 0);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "must not answer a management frame addressed to another device"
+        );
+
+        // A broadcast-addressed management read must also be ignored.
+        let bcast = CemiFrame::parse(&bcast_frame(0xFFB1, &apdu)).unwrap();
+        bau.process_frame(&bcast, 0);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "must not answer a management read sent as broadcast"
+        );
+
+        // The same read addressed to us IS answered.
+        let ours = CemiFrame::parse(&ind_frame(0xFFB1, 0x1101, &apdu)).unwrap();
+        bau.process_frame(&ours, 0);
+        assert!(
+            bau.next_outgoing_frame().is_some(),
+            "must answer a management frame addressed to us"
+        );
+    }
+
+    #[test]
+    fn individual_address_write_requires_broadcast() {
+        let mut bau = test_bau();
+        device_object::set_prog_mode(bau.device_mut(), true);
+        let apdu = &[0x00, 0xC0, 0x11, 0x05]; // A_IndividualAddress_Write → 1.1.5
+
+        // Carried on an individual frame (to our IA) it must be ignored — the
+        // write is a broadcast-only service.
+        let indiv = CemiFrame::parse(&ind_frame(0xFFB1, 0x1101, apdu)).unwrap();
+        bau.process_frame(&indiv, 0);
+        assert_eq!(
+            bau.individual_address().raw(),
+            0x1101,
+            "individual-addressed A_IndividualAddress_Write must be ignored"
+        );
+
+        // As a broadcast it is honored (device is in programming mode).
+        let bcast = CemiFrame::parse(&bcast_frame(0xFFB1, apdu)).unwrap();
+        bau.process_frame(&bcast, 0);
+        assert_eq!(bau.individual_address().raw(), 0x1105);
+    }
+
+    #[test]
+    fn error_code_reflects_live_load_error_on_address_table() {
+        use crate::table_object::LoadError;
+        const ETS: u16 = 0xFFB1;
+        const DEV: u16 = 0x1101;
+        const LSC: u8 = PropertyId::LoadStateControl as u8;
+        const ERR: u8 = PropertyId::ErrorCode as u8;
+
+        let mut bau = test_bau();
+        let send = |bau: &mut Bau, apdu: &[u8]| {
+            let frame = CemiFrame::parse(&ind_frame(ETS, DEV, apdu)).unwrap();
+            bau.process_frame(&frame, 0);
+        };
+
+        // Drive an undefined load command (0xFF) on the address table (object 1),
+        // pushing its load-state machine into Error/UndefinedLoadCommand.
+        send(
+            &mut bau,
+            &prop_write_apdu(OBJ_ADDR_TABLE, LSC, 1, 1, &[0xFF]),
+        );
+        while bau.next_outgoing_frame().is_some() {} // drain the read-back
+
+        // PID_ERROR_CODE (28) must be served on OT1 (bare InterfaceObject) AND
+        // reflect the live error, not a frozen 0.
+        send(&mut bau, &prop_read_apdu(OBJ_ADDR_TABLE, ERR, 1, 1));
+        let (count, value) = drain_prop_response(&mut bau);
+        assert_eq!(count, 1, "ErrorCode must be served on the address table");
+        assert_eq!(value, alloc::vec![LoadError::UndefinedLoadCommand as u8]);
+    }
+
+    #[test]
+    fn device_serves_pid_io_list() {
+        const ETS: u16 = 0xFFB1;
+        const DEV: u16 = 0x1101;
+        const IO_LIST: u8 = PropertyId::IoList as u8;
+
+        // Expected list mirrors the System B object layout: Device(0), Addr(1),
+        // Assoc(2), GroupObjTable(9), AppProgram(3) — the OT9 object is present, and
+        // there is no IP-parameter object on this device (unlike the C++ 6-element list).
+        let expected = [0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x09, 0x00, 0x03];
+
+        let mut bau = test_bau();
+        let send = |bau: &mut Bau, apdu: &[u8]| {
+            let frame = CemiFrame::parse(&ind_frame(ETS, DEV, apdu)).unwrap();
+            bau.process_frame(&frame, 0);
+        };
+
+        // Drift guard: the served list must equal each object's ObjectType, in order.
+        let mut direct = Vec::new();
+        bau.device()
+            .read_property(PropertyId::IoList, 1, 5, &mut direct);
+        assert_eq!(direct, &expected, "IO list must mirror the object layout");
+        for i in 0..5u8 {
+            let ot = u16::from_be_bytes([expected[i as usize * 2], expected[i as usize * 2 + 1]]);
+            assert_eq!(
+                bau.object(i).unwrap().object_type() as u16,
+                ot,
+                "IO list element {i} must equal object {i}'s type"
+            );
+        }
+
+        // Wire path: startIndex==0 returns the element count (5) as a 2-byte word.
+        send(&mut bau, &prop_read_apdu(0, IO_LIST, 1, 0));
+        assert_eq!(drain_prop_response(&mut bau), (1, alloc::vec![0x00, 0x05]));
+
+        // Wire path: startIndex==1, count=5 returns all five 2-byte object types.
+        send(&mut bau, &prop_read_apdu(0, IO_LIST, 5, 1));
+        let (count, value) = drain_prop_response(&mut bau);
+        assert_eq!(count, 5);
+        assert_eq!(value, &expected);
+
+        // PropertyDescriptionRead reports PDT UnsignedInt (0x04), 5 max elements, read-only.
+        let desc = bau
+            .device()
+            .property(PropertyId::IoList)
+            .unwrap()
+            .description();
+        assert_eq!(desc.data_type as u8, 0x04);
+        assert_eq!(desc.max_elements, 5);
+        assert!(!desc.write_enable);
     }
 
     #[test]
@@ -2315,10 +3519,7 @@ mod tests {
             0x00, 0x03, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02, 0x00, 0x03, 0x00, 0x03,
         ]);
         // Mark tables as loaded for configured() check
-        bau.addr_table_object.handle_load_event(&[1], 0);
-        bau.addr_table_object.handle_load_event(&[2], 0);
-        bau.assoc_table_object.handle_load_event(&[1], 0);
-        bau.assoc_table_object.handle_load_event(&[2], 0);
+        mark_configured(&mut bau);
 
         // Set WriteRequest on GO 1, 2, 3
         bau.group_objects_mut()

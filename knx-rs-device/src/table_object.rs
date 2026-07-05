@@ -45,7 +45,14 @@ const MCB_ACCESS: u8 = 0xFF;
 
 /// Minimum data length for `AdditionalLoadControls` (opcode + size + fill mode + fill byte).
 const ALC_MIN_LENGTH: usize = 8;
-/// Opcode for `AllocAbsDataSeg` in `AdditionalLoadControls`.
+/// Opcode `0x0B` in `AdditionalLoadControls` — **Data Relative Allocation**
+/// (`LdCtrlRelSegment`). Reserves a table segment: the device allocates it at the
+/// current end of `memory_area` (reported to ETS via PID 7 `TableReference`), and
+/// ETS then writes the table bytes there with `A_Memory_Write`. This is the
+/// segment style System-B / `MergedProcedure` products use. (Matches the `OpenKNX`
+/// C++ `TableObject::additionalLoadControls`, which labels 0x0B "Data Relative
+/// Allocation" — the previous `AllocAbsDataSeg` label here was wrong and is what
+/// made a review believe the relative-segment path was unimplemented.)
 const ALC_OPCODE_ALLOC: u8 = 0x0B;
 /// Fill mode value indicating memory should be filled.
 const ALC_FILL_ENABLED: u8 = 0x01;
@@ -68,6 +75,22 @@ impl TableObject {
     pub const fn new() -> Self {
         Self {
             state: LoadState::Unloaded,
+            error: LoadError::NoFault,
+            data_offset: 0,
+            data_size: 0,
+        }
+    }
+
+    /// Create a table object that is already `Loaded` with no memory segment.
+    ///
+    /// Used for logical-only tables — e.g. a compiled-in group-object table that
+    /// ETS never downloads. The table lives in firmware, so there is no memory
+    /// segment (`data_size == 0`), but the object must report `LoadState::Loaded`
+    /// (the C++ reference reports its group-object table Loaded without a
+    /// download; see `bau_systemB_device.cpp`).
+    pub const fn new_loaded() -> Self {
+        Self {
+            state: LoadState::Loaded,
             error: LoadError::NoFault,
             data_offset: 0,
             data_size: 0,
@@ -254,12 +277,18 @@ impl TableObject {
         }
     }
 
-    /// Table reference (offset into memory area). Returns 0 if not loaded.
+    /// Table reference: the offset of the table's segment in the memory area.
+    ///
+    /// Reports the allocated offset as soon as a segment exists (from `Loading`
+    /// onward), not only when `Loaded` — ETS reads `PID_TABLE_REFERENCE` right
+    /// after allocating the segment (still in `Loading`) to learn where to place
+    /// its `A_Memory_Write`. The C++ reference returns it unconditionally (it is
+    /// derived from the allocated data pointer). Returns 0 only while `Unloaded`.
     pub const fn table_reference(&self) -> u32 {
-        if matches!(self.state, LoadState::Loaded) {
-            self.data_offset
-        } else {
+        if matches!(self.state, LoadState::Unloaded) {
             0
+        } else {
+            self.data_offset
         }
     }
 
@@ -491,6 +520,22 @@ mod tests {
         to.state = LoadState::Loaded;
         to.data_offset = 42;
         assert_eq!(to.table_reference(), 42);
+    }
+
+    #[test]
+    fn table_reference_available_in_loading_state() {
+        // ETS reads TableReference right after allocating the segment, while the
+        // object is still Loading — the offset must already be visible.
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0); // StartLoading → Loading
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x06, 0x01, 0x00];
+        to.handle_load_event(&alc, 40); // allocate 6 bytes at memory offset 40
+        assert_eq!(to.load_state(), LoadState::Loading);
+        assert_eq!(
+            to.table_reference(),
+            40,
+            "offset must be visible in Loading, not only Loaded"
+        );
     }
 
     #[test]

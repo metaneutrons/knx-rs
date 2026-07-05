@@ -127,7 +127,7 @@ fn parse_device_descriptor_read(data: &[u8]) -> AppIndication {
 fn parse_memory_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
     check_len(data, 3)?;
     Ok(AppIndication::MemoryRead {
-        count: data[0] & MASK_4BIT,
+        count: data[0] & MASK_6BIT,
         address: u16::from_be_bytes([data[1], data[2]]),
     })
 }
@@ -135,7 +135,7 @@ fn parse_memory_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
 fn parse_memory_write(data: &[u8]) -> Result<AppIndication, AppLayerError> {
     check_len(data, 3)?;
     Ok(AppIndication::MemoryWrite {
-        count: data[0] & MASK_4BIT,
+        count: data[0] & MASK_6BIT,
         address: u16::from_be_bytes([data[1], data[2]]),
         data: data[3..].to_vec(),
     })
@@ -286,7 +286,9 @@ fn parse_property_value_ext_write_con(data: &[u8]) -> Result<AppIndication, AppL
         property_id: pid,
         count,
         start_index: si,
-        data: data[7..].to_vec(),
+        // The extended header is 8 octets (ot(2) + oi/pid(3) + count(1) +
+        // start_index(2)); the element data follows at offset 8, not 7.
+        data: data[8..].to_vec(),
     })
 }
 
@@ -299,15 +301,19 @@ fn parse_property_value_ext_write_uncon(data: &[u8]) -> Result<AppIndication, Ap
         property_id: pid,
         count,
         start_index: si,
-        data: data[7..].to_vec(),
+        // Element data follows the 8-octet extended header (see WriteCon).
+        data: data[8..].to_vec(),
     })
 }
 
 fn parse_property_ext_description_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
     check_len(data, 8)?;
     let (object_type, object_instance, property_id) = parse_ext_ot_oi_pid(data);
+    // Layout after the stripped APCI byte: ot(2) + oi/pid(3) + descType in the
+    // high nibble of byte 5, then the 12-bit property index in the low nibble of
+    // byte 6 .. byte 7. (byte 5 low nibble and byte 6 high nibble are reserved.)
     let description_type = data[5] >> 4;
-    let property_index = (u16::from(data[5] & MASK_4BIT) << 8) | u16::from(data[6]);
+    let property_index = (u16::from(data[6] & MASK_4BIT) << 8) | u16::from(data[7]);
     Ok(AppIndication::PropertyExtDescriptionRead {
         object_type,
         object_instance,
@@ -569,7 +575,9 @@ mod tests {
         let [hi, lo] = expected_apci(ApduType::RestartMasterReset);
         let result = encode_restart_response(0x01, 0x0064);
         assert_eq!(result[0], hi);
-        assert_eq!(result[1], lo);
+        // The response bit (0x20) is set: low APCI octet is 0xA1 (0x81 | 0x20).
+        assert_eq!(result[1], lo | 0x20);
+        assert_eq!(result[1], 0xA1);
         assert_eq!(result[2], 0x01);
         assert_eq!(&result[3..5], &[0x00, 0x64]);
     }
@@ -1116,7 +1124,8 @@ mod tests {
             }
         ));
         if let AppIndication::PropertyValueExtWriteCon { data, .. } = ind {
-            assert_eq!(data, &[0x01, 0xAA]);
+            // Data begins after the 8-octet extended header (byte 8), not byte 7.
+            assert_eq!(data, &[0xAA]);
         }
     }
 
@@ -1155,7 +1164,7 @@ mod tests {
             }
         ));
         if let AppIndication::PropertyValueExtWriteUnCon { data, .. } = ind {
-            assert_eq!(data, &[0x01, 0xBB]);
+            assert_eq!(data, &[0xBB]);
         }
     }
 
@@ -1174,9 +1183,11 @@ mod tests {
 
     #[test]
     fn parse_property_ext_description_read() {
+        // descType nibble in byte 5 high nibble (0x10 → 1); property index 0x005
+        // in byte 6 low nibble .. byte 7 (0x00, 0x05).
         let ind = parse_indication(
             ApduType::PropertyExtDescriptionRead,
-            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x10, 0x05, 0x00],
+            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x10, 0x00, 0x05],
         )
         .unwrap();
         assert!(matches!(
@@ -1257,7 +1268,7 @@ mod tests {
 
     #[test]
     fn parse_max_length_memory_write() {
-        // MemoryWrite with 15 bytes of data (max for 4-bit count field)
+        // MemoryWrite with 15 bytes of data.
         let mut payload = alloc::vec![0x0F, 0x00, 0x10]; // count=15, address=0x0010
         payload.extend_from_slice(&[0xAA; 15]);
         let ind = parse_indication(ApduType::MemoryWrite, &payload).unwrap();
@@ -1267,13 +1278,31 @@ mod tests {
             data,
         } = ind
         {
-            assert_eq!(count, 15, "count should be 15 (max 4-bit value)");
+            assert_eq!(count, 15);
             assert_eq!(address, 0x0010);
             assert_eq!(data.len(), 15);
             assert!(data.iter().all(|&b| b == 0xAA));
         } else {
             panic!("expected MemoryWrite");
         }
+    }
+
+    #[test]
+    fn parse_memory_write_count_is_6_bit() {
+        // The basic-memory byte-count field is 6 bits wide (C++ ref: `number &
+        // 0x3f`), not 4. A count of 0x30 (48) must survive intact — the old
+        // 4-bit mask truncated it to 0, silently dropping the write length.
+        let mut payload = alloc::vec![0x30, 0x01, 0x00]; // count=48, address=0x0100
+        payload.extend_from_slice(&[0xCC; 48]);
+        let ind = parse_indication(ApduType::MemoryWrite, &payload).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::MemoryWrite {
+                count: 0x30,
+                address: 0x0100,
+                ..
+            }
+        ));
     }
 
     #[test]

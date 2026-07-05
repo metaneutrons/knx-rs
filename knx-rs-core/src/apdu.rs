@@ -143,6 +143,23 @@ fn decode_apci(apci_raw: u16, payload: &[u8], npdu_length: u8) -> Option<(ApduTy
     let data = if is_short_apci(apci_raw) && npdu_length <= 1 {
         // Short APDU: small value in lower 6 bits of byte 1
         alloc::vec![payload[1] & APCI_SHORT_DATA_MASK]
+    } else if matches!(
+        apdu_type,
+        ApduType::MemoryRead
+            | ApduType::MemoryWrite
+            | ApduType::MemoryResponse
+            | ApduType::AdcRead
+            | ApduType::AdcResponse
+    ) && payload.len() > 1
+    {
+        // Basic Memory (read/write/response) and ADC pack a 6-bit field (byte
+        // count / channel) into byte 1's low bits AND carry trailing octets
+        // (address/data). Keep byte 1 so the parser reads that field at data[0] —
+        // mirrors the C++ `apdu.data()`, which points at the 2nd APCI byte. The
+        // long-family path below strips both APCI bytes, which for these services
+        // drops the count and shifts address/data by one byte — corrupting every
+        // real ETS memory operation (the core of a download).
+        payload[1..].to_vec()
     } else if payload.len() > 2 {
         // Long APDU: data after the 2-byte APCI header
         payload[2..].to_vec()
@@ -368,5 +385,41 @@ mod tests {
     fn to_apci_bytes_matches_discriminant() {
         assert_eq!(ApduType::GroupValueWrite.to_apci_bytes(), [0x00, 0x80]);
         assert_eq!(ApduType::PropertyValueRead.to_apci_bytes(), [0x03, 0xD5]);
+    }
+
+    #[test]
+    fn memory_write_keeps_count_byte_and_aligns_address() {
+        // A_Memory_Write, count=6 @ 0x1234 with 6 data bytes. The count packs into
+        // byte 1's low 6 bits (0x80 | 6 = 0x86); the address and data follow.
+        // Byte 1 MUST survive into `data` so the parser reads count at data[0] and
+        // the address at data[1..3]. The buggy path stripped both APCI bytes,
+        // shifting count/address/data by one octet — the core download corruption.
+        let payload = [0x02, 0x86, 0x12, 0x34, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        let apdu = Apdu::parse(&payload, u8::try_from(payload.len() - 1).unwrap()).unwrap();
+        assert_eq!(apdu.apdu_type, ApduType::MemoryWrite);
+        assert_eq!(
+            apdu.data,
+            &[0x86, 0x12, 0x34, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]
+        );
+        assert_eq!(apdu.data[0] & 0x3F, 6, "count preserved in byte 1");
+        assert_eq!(&apdu.data[1..3], &[0x12, 0x34], "address not shifted");
+    }
+
+    #[test]
+    fn memory_read_keeps_count_byte() {
+        // A_Memory_Read, count=3 @ 0x0010 → [0x02, 0x03, 0x00, 0x10].
+        let apdu = Apdu::parse(&[0x02, 0x03, 0x00, 0x10], 3).unwrap();
+        assert_eq!(apdu.apdu_type, ApduType::MemoryRead);
+        assert_eq!(apdu.data, &[0x03, 0x00, 0x10]);
+    }
+
+    #[test]
+    fn adc_read_keeps_channel_byte() {
+        // A_ADC_Read, channel=5, read-count=8 → [0x01, 0x85, 0x08]. The channel
+        // packs into byte 1's low 6 bits and must survive at data[0].
+        let apdu = Apdu::parse(&[0x01, 0x85, 0x08], 2).unwrap();
+        assert_eq!(apdu.apdu_type, ApduType::AdcRead);
+        assert_eq!(apdu.data, &[0x85, 0x08]);
+        assert_eq!(apdu.data[0] & 0x3F, 5, "channel preserved in byte 1");
     }
 }

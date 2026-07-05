@@ -307,8 +307,8 @@ mod tests {
         use crate::property::PropertyId;
 
         let mut bau = test_bau();
-        // Write program version [1,2,3,4,5] to object 3 (app program)
-        if let Some(obj) = bau.object_mut(3) {
+        // Write program version [1,2,3,4,5] to the app-program object (index 4).
+        if let Some(obj) = bau.object_mut(OBJ_APP_PROGRAM) {
             obj.write_property(PropertyId::ProgramVersion, 1, 1, &[1, 2, 3, 4, 5]);
         }
 
@@ -318,7 +318,7 @@ mod tests {
         restore_bau_state(&mut bau2, &saved).unwrap();
 
         let mut ver = Vec::new();
-        if let Some(obj) = bau2.object(3) {
+        if let Some(obj) = bau2.object(OBJ_APP_PROGRAM) {
             obj.read_property(PropertyId::ProgramVersion, 1, 1, &mut ver);
         }
         assert_eq!(ver, &[1, 2, 3, 4, 5]);

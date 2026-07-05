@@ -101,8 +101,11 @@ pub fn encode_key_response(level: u8) -> Vec<u8> {
 /// Encode a `RestartResponse` APDU payload (master reset response).
 pub fn encode_restart_response(error_code: u8, process_time: u16) -> Vec<u8> {
     let [hi, lo] = apci_bytes(ApduType::RestartMasterReset);
+    // Set the restart-response bit (bit 5, 0x20): the low APCI octet becomes 0xA1
+    // (0x81 | 0x20), matching the C++ reference `data[0] |= (1 << 5) | 1`. ETS
+    // reads this bit to distinguish a response from a request.
     let t = process_time.to_be_bytes();
-    alloc::vec![hi, lo, error_code, t[0], t[1]]
+    alloc::vec![hi, lo | 0x20, error_code, t[0], t[1]]
 }
 
 /// Encode a `PropertyDescriptionResponse` APDU payload.
@@ -222,6 +225,38 @@ pub fn encode_property_value_ext_response(
         start_index,
     );
     payload.extend_from_slice(data);
+    payload
+}
+
+/// Encode a `PropertyValueExtWriteConResponse` APDU payload (the confirmation of
+/// an `A_PropertyValueExtWrite` with confirmation requested).
+///
+/// Mirrors the C++ `propertyValueExtWriteConResponse`: the payload is the extended
+/// header followed by a single return-code octet, and the element count is forced
+/// to 0 when the return code is not `Success` (0x00).
+pub fn encode_property_value_ext_write_con_response(
+    object_type: u16,
+    object_instance: u16,
+    property_id: u16,
+    count: u8,
+    start_index: u16,
+    return_code: u8,
+) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::PropertyValueExtWriteConResponse);
+    let no_of_elem = if return_code == 0 { count } else { 0 };
+    // 2 APCI bytes + 8-byte extended header + 1 return-code byte.
+    let mut payload = Vec::with_capacity(11);
+    payload.push(hi);
+    payload.push(lo);
+    encode_ext_property_header(
+        &mut payload,
+        object_type,
+        object_instance,
+        property_id,
+        no_of_elem,
+        start_index,
+    );
+    payload.push(return_code);
     payload
 }
 

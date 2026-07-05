@@ -17,6 +17,16 @@
 
 use alloc::vec::Vec;
 
+use crate::interface_object::{InterfaceObject, ObjectType};
+use crate::property::{DataProperty, LoadState, PropertyDataType, PropertyId};
+
+/// Default table-reference (memory pointer) for the OT9 object: no segment.
+const TABLE_REFERENCE_DEFAULT: [u8; 4] = [0u8; 4];
+/// Default memory-control-block value for the OT9 object.
+const MCB_TABLE_DEFAULT: [u8; 8] = [0u8; 8];
+/// Default (no-fault) error code for the OT9 object.
+const ERROR_CODE_NONE: u8 = 0x00;
+
 const FLAG_COMM_ENABLE: u16 = 1 << 10;
 const FLAG_READ_ENABLE: u16 = 1 << 11;
 const FLAG_WRITE_ENABLE: u16 = 1 << 12;
@@ -154,6 +164,70 @@ impl GroupObjectTable {
         let raw = u16::from_be_bytes([self.data[offset], self.data[offset + 1]]);
         Some(GroupObjectDescriptor { raw })
     }
+}
+
+/// Create the Group Object Table interface object (`ObjectType` 9 / OT9).
+///
+/// System B (mask 0x57B0) requires this object at interface-object **index 3**,
+/// between the association table (index 2) and the application program (index 4).
+/// ETS addresses interface objects positionally by index, so its presence is what
+/// keeps the application program at index 4 — where a `.knxprod`'s `LdCtrl*`
+/// operations (`ObjIdx="4"`) address it.
+///
+/// It carries `PID_OBJECT_TYPE` = 9 plus the dynamic table-object property set
+/// (`LoadStateControl`, `TableReference`, `McbTable`, `ErrorCode`), mirroring the
+/// C++ `GroupObjectTableObject` (whose only own property is `PID_OBJECT_TYPE`; the
+/// rest are inherited from the `TableObject` base). For a device whose group-object
+/// table is compiled-in (logical-only), the paired [`TableObject`] is initialized
+/// `Loaded` — see `TableObject::new_loaded`.
+///
+/// [`TableObject`]: crate::table_object::TableObject
+pub fn new_group_object_table_object() -> InterfaceObject {
+    let mut obj = InterfaceObject::new(ObjectType::GroupObjectTable);
+
+    // Load state control (driven by ETS during a downloaded-table procedure; for a
+    // logical-only table the paired TableObject reports Loaded and value reads are
+    // served from it via the BAU table-property intercept).
+    obj.add_property(
+        DataProperty::read_write(
+            PropertyId::LoadStateControl,
+            PropertyDataType::UnsignedChar,
+            &[LoadState::Unloaded as u8],
+        )
+        .into(),
+    );
+
+    // Table reference (pointer to table data in memory).
+    obj.add_property(
+        DataProperty::read_write(
+            PropertyId::TableReference,
+            PropertyDataType::UnsignedLong,
+            &TABLE_REFERENCE_DEFAULT,
+        )
+        .into(),
+    );
+
+    // MCB table (memory control block).
+    obj.add_property(
+        DataProperty::read_write(
+            PropertyId::McbTable,
+            PropertyDataType::Generic08,
+            &MCB_TABLE_DEFAULT,
+        )
+        .into(),
+    );
+
+    // Error code.
+    obj.add_property(
+        DataProperty::read_only(
+            PropertyId::ErrorCode,
+            PropertyDataType::UnsignedChar,
+            &[ERROR_CODE_NONE],
+        )
+        .into(),
+    );
+
+    obj
 }
 
 #[cfg(test)]
