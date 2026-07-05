@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.3.2...knx-rs-v0.4.0) (2026-07-05)
+
+
+### Features
+
+* **device:** System-B conformance (unsecured) — decode fix + Tier-1/Tier-2 ([1e66ebe](https://github.com/metaneutrons/knx-rs/commit/1e66ebec35e53c6baff2b463f41c1f7898bb5ee9))
+
 ## [0.3.2](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.3.1...knx-rs-v0.3.2) (2026-07-05)
 
 
