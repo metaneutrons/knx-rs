@@ -277,12 +277,18 @@ impl TableObject {
         }
     }
 
-    /// Table reference (offset into memory area). Returns 0 if not loaded.
+    /// Table reference: the offset of the table's segment in the memory area.
+    ///
+    /// Reports the allocated offset as soon as a segment exists (from `Loading`
+    /// onward), not only when `Loaded` — ETS reads `PID_TABLE_REFERENCE` right
+    /// after allocating the segment (still in `Loading`) to learn where to place
+    /// its `A_Memory_Write`. The C++ reference returns it unconditionally (it is
+    /// derived from the allocated data pointer). Returns 0 only while `Unloaded`.
     pub const fn table_reference(&self) -> u32 {
-        if matches!(self.state, LoadState::Loaded) {
-            self.data_offset
-        } else {
+        if matches!(self.state, LoadState::Unloaded) {
             0
+        } else {
+            self.data_offset
         }
     }
 
@@ -514,6 +520,22 @@ mod tests {
         to.state = LoadState::Loaded;
         to.data_offset = 42;
         assert_eq!(to.table_reference(), 42);
+    }
+
+    #[test]
+    fn table_reference_available_in_loading_state() {
+        // ETS reads TableReference right after allocating the segment, while the
+        // object is still Loading — the offset must already be visible.
+        let mut to = TableObject::new();
+        to.handle_load_event(&[1], 0); // StartLoading → Loading
+        let alc = [0x03, 0x0B, 0x00, 0x00, 0x00, 0x06, 0x01, 0x00];
+        to.handle_load_event(&alc, 40); // allocate 6 bytes at memory offset 40
+        assert_eq!(to.load_state(), LoadState::Loading);
+        assert_eq!(
+            to.table_reference(),
+            40,
+            "offset must be visible in Loading, not only Loaded"
+        );
     }
 
     #[test]

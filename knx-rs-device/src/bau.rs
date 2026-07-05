@@ -1061,6 +1061,11 @@ impl Bau {
             PropertyId::LoadStateControl => Some(vec![to.load_state() as u8]),
             PropertyId::TableReference => Some(to.table_reference().to_be_bytes().to_vec()),
             PropertyId::McbTable => Some(to.mcb_table(&self.memory_area).to_vec()),
+            // Serve the live load error from the table object's own state (so it
+            // reflects a real download fault), for every table object including
+            // the address/association tables whose bare InterfaceObjects carry no
+            // static ErrorCode property.
+            PropertyId::ErrorCode => Some(vec![to.error_code() as u8]),
             _ => None,
         }
     }
@@ -3188,6 +3193,36 @@ mod tests {
         };
         assert!(apdu.data.len() >= 4, "property response header present");
         (apdu.data[2] >> 4, apdu.data[4..].to_vec())
+    }
+
+    #[test]
+    fn error_code_reflects_live_load_error_on_address_table() {
+        use crate::table_object::LoadError;
+        const ETS: u16 = 0xFFB1;
+        const DEV: u16 = 0x1101;
+        const LSC: u8 = PropertyId::LoadStateControl as u8;
+        const ERR: u8 = PropertyId::ErrorCode as u8;
+
+        let mut bau = test_bau();
+        let send = |bau: &mut Bau, apdu: &[u8]| {
+            let frame = CemiFrame::parse(&ind_frame(ETS, DEV, apdu)).unwrap();
+            bau.process_frame(&frame, 0);
+        };
+
+        // Drive an undefined load command (0xFF) on the address table (object 1),
+        // pushing its load-state machine into Error/UndefinedLoadCommand.
+        send(
+            &mut bau,
+            &prop_write_apdu(OBJ_ADDR_TABLE, LSC, 1, 1, &[0xFF]),
+        );
+        while bau.next_outgoing_frame().is_some() {} // drain the read-back
+
+        // PID_ERROR_CODE (28) must be served on OT1 (bare InterfaceObject) AND
+        // reflect the live error, not a frozen 0.
+        send(&mut bau, &prop_read_apdu(OBJ_ADDR_TABLE, ERR, 1, 1));
+        let (count, value) = drain_prop_response(&mut bau);
+        assert_eq!(count, 1, "ErrorCode must be served on the address table");
+        assert_eq!(value, alloc::vec![LoadError::UndefinedLoadCommand as u8]);
     }
 
     #[test]
