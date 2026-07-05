@@ -8,6 +8,12 @@ on:
   schedule:
     - cron: "0 0 * * 0"
 
+# All jobs only read the repo (checkout + build/lint/test; the audit job uses
+# GITHUB_TOKEN solely for advisory-DB rate limits). Restrict the token to a
+# read-only default — see CodeQL actions/missing-workflow-permissions.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
