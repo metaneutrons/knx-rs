@@ -149,6 +149,36 @@ pub struct Bau {
     restart_pending: bool,
 }
 
+/// The destination address type a connectionless application service must be
+/// carried on to be acted upon (mirrors the C++ `dataGroupIndication` /
+/// `dataBroadcastIndication` / `dataIndividualIndication` split).
+#[derive(PartialEq, Eq)]
+enum AddrScope {
+    /// A non-broadcast group address.
+    Group,
+    /// The broadcast address (group address 0).
+    Broadcast,
+    /// This device's own individual address.
+    Individual,
+}
+
+/// The address scope a connectionless `indication`'s service must be received on.
+const fn required_scope(indication: &AppIndication) -> AddrScope {
+    match indication {
+        AppIndication::GroupValueWrite { .. }
+        | AppIndication::GroupValueRead { .. }
+        | AppIndication::GroupValueResponse { .. } => AddrScope::Group,
+        AppIndication::IndividualAddressWrite { .. }
+        | AppIndication::IndividualAddressRead
+        | AppIndication::IndividualAddressSerialNumberRead { .. }
+        | AppIndication::IndividualAddressSerialNumberWrite { .. }
+        | AppIndication::SystemNetworkParameterRead { .. } => AddrScope::Broadcast,
+        // Management, memory, property, descriptor, restart and authorize/key are
+        // point-to-point services addressed to this device's individual address.
+        _ => AddrScope::Individual,
+    }
+}
+
 impl Bau {
     /// Create a new BAU.
     ///
@@ -444,12 +474,32 @@ impl Bau {
                 now_ms,
             );
         } else {
-            // Connectionless: DataGroup, DataBroadcast, DataIndividual
+            // Connectionless: DataGroup, DataBroadcast, DataIndividual. Gate by
+            // address type (mirrors the C++ data{Group,Broadcast,Individual}
+            // Indication split): group services only on a group address, broadcast
+            // services only on the broadcast address, and management/memory/
+            // property services only when the frame is addressed to THIS device's
+            // individual address — never to another device's, or as a broadcast.
             let Ok(indication) = application_layer::parse_indication(apdu.apdu_type, &apdu.data)
             else {
                 return;
             };
+            if !self.indication_in_scope(frame, &indication) {
+                return;
+            }
             self.dispatch_indication(frame, source, indication);
+        }
+    }
+
+    /// Whether a connectionless `indication` arrived on the destination address
+    /// type its service requires (see [`required_scope`]).
+    fn indication_in_scope(&self, frame: &CemiFrame, indication: &AppIndication) -> bool {
+        let is_group = frame.address_type() == AddressType::Group;
+        let dst = frame.destination_address_raw();
+        match required_scope(indication) {
+            AddrScope::Group => is_group && dst != 0,
+            AddrScope::Broadcast => is_group && dst == 0,
+            AddrScope::Individual => !is_group && dst == self.individual_address().raw(),
         }
     }
 
@@ -2790,6 +2840,23 @@ mod tests {
         f
     }
 
+    /// Build a broadcast `L_Data.ind` frame (group addressing, destination 0).
+    fn bcast_frame(src: u16, apdu: &[u8]) -> Vec<u8> {
+        let mut f = vec![
+            0x29,
+            0x00,
+            0xB0,
+            0xE0, // group addressing
+            (src >> 8) as u8,
+            (src & 0xFF) as u8,
+            0x00,
+            0x00, // broadcast address
+            u8::try_from(apdu.len() - 1).unwrap(),
+        ];
+        f.extend_from_slice(apdu);
+        f
+    }
+
     /// APCI header `[hi, lo]` for a service: `hi` is the two APCI bits that share
     /// byte 0 with the TPCI, `lo` is the low 8 APCI bits.
     fn apci_hdr(t: knx_rs_core::message::ApduType) -> [u8; 2] {
@@ -3233,6 +3300,58 @@ mod tests {
         };
         assert!(apdu.data.len() >= 4, "property response header present");
         (apdu.data[2] >> 4, apdu.data[4..].to_vec())
+    }
+
+    #[test]
+    fn management_service_to_other_ia_is_ignored() {
+        let mut bau = test_bau(); // our IA is 0x1101
+        let apdu = prop_read_apdu(0, PropertyId::ObjectType as u8, 1, 1);
+
+        // A PropertyValueRead addressed to another device (0x1234) must be ignored.
+        let other = CemiFrame::parse(&ind_frame(0xFFB1, 0x1234, &apdu)).unwrap();
+        bau.process_frame(&other, 0);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "must not answer a management frame addressed to another device"
+        );
+
+        // A broadcast-addressed management read must also be ignored.
+        let bcast = CemiFrame::parse(&bcast_frame(0xFFB1, &apdu)).unwrap();
+        bau.process_frame(&bcast, 0);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "must not answer a management read sent as broadcast"
+        );
+
+        // The same read addressed to us IS answered.
+        let ours = CemiFrame::parse(&ind_frame(0xFFB1, 0x1101, &apdu)).unwrap();
+        bau.process_frame(&ours, 0);
+        assert!(
+            bau.next_outgoing_frame().is_some(),
+            "must answer a management frame addressed to us"
+        );
+    }
+
+    #[test]
+    fn individual_address_write_requires_broadcast() {
+        let mut bau = test_bau();
+        device_object::set_prog_mode(bau.device_mut(), true);
+        let apdu = &[0x00, 0xC0, 0x11, 0x05]; // A_IndividualAddress_Write → 1.1.5
+
+        // Carried on an individual frame (to our IA) it must be ignored — the
+        // write is a broadcast-only service.
+        let indiv = CemiFrame::parse(&ind_frame(0xFFB1, 0x1101, apdu)).unwrap();
+        bau.process_frame(&indiv, 0);
+        assert_eq!(
+            bau.individual_address().raw(),
+            0x1101,
+            "individual-addressed A_IndividualAddress_Write must be ignored"
+        );
+
+        // As a broadcast it is honored (device is in programming mode).
+        let bcast = CemiFrame::parse(&bcast_frame(0xFFB1, apdu)).unwrap();
+        bau.process_frame(&bcast, 0);
+        assert_eq!(bau.individual_address().raw(), 0x1105);
     }
 
     #[test]
