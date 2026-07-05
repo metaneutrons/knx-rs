@@ -32,6 +32,14 @@ pub enum KnxprodError {
     /// Invalid XML structure.
     #[error("invalid XML structure: {0}")]
     InvalidStructure(String),
+
+    /// RSA signing error (key parsing or signature generation).
+    #[error("signing error: {0}")]
+    Signing(String),
+
+    /// `knx_master.xml` could not be obtained.
+    #[error("knx_master error: {0}")]
+    MasterData(String),
 }
 
 impl KnxprodError {

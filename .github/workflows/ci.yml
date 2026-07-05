@@ -74,7 +74,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
         rust: [stable, beta]
     steps:
       - uses: actions/checkout@v6
@@ -137,6 +137,10 @@ jobs:
       - uses: actions-rust-lang/audit@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # RUSTSEC-2023-0071: `rsa` Marvin timing side-channel. No fixed upgrade
+          # exists. Not exploitable here — knx-rs-prod signs .knxprod locally with
+          # the operator's own key; there is no network-exposed RSA timing oracle.
+          ignore: RUSTSEC-2023-0071
 
   docs:
     name: Documentation

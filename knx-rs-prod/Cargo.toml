@@ -22,17 +22,33 @@ thiserror.workspace = true
 zip.workspace = true
 tempfile.workspace = true
 
+# RSA signing of the M-XXXX product folder (the ETS `.signature`). Core to a
+# usable `.knxprod`, so always compiled in. The signing key is always supplied
+# by the caller at runtime — never bundled.
+rsa = { version = "0.9", features = ["pem"] }
+sha1 = { version = "0.10", features = ["oid"] }
+# Optional: download knx_master.xml from update.knx.org (pulls in a TLS stack).
+ureq = { version = "2", optional = true }
+
 [dependencies.clap]
 workspace = true
 optional = true
 
+[dev-dependencies]
+rand = "0.8"
+
 [features]
 default = ["cli"]
 cli = ["dep:clap"]
+# Fetch knx_master.xml over HTTPS instead of supplying it as a path.
+fetch = ["dep:ureq"]
 
 [[bin]]
 name = "knx-rs-prod"
 required-features = ["cli"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [lints]
 workspace = true

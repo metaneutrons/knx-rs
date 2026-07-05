@@ -8,7 +8,7 @@ use std::process;
 
 use clap::Parser;
 
-/// Cross-platform .knxprod generator for KNX ETS product databases.
+/// Cross-platform .knxprod builder for KNX ETS product databases.
 #[derive(Parser)]
 #[command(name = "knx-rs-prod", version, about)]
 struct Cli {
@@ -18,12 +18,26 @@ struct Cli {
     /// Output .knxprod file path.
     #[arg(short, long)]
     output: Option<PathBuf>,
+
+    /// RSA signing key (PEM or .NET `<RSAKeyValue>` XML) extracted from your OWN
+    /// licensed ETS installation. Produces a signed, ETS-importable archive.
+    #[arg(long, value_name = "FILE")]
+    key: Option<PathBuf>,
+
+    /// Path to a `knx_master.xml` to embed (used with `--key`).
+    #[arg(long, value_name = "FILE")]
+    knx_master: Option<PathBuf>,
+
+    /// Download `knx_master.xml` from update.knx.org (used with `--key`).
+    /// Requires `--features fetch`.
+    #[arg(long)]
+    fetch_master: bool,
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    let output = cli.output.unwrap_or_else(|| {
+    let output = cli.output.clone().unwrap_or_else(|| {
         let stem = cli.input.file_stem().unwrap_or_default().to_string_lossy();
         PathBuf::from(format!("{stem}.knxprod"))
     });
@@ -31,11 +45,22 @@ fn main() {
     eprintln!("Input:  {}", cli.input.display());
     eprintln!("Output: {}", output.display());
 
-    match knx_rs_prod::generate_knxprod(&cli.input, &output) {
+    let result = if cli.key.is_some() {
+        run_signed(&cli, &output)
+    } else {
+        knx_rs_prod::generate_knxprod(&cli.input, &output)
+    };
+
+    match result {
         Ok(meta) => {
             eprintln!("Manufacturer: {}", meta.manufacturer_id);
             eprintln!("Application:  {}", meta.application_id);
             eprintln!("Namespace:    project/{}", meta.ns_version);
+            if cli.key.is_none() {
+                eprintln!(
+                    "WARNING: unsigned — NOT importable by ETS. Pass --key to sign (issue #9)."
+                );
+            }
             eprintln!("Done.");
         }
         Err(e) => {
@@ -43,4 +68,57 @@ fn main() {
             process::exit(1);
         }
     }
+}
+
+/// Run the signing pipeline (key + `knx_master.xml`).
+fn run_signed(
+    cli: &Cli,
+    output: &std::path::Path,
+) -> Result<knx_rs_prod::KnxMetadata, knx_rs_prod::KnxprodError> {
+    use knx_rs_prod::KnxprodError;
+    use knx_rs_prod::knx_master::KnxMaster;
+    use knx_rs_prod::signature::SigningKey;
+
+    let Some(key_path) = cli.key.as_ref() else {
+        return Err(KnxprodError::Signing("no --key provided".into()));
+    };
+    let key = SigningKey::from_path(key_path)?;
+
+    // Resolve knx_master.xml: explicit path, else download (needs `fetch`).
+    let master = if let Some(path) = cli.knx_master.as_ref() {
+        KnxMaster::from_path(path)?
+    } else if cli.fetch_master {
+        fetch_master(&cli.input)?
+    } else {
+        return Err(KnxprodError::MasterData(
+            "signing needs a knx_master.xml: pass --knx-master <FILE> or --fetch-master".into(),
+        ));
+    };
+
+    eprintln!("Signing with key: {}", key_path.display());
+    knx_rs_prod::generate_signed_knxprod(&cli.input, output, &key, &master)
+}
+
+/// Download `knx_master.xml` for the input's schema version (needs `fetch`).
+#[cfg(feature = "fetch")]
+fn fetch_master(
+    input: &std::path::Path,
+) -> Result<knx_rs_prod::knx_master::KnxMaster, knx_rs_prod::KnxprodError> {
+    let xml =
+        std::fs::read_to_string(input).map_err(|e| knx_rs_prod::KnxprodError::io(input, e))?;
+    let meta = knx_rs_prod::parse::extract_metadata_from_str(&xml)?;
+    eprintln!(
+        "Fetching {}",
+        knx_rs_prod::knx_master::KnxMaster::master_url(meta.ns_version)
+    );
+    knx_rs_prod::knx_master::KnxMaster::download(meta.ns_version)
+}
+
+#[cfg(not(feature = "fetch"))]
+fn fetch_master(
+    _input: &std::path::Path,
+) -> Result<knx_rs_prod::knx_master::KnxMaster, knx_rs_prod::KnxprodError> {
+    Err(knx_rs_prod::KnxprodError::MasterData(
+        "--fetch-master requires building with `--features fetch`".into(),
+    ))
 }
