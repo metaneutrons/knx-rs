@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.4.0...knx-rs-v0.5.0) (2026-07-05)
+
+
+### Features
+
+* **prod:** user-supplied-key .knxprod RSA signing ([#17](https://github.com/metaneutrons/knx-rs/issues/17)) ([5a1d84b](https://github.com/metaneutrons/knx-rs/commit/5a1d84b6721ddbffb4d2ed65a83f0ca3fe93824d))
+
+
+### Bug Fixes
+
+* **prod:** patch fingerprint across Catalog/Hardware, not just the app ([#19](https://github.com/metaneutrons/knx-rs/issues/19)) ([28f39ce](https://github.com/metaneutrons/knx-rs/commit/28f39ce6a47cdd58e065082dc9ddb95e3b9f38b3))
+* **prod:** soften unsigned warning to "maybe not importable" ([#23](https://github.com/metaneutrons/knx-rs/issues/23)) ([2bbc19d](https://github.com/metaneutrons/knx-rs/commit/2bbc19dd951b5412d2ba1cc30d9019aad00d3b87))
+
 ## [0.4.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.3.2...knx-rs-v0.4.0) (2026-07-05)
 
 
