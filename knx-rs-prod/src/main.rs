@@ -58,7 +58,7 @@ fn main() {
             eprintln!("Namespace:    project/{}", meta.ns_version);
             if cli.key.is_none() {
                 eprintln!(
-                    "WARNING: unsigned — NOT importable by ETS. Pass --key to sign (issue #9)."
+                    "WARNING: unsigned — maybe not importable by ETS. Pass --key to sign (issue #9)."
                 );
             }
             eprintln!("Done.");
