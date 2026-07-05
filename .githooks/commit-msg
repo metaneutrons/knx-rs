@@ -1,12 +1,44 @@
 #!/bin/sh
-# Enforce conventional commits: type(scope): description
-# Types: feat, fix, refactor, docs, test, ci, chore, perf, style, build, revert
-msg=$(head -1 "$1")
+# commit-msg hook:
+#   1. Strip AI-attribution trailers (Co-Authored-By: Claude/Anthropic,
+#      "Generated with [Claude Code]") from the message — automatically.
+#   2. Reject a commit whose author/committer identity is an AI (anthropic.com
+#      email, or a "Claude <model>" name).
+#   3. Enforce Conventional Commits on the subject line.
 
-# Allow merge commits and revert commits
+msg_file="$1"
+
+# --- 1. Strip AI-attribution trailers (auto-fix) ----------------------------
+# Anchored to line start so prose that merely *mentions* these phrases is kept.
+strip_re='^[[:space:]]*(co-authored-by:.*(claude|anthropic)|(🤖[[:space:]]*)?generated with \[?claude code)'
+if grep -iqE "$strip_re" "$msg_file"; then
+    tmp="$msg_file.aiclean"
+    # Drop the attribution lines, then drop any trailing blank lines they left
+    # (git strips trailing blanks too, but keep the file tidy).
+    grep -ivE "$strip_re" "$msg_file" \
+        | awk '{ l[NR] = $0 } !/^[[:space:]]*$/ { last = NR } END { for (i = 1; i <= last; i++) print l[i] }' \
+        > "$tmp"
+    mv "$tmp" "$msg_file"
+    echo "commit-msg: stripped AI-attribution trailer(s)"
+fi
+
+# --- 2. Reject an AI author/committer identity ------------------------------
+idents="$(git var GIT_AUTHOR_IDENT 2>/dev/null) $(git var GIT_COMMITTER_IDENT 2>/dev/null)"
+idents="$idents $GIT_AUTHOR_NAME $GIT_AUTHOR_EMAIL $GIT_COMMITTER_NAME $GIT_COMMITTER_EMAIL"
+if printf '%s' "$idents" | grep -qiE 'anthropic\.com|claude[ _-]?(opus|sonnet|haiku|code)'; then
+    echo "ERROR: commit author/committer identity looks like an AI:"
+    echo "  author:    $(git var GIT_AUTHOR_IDENT 2>/dev/null)"
+    echo "  committer: $(git var GIT_COMMITTER_IDENT 2>/dev/null)"
+    echo ""
+    echo "Set a human identity, e.g.:"
+    echo "  git config user.name  \"Your Name\""
+    echo "  git config user.email \"you@example.com\""
+    exit 1
+fi
+
+# --- 3. Conventional Commits ------------------------------------------------
+msg=$(head -1 "$msg_file")
 echo "$msg" | grep -qE '^(Merge |Revert )' && exit 0
-
-# Conventional commit pattern
 echo "$msg" | grep -qE '^(feat|fix|refactor|docs|test|ci|chore|perf|style|build|revert)(\(.+\))?!?: .+' || {
     echo "ERROR: Commit message must follow Conventional Commits format:"
     echo "  <type>(<scope>): <description>"
