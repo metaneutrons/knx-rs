@@ -76,6 +76,9 @@ const DEFAULT_INDIVIDUAL_ADDRESS: u16 = 0xFFFF;
 
 /// Property ID for serial number (KNX system network parameter read).
 const PID_SERIAL_NUMBER: u16 = 11;
+/// `A_SystemNetworkParameter_Read` operand `NM_Read_SerialNumber_By_ProgrammingMode`
+/// (KNX 3/5/2): read the serial number of devices currently in programming mode.
+const NM_READ_SERIAL_BY_PROG_MODE: u8 = 0x01;
 /// Object type for the device object.
 const OBJECT_TYPE_DEVICE: u16 = 0;
 /// Domain address for IP devices (always 0).
@@ -1370,8 +1373,16 @@ impl Bau {
         property_id: u16,
         test_info: &[u8],
     ) {
-        // Only respond to PID_SERIAL_NUMBER on device object
-        if object_type == OBJECT_TYPE_DEVICE && property_id == PID_SERIAL_NUMBER {
+        // KNX 3/5/2: only answer the serial-number-by-programming-mode operand
+        // (test_info[1]; test_info[0] is 4 reserved bits), for the device serial
+        // number, and ONLY while in programming mode. Without the operand+prog-mode
+        // gate every unprogrammed device on the bus would answer this broadcast.
+        let operand = test_info.get(1).copied().unwrap_or(0);
+        if operand == NM_READ_SERIAL_BY_PROG_MODE
+            && object_type == OBJECT_TYPE_DEVICE
+            && property_id == PID_SERIAL_NUMBER
+            && device_object::prog_mode(self.device())
+        {
             let serial = device_object::serial_number(self.device());
             let payload = application_layer::encode_system_network_parameter_response(
                 object_type,
@@ -2322,6 +2333,35 @@ mod tests {
         bau.handle_memory_ext_write(SRC_1102, 0x0020, &[0xCA, 0xFE]);
         assert_eq!(bau.memory_area[0x20], 0xCA);
         assert_eq!(bau.memory_area[0x21], 0xFE);
+    }
+
+    #[test]
+    fn system_network_parameter_read_gated_on_prog_mode_and_operand() {
+        let mut bau = test_bau();
+        // test_info = [reserved, operand, ..]; operand 0x01 = serial-by-prog-mode.
+        let progmode = [0x00, NM_READ_SERIAL_BY_PROG_MODE];
+        let other = [0x00, 0x02]; // NM_Read_SerialNumber_By_ExFactoryState
+
+        // Right operand but NOT in prog mode → no reply.
+        bau.handle_system_network_parameter_read(OBJECT_TYPE_DEVICE, PID_SERIAL_NUMBER, &progmode);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "no reply outside programming mode"
+        );
+
+        device_object::set_prog_mode(bau.device_mut(), true);
+
+        // Wrong operand in prog mode → no reply.
+        bau.handle_system_network_parameter_read(OBJECT_TYPE_DEVICE, PID_SERIAL_NUMBER, &other);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "no reply for a non-programming-mode operand"
+        );
+
+        // Right operand + prog mode → a broadcast reply carrying the serial.
+        bau.handle_system_network_parameter_read(OBJECT_TYPE_DEVICE, PID_SERIAL_NUMBER, &progmode);
+        let resp = bau.next_outgoing_frame().expect("serial reply");
+        assert_eq!(resp.destination_address_raw(), 0, "reply is a broadcast");
     }
 
     #[test]
