@@ -244,7 +244,8 @@ pub fn encode_property_value_ext_write_con_response(
 ) -> Vec<u8> {
     let [hi, lo] = apci_bytes(ApduType::PropertyValueExtWriteConResponse);
     let no_of_elem = if return_code == 0 { count } else { 0 };
-    let mut payload = Vec::with_capacity(10);
+    // 2 APCI bytes + 8-byte extended header + 1 return-code byte.
+    let mut payload = Vec::with_capacity(11);
     payload.push(hi);
     payload.push(lo);
     encode_ext_property_header(
