@@ -13,25 +13,28 @@ msg_file="$1"
 # then a model. Requiring the separator avoids matching e.g. "claudehaiku@...".
 claude_model='claude[ _-]+([0-9.]+[ _-]+)?(opus|sonnet|haiku|code)'
 # Anchored to line start so prose that merely *mentions* these phrases is kept.
-# The emoji footer is matched via a non-alphanumeric prefix (no literal emoji in
-# the pattern, which can break grep in a C locale). The trailer match is narrowed
-# to Anthropic / a Claude model so a human co-author named "Claude" is preserved.
-strip_re="^[[:space:]]*(co-authored-by:.*(anthropic|$claude_model)|[^[:alnum:]]*generated with \\[?claude code)"
+# The emoji footer is matched via a non-alphanumeric prefix (no literal emoji,
+# which can break grep in a C locale); "[[]?" is a POSIX-portable optional "[".
+# The trailer match is narrowed to Anthropic / a Claude model so a human
+# co-author named "Claude" is preserved. Pattern is lowercase so awk's
+# tolower() below gives case-insensitive matching.
+strip_re="^[[:space:]]*(co-authored-by:.*(anthropic|$claude_model)|[^[:alnum:]]*generated with [[]?claude code)"
 if grep -iqE "$strip_re" "$msg_file"; then
     tmp="$msg_file.aiclean"
-    # Drop the attribution lines, then drop any trailing blank lines they left
-    # (git strips trailing blanks too, but keep the file tidy). Only replace the
-    # message if the pipeline succeeds, so a write error can't clobber it.
-    grep -ivE "$strip_re" "$msg_file" \
-        | awk '{ l[NR] = $0 } !/^[[:space:]]*$/ { last = NR } END { for (i = 1; i <= last; i++) print l[i] }' \
-        > "$tmp" && mv "$tmp" "$msg_file"
+    # Single awk pass (case-insensitive, matching the detection above): drop the
+    # attribution lines plus any trailing blank lines they leave. No pipeline, so
+    # a partial failure can't clobber the message; only replace on success.
+    awk -v re="$strip_re" '
+        tolower($0) !~ re { l[++n] = $0; if ($0 !~ /^[[:space:]]*$/) last = n }
+        END { for (i = 1; i <= last; i++) print l[i] }
+    ' "$msg_file" > "$tmp" && mv "$tmp" "$msg_file"
     echo "commit-msg: stripped AI-attribution trailer(s)"
 fi
 
 # --- 2. Reject an AI author/committer identity ------------------------------
 idents="$(git var GIT_AUTHOR_IDENT 2>/dev/null) $(git var GIT_COMMITTER_IDENT 2>/dev/null)"
 idents="$idents $GIT_AUTHOR_NAME $GIT_AUTHOR_EMAIL $GIT_COMMITTER_NAME $GIT_COMMITTER_EMAIL"
-if printf '%s' "$idents" | grep -qiE "@anthropic\\.com|$claude_model"; then
+if printf '%s' "$idents" | grep -qiE "@anthropic[.]com|$claude_model"; then
     echo "ERROR: commit author/committer identity looks like an AI:"
     echo "  author:    $(git var GIT_AUTHOR_IDENT 2>/dev/null)"
     echo "  committer: $(git var GIT_COMMITTER_IDENT 2>/dev/null)"
@@ -43,9 +46,9 @@ if printf '%s' "$idents" | grep -qiE "@anthropic\\.com|$claude_model"; then
 fi
 
 # --- 3. Conventional Commits ------------------------------------------------
-msg=$(head -1 "$msg_file")
-echo "$msg" | grep -qE '^(Merge |Revert )' && exit 0
-echo "$msg" | grep -qE '^(feat|fix|refactor|docs|test|ci|chore|perf|style|build|revert)(\(.+\))?!?: .+' || {
+msg=$(head -n 1 "$msg_file")
+printf '%s\n' "$msg" | grep -qE '^(Merge |Revert )' && exit 0
+printf '%s\n' "$msg" | grep -qE '^(feat|fix|refactor|docs|test|ci|chore|perf|style|build|revert)(\(.+\))?!?: .+' || {
     echo "ERROR: Commit message must follow Conventional Commits format:"
     echo "  <type>(<scope>): <description>"
     echo ""
