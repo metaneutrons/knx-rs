@@ -309,8 +309,11 @@ fn parse_property_value_ext_write_uncon(data: &[u8]) -> Result<AppIndication, Ap
 fn parse_property_ext_description_read(data: &[u8]) -> Result<AppIndication, AppLayerError> {
     check_len(data, 8)?;
     let (object_type, object_instance, property_id) = parse_ext_ot_oi_pid(data);
+    // Layout after the stripped APCI byte: ot(2) + oi/pid(3) + descType in the
+    // high nibble of byte 5, then the 12-bit property index in the low nibble of
+    // byte 6 .. byte 7. (byte 5 low nibble and byte 6 high nibble are reserved.)
     let description_type = data[5] >> 4;
-    let property_index = (u16::from(data[5] & MASK_4BIT) << 8) | u16::from(data[6]);
+    let property_index = (u16::from(data[6] & MASK_4BIT) << 8) | u16::from(data[7]);
     Ok(AppIndication::PropertyExtDescriptionRead {
         object_type,
         object_instance,
@@ -1180,9 +1183,11 @@ mod tests {
 
     #[test]
     fn parse_property_ext_description_read() {
+        // descType nibble in byte 5 high nibble (0x10 → 1); property index 0x005
+        // in byte 6 low nibble .. byte 7 (0x00, 0x05).
         let ind = parse_indication(
             ApduType::PropertyExtDescriptionRead,
-            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x10, 0x05, 0x00],
+            &[0x00, 0x01, 0x01, 0x20, 0x03, 0x10, 0x00, 0x05],
         )
         .unwrap();
         assert!(matches!(
