@@ -107,7 +107,7 @@ version requirement deliberately and apply the changes below.
 - **Sign** — RSA-sign the `M-XXXX` folder into an `M-XXXX.signature` and embed `knx_master.xml`, using **a signing key you supply** (PEM or .NET `<RSAKeyValue>` XML) — see [Signing](#signing-bring-your-own-ets-key)
 - **Package** — assemble the `M-XXXX/` folder and ZIP it into a `.knxprod`
 
-> **Signing needs your own key — none is bundled.** ETS validates each product against an RSA-1024 signature produced by the closed-source `Knx.Ets.XmlSigning.dll`; the key lives inside that DLL and is not public (even OpenKNXproducer/Kaenx-Creator shell out to it). `knx-rs-prod` ships the signing *algorithm*, not a key: you extract the key from your **own licensed ETS** and pass it in. Without `--key`, the output is unsigned and not importable. See [issue #9](https://github.com/metaneutrons/knx-rs/issues/9).
+> **Signing needs your own key — none is bundled.** ETS validates each product against an RSA-1024 signature produced by the closed-source `Knx.Ets.XmlSigning.dll`; the key lives inside that DLL and is not public (even OpenKNXproducer/Kaenx-Creator shell out to it). `knx-rs-prod` ships the signing *algorithm*, not a key: you extract the key from your **own licensed ETS** and pass it in. Without `--key`, the output is unsigned (maybe not importable by ETS). See [issue #9](https://github.com/metaneutrons/knx-rs/issues/9).
 
 ## Quick Start
 
@@ -188,7 +188,7 @@ Rust source code (GO definitions, parameters)
 
 This is the approach used by [SnapDog](https://github.com/metaneutrons/snapdog): a Rust `xtask` reads the group object definitions from the device firmware (SSOT — the same constants that configure the BAU at runtime) and generates the complete ETS product XML. Then `knx-rs-prod` hashes, signs, and packages it. The XML is a build artifact, never hand-edited.
 
-Without `--key`, `knx-rs-prod` still does everything except the RSA signature, producing an unsigned archive (not importable by ETS). Authoring the XML by hand? [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) remains a fine front end — `knx-rs-prod` replaces only its signing step.
+Without `--key`, `knx-rs-prod` still does everything except the RSA signature, producing an unsigned archive (maybe not importable by ETS). Authoring the XML by hand? [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) remains a fine front end — `knx-rs-prod` replaces only its signing step.
 
 ### Signing (bring your own ETS key)
 
