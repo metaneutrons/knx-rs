@@ -383,10 +383,13 @@ fn extract_attribute(tag: &str, attr_name: &str) -> Option<String> {
             Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
                 for attr in e.attributes().flatten() {
                     if attr.key.as_ref() == attr_name {
-                        return Some(attr.unescape_value().map_or_else(
-                            |_| String::from_utf8_lossy(&attr.value).into_owned(),
-                            std::borrow::Cow::into_owned,
-                        ));
+                        return Some(
+                            attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                .map_or_else(
+                                    |_| String::from_utf8_lossy(&attr.value).into_owned(),
+                                    std::borrow::Cow::into_owned,
+                                ),
+                        );
                     }
                 }
                 return None;

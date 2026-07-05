@@ -850,10 +850,12 @@ fn serialize_registry_attrs(
             let mut attr_map: HashMap<Vec<u8>, String> = HashMap::new();
             for attr in start.attributes().flatten() {
                 let key = local_name(attr.key.as_ref()).to_vec();
-                let val = attr.unescape_value().map_or_else(
-                    |_| String::from_utf8_lossy(&attr.value).into_owned(),
-                    std::borrow::Cow::into_owned,
-                );
+                let val = attr
+                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                    .map_or_else(
+                        |_| String::from_utf8_lossy(&attr.value).into_owned(),
+                        std::borrow::Cow::into_owned,
+                    );
                 attr_map.insert(key, val);
             }
             let mut sort_key = None;
