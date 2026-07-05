@@ -61,10 +61,13 @@ pub fn sign_application(split: &SplitResult) -> Result<SplitResult, KnxprodError
     let new_filename = filename.replace(&old_fingerprint, &new_fingerprint);
     let new_path = app_path.with_file_name(&new_filename);
 
-    // Write patched XML (to new path, then remove old if different)
+    // Write patched XML to the new path, then remove the old one. Propagate a
+    // removal failure: a leftover old app XML would be re-patched by the
+    // sibling loop below and archived alongside the new one, yielding a
+    // duplicate/ETS-rejected `.knxprod`.
     std::fs::write(&new_path, patched.as_bytes()).map_err(|e| KnxprodError::io(&new_path, e))?;
     if new_path != *app_path {
-        let _ = std::fs::remove_file(app_path);
+        std::fs::remove_file(app_path).map_err(|e| KnxprodError::io(app_path, e))?;
     }
 
     // The same fingerprint appears in the Catalog/Hardware (and Baggages) files —
