@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.3.1...knx-rs-v0.3.2) (2026-07-05)
+
+
+### Bug Fixes
+
+* **deps:** bump quick-xml to 0.41 to clear RUSTSEC-2026-0194/0195 ([#14](https://github.com/metaneutrons/knx-rs/issues/14)) ([7946825](https://github.com/metaneutrons/knx-rs/commit/7946825628cb00e6b544f725da69cf4091c85da6))
+
 ## [0.3.1](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.3.0...knx-rs-v0.3.1) (2026-06-28)
 
 
