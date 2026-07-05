@@ -92,10 +92,15 @@ const RESTART_PROCESS_TIME_DEFAULT: u16 = 3;
 const ADC_VALUE_DEFAULT: u16 = 0;
 /// Authorization level: full access (no restrictions).
 const AUTH_LEVEL_FULL: u8 = 0;
-/// Memory extended read/write return code: success.
-const MEM_EXT_RETURN_OK: u8 = 0;
-/// Memory extended read/write return code: error (out of range).
-const MEM_EXT_RETURN_ERROR: u8 = 1;
+/// Memory extended read/write return code: success (KNX `ReturnCodes::Success`).
+const MEM_EXT_RETURN_OK: u8 = 0x00;
+/// Memory extended read/write return code: address out of range (KNX
+/// `ReturnCodes::AddressVoid`). NB 0x01 is `SuccessWithCrc`, not an error.
+const MEM_EXT_RETURN_ERROR: u8 = 0xFD;
+/// KNX `ReturnCodes::Success` — service executed successfully.
+const RETURN_CODE_SUCCESS: u8 = 0x00;
+/// KNX `ReturnCodes::AddressVoid` — the addressed resource/property is not present.
+const RETURN_CODE_ADDRESS_VOID: u8 = 0xFD;
 /// Broadcast group address (raw value 0).
 const BROADCAST_GA: u16 = 0;
 
@@ -1398,22 +1403,30 @@ impl Bau {
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
-    fn queue_adc_response(&mut self, destination: IndividualAddress, channel: u8, count: u8) {
-        let payload = application_layer::encode_adc_response(channel, count, ADC_VALUE_DEFAULT);
+    fn queue_adc_response(&mut self, destination: IndividualAddress, channel: u8, _count: u8) {
+        // No ADC hardware: the response read-count and value are both 0 (the C++
+        // reference hardcodes read-count 0 rather than echoing the request count).
+        let payload = application_layer::encode_adc_response(channel, 0, ADC_VALUE_DEFAULT);
         self.queue_individual_frame(destination, Priority::System, &payload);
     }
 
     /// Find an interface object index by object type and instance number.
+    ///
+    /// The object instance is **1-based** on the wire (instance 1 = the first
+    /// object of that type), per KNX extended-property services. The C++ reference
+    /// ignores the instance entirely (one object per type), so matching the first
+    /// object for instance 1 is the faithful behavior; higher instances select
+    /// further objects of the same type if present.
     fn find_object_by_type(&self, object_type: u16, instance: u16) -> Option<u8> {
         let target = crate::interface_object::ObjectType::try_from(object_type).ok()?;
         let mut instance_count = 0u16;
         for (i, obj) in self.objects.iter().enumerate() {
             let Ok(idx) = u8::try_from(i) else { break };
             if obj.object_type() == target {
+                instance_count += 1;
                 if instance_count == instance {
                     return Some(idx);
                 }
-                instance_count += 1;
             }
         }
         None
@@ -1483,37 +1496,41 @@ impl Bau {
         data: &[u8],
         confirmed: bool,
     ) {
-        let obj_idx = self.find_object_by_type(params.object_type, params.object_instance);
-        if let Some(idx) = obj_idx {
-            let Ok(pid) = u8::try_from(params.property_id) else {
-                if confirmed {
-                    self.queue_ext_property_error(
-                        source,
-                        params.object_type,
-                        params.object_instance,
-                        params.property_id,
-                        params.start_index,
-                    );
-                }
-                return;
-            };
-            if let Ok(pid_enum) = PropertyId::try_from(pid) {
-                if let Some(obj) = self.objects.get_mut(idx as usize) {
-                    obj.write_property(pid_enum, params.start_index, params.count, data);
-                }
-            }
-        }
+        let return_code = self.apply_ext_property_write(params, data);
         if confirmed {
-            // Send write confirmation response
-            let payload = application_layer::encode_property_value_ext_response(
+            // Confirm with a PropertyValueExtWriteConResponse carrying the return
+            // code (NOT a PropertyValueExtResponse) — matching the C++ reference.
+            let payload = application_layer::encode_property_value_ext_write_con_response(
                 params.object_type,
                 params.object_instance,
                 params.property_id,
                 params.count,
                 params.start_index,
-                &[],
+                return_code,
             );
             self.queue_individual_frame(source, Priority::System, &payload);
+        }
+    }
+
+    /// Apply an extended property write and return the KNX return code (`0x00`
+    /// success, `0xFD` `AddressVoid` when the object/property does not exist).
+    fn apply_ext_property_write(&mut self, params: &ExtPropertyParams, data: &[u8]) -> u8 {
+        let Some(idx) = self.find_object_by_type(params.object_type, params.object_instance) else {
+            return RETURN_CODE_ADDRESS_VOID;
+        };
+        let Ok(pid) = u8::try_from(params.property_id) else {
+            return RETURN_CODE_ADDRESS_VOID;
+        };
+        let Ok(pid_enum) = PropertyId::try_from(pid) else {
+            return RETURN_CODE_ADDRESS_VOID;
+        };
+        let Some(obj) = self.objects.get_mut(idx as usize) else {
+            return RETURN_CODE_ADDRESS_VOID;
+        };
+        if obj.write_property(pid_enum, params.start_index, params.count, data) > 0 {
+            RETURN_CODE_SUCCESS
+        } else {
+            RETURN_CODE_ADDRESS_VOID
         }
     }
 
@@ -2246,6 +2263,55 @@ mod tests {
     }
 
     #[test]
+    fn memory_ext_read_out_of_range_returns_address_void() {
+        let mut bau = test_bau();
+        // No memory allocated → any read is out of range.
+        bau.handle_memory_ext_read(SRC_1102, 4, 0x00_1000);
+        let resp = bau.next_outgoing_frame().expect("ext read response");
+        // Out-of-range must be ReturnCodes::AddressVoid (0xFD), not 0x01
+        // (SuccessWithCrc). p[2] is the return code.
+        assert_eq!(resp.payload()[2], 0xFD);
+    }
+
+    #[test]
+    fn property_value_ext_write_con_response_carries_return_code() {
+        use knx_rs_core::message::ApduType;
+        let mut bau = test_bau();
+
+        // Write ProgramVersion (5 bytes) to the application program (OT3) via the
+        // extended, confirmed service. object_type=3, instance=1, pid=0x0D
+        // (ProgramVersion), count=1, start_index=1, then 5 data bytes.
+        // Ext header: ot(2)=0x0003, oi_hi(1)=0x00, oi_lo|pid_hi(1)=0x10, pid_lo(1)=0x0D,
+        // count(1)=0x01, start_index(2)=0x0001, data(5).
+        let apdu = &[
+            0x01, 0xCE, // A_PropertyValueExtWriteCon (0x1CE)
+            0x00, 0x03, 0x00, 0x10, 0x0D, 0x01, 0x00,
+            0x01, // ot=3, oi=1, pid=0x0D, count=1, si=1
+            0x11, 0x22, 0x33, 0x44, 0x55, // program version (5-byte element)
+        ];
+        let frame = CemiFrame::new_l_data(
+            MessageCode::LDataInd,
+            SRC_1102,
+            DestinationAddress::Individual(IndividualAddress::from_raw(0x1101)),
+            Priority::System,
+            apdu,
+        );
+        bau.process_frame(&frame, 0);
+
+        let resp = bau.next_outgoing_frame().expect("write-con response");
+        let apdu = resp.tpdu().and_then(|t| match t {
+            Tpdu::Data { apdu, .. } => Some(apdu),
+            Tpdu::Control { .. } => None,
+        });
+        let apdu = apdu.expect("data tpdu");
+        // Must be a PropertyValueExtWriteConResponse (0x1CF), not the plain
+        // PropertyValueExtResponse (0x1CD).
+        assert_eq!(apdu.apdu_type, ApduType::PropertyValueExtWriteConResponse);
+        // Its trailing byte is the return code — 0x00 (Success) for a real property.
+        assert_eq!(*apdu.data.last().unwrap(), RETURN_CODE_SUCCESS);
+    }
+
+    #[test]
     fn handle_memory_ext_write_roundtrip() {
         let mut bau = test_bau();
         bau.handle_memory_ext_write(SRC_1102, 0x0020, &[0xCA, 0xFE]);
@@ -2423,6 +2489,10 @@ mod tests {
         // AdcResponse APCI 0x1C0, value should be 0
         assert_eq!(p[0] & 0x03, 0x01);
         assert_eq!(p[1] & 0xC0, 0xC0); // AdcResponse APCI low high bits
+        assert_eq!(
+            p[2], 0x00,
+            "read-count byte is hardcoded 0 (no ADC hardware)"
+        );
         assert_eq!(p[3], 0x00); // value high
         assert_eq!(p[4], 0x00); // value low
     }

@@ -228,6 +228,37 @@ pub fn encode_property_value_ext_response(
     payload
 }
 
+/// Encode a `PropertyValueExtWriteConResponse` APDU payload (the confirmation of
+/// an `A_PropertyValueExtWrite` with confirmation requested).
+///
+/// Mirrors the C++ `propertyValueExtWriteConResponse`: the payload is the extended
+/// header followed by a single return-code octet, and the element count is forced
+/// to 0 when the return code is not `Success` (0x00).
+pub fn encode_property_value_ext_write_con_response(
+    object_type: u16,
+    object_instance: u16,
+    property_id: u16,
+    count: u8,
+    start_index: u16,
+    return_code: u8,
+) -> Vec<u8> {
+    let [hi, lo] = apci_bytes(ApduType::PropertyValueExtWriteConResponse);
+    let no_of_elem = if return_code == 0 { count } else { 0 };
+    let mut payload = Vec::with_capacity(10);
+    payload.push(hi);
+    payload.push(lo);
+    encode_ext_property_header(
+        &mut payload,
+        object_type,
+        object_instance,
+        property_id,
+        no_of_elem,
+        start_index,
+    );
+    payload.push(return_code);
+    payload
+}
+
 /// Encode the common 3-field extended header: `object_type` (2) + `object_instance`/`property_id` (3).
 #[expect(clippy::cast_possible_truncation)]
 fn encode_ext_ot_oi_pid(

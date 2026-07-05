@@ -286,7 +286,9 @@ fn parse_property_value_ext_write_con(data: &[u8]) -> Result<AppIndication, AppL
         property_id: pid,
         count,
         start_index: si,
-        data: data[7..].to_vec(),
+        // The extended header is 8 octets (ot(2) + oi/pid(3) + count(1) +
+        // start_index(2)); the element data follows at offset 8, not 7.
+        data: data[8..].to_vec(),
     })
 }
 
@@ -299,7 +301,8 @@ fn parse_property_value_ext_write_uncon(data: &[u8]) -> Result<AppIndication, Ap
         property_id: pid,
         count,
         start_index: si,
-        data: data[7..].to_vec(),
+        // Element data follows the 8-octet extended header (see WriteCon).
+        data: data[8..].to_vec(),
     })
 }
 
@@ -1118,7 +1121,8 @@ mod tests {
             }
         ));
         if let AppIndication::PropertyValueExtWriteCon { data, .. } = ind {
-            assert_eq!(data, &[0x01, 0xAA]);
+            // Data begins after the 8-octet extended header (byte 8), not byte 7.
+            assert_eq!(data, &[0xAA]);
         }
     }
 
@@ -1157,7 +1161,7 @@ mod tests {
             }
         ));
         if let AppIndication::PropertyValueExtWriteUnCon { data, .. } = ind {
-            assert_eq!(data, &[0x01, 0xBB]);
+            assert_eq!(data, &[0xBB]);
         }
     }
 
