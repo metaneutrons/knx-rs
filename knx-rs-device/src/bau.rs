@@ -13,7 +13,7 @@ use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
 use knx_rs_core::cemi::CemiFrame;
 use knx_rs_core::message::MessageCode;
 use knx_rs_core::tpdu::Tpdu;
-use knx_rs_core::types::Priority;
+use knx_rs_core::types::{AddressType, Confirm, Priority};
 
 use crate::address_table::AddressTable;
 use crate::application_layer::{self, AppIndication};
@@ -353,6 +353,15 @@ impl Bau {
     /// `now_ms` is the current monotonic time in milliseconds, used for
     /// transport layer timeouts and retry logic.
     pub fn process_frame(&mut self, frame: &CemiFrame, now_ms: u64) {
+        // An L_Data.con is the local confirmation of a frame WE sent, not an
+        // incoming service. Route it to the transmit-confirmation path and never
+        // fall through to indication dispatch — otherwise the device would parse
+        // its own echoed group write as a fresh incoming write.
+        if frame.message_code_raw() == MessageCode::LDataCon as u8 {
+            self.handle_transmit_confirmation(frame);
+            return;
+        }
+
         let Some(tpdu) = frame.tpdu() else { return };
 
         match &tpdu {
@@ -758,25 +767,59 @@ impl Bau {
                 _ => break,
             };
 
-            // Resolve the destination group address for this ASAP.
-            let ga = self
-                .association_table
-                .translate_asap(asap)
-                .and_then(|tsap| self.address_table.get_group_address(tsap));
-
             // The flag MUST always advance out of the pending state, otherwise
             // next_pending() reselects the same ASAP and poll() spins forever.
             // An unmapped ASAP transitions to Error rather than hanging.
-            let new_flag = ga.map_or(ComFlag::Error, |ga| {
-                match &write_data {
-                    Some(data) => self.queue_group_value_write(ga, data),
-                    None => self.queue_group_value_read(ga),
-                }
-                ComFlag::Transmitting
-            });
+            let new_flag = self
+                .resolve_group_address(asap)
+                .map_or(ComFlag::Error, |ga| {
+                    match &write_data {
+                        Some(data) => self.queue_group_value_write(ga, data),
+                        None => self.queue_group_value_read(ga),
+                    }
+                    ComFlag::Transmitting
+                });
 
             if let Some(go) = self.group_objects.get_mut(asap) {
                 go.set_comm_flag(new_flag);
+            }
+        }
+    }
+
+    /// Resolve the destination group address a group object (`asap`) sends to,
+    /// via the association table (ASAP → TSAP) and address table (TSAP → GA).
+    fn resolve_group_address(&self, asap: u16) -> Option<u16> {
+        self.association_table
+            .translate_asap(asap)
+            .and_then(|tsap| self.address_table.get_group_address(tsap))
+    }
+
+    /// Handle an `L_Data.con` (local transmit confirmation) for a frame the device
+    /// sent. For a group-addressed confirmation, advance the group object that is
+    /// transmitting to that group address out of `Transmitting` — to `Ok` on a
+    /// positive confirmation, `Error` on a negative one (cEMI ctrl1 bit 0). This
+    /// is what lets the application observe that a sent value went out (or failed)
+    /// instead of leaving the object stuck in `Transmitting`.
+    fn handle_transmit_confirmation(&mut self, frame: &CemiFrame) {
+        if frame.address_type() != AddressType::Group {
+            return; // Only group sends carry group-object transmit state.
+        }
+        let ga = frame.destination_address_raw();
+        let success = frame.confirm() == Confirm::NoError;
+        // Find the object currently transmitting to this GA. Correlating by group
+        // address (rather than a send-order queue) keeps the state in the object's
+        // own flag — no unbounded bookkeeping if a confirmation never arrives.
+        for asap in 1..=self.group_objects.count() {
+            let is_match = self
+                .group_objects
+                .get(asap)
+                .is_some_and(|go| go.comm_flag() == ComFlag::Transmitting)
+                && self.resolve_group_address(asap) == Some(ga);
+            if is_match {
+                if let Some(go) = self.group_objects.get_mut(asap) {
+                    go.transmit_done(success);
+                }
+                break;
             }
         }
     }
@@ -2809,6 +2852,88 @@ mod tests {
         assert!(
             bau.next_outgoing_frame().is_some(),
             "group traffic flows after activation"
+        );
+    }
+
+    #[test]
+    fn transmit_confirmation_clears_transmitting_state() {
+        let mut bau = test_bau();
+        mark_configured(&mut bau);
+
+        // Write GO 1 and poll → it sends to GA 0x0801 and enters Transmitting.
+        bau.group_objects_mut()
+            .get_mut(1)
+            .unwrap()
+            .write_value(&[1]);
+        bau.poll(0);
+        let frame = bau.next_outgoing_frame().expect("group write frame");
+        assert_eq!(frame.destination_address_raw(), 0x0801);
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Transmitting
+        );
+
+        // A positive L_Data.con (MC 0x2E, ctrl1 bit0=0) for GA 0x0801 → Ok.
+        let con_ok = CemiFrame::parse(&[
+            0x2E, 0x00, 0xBC, 0xE0, 0x11, 0x01, 0x08, 0x01, 0x01, 0x00, 0x80,
+        ])
+        .unwrap();
+        bau.process_frame(&con_ok, 0);
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Ok,
+            "positive .con must advance the object to Ok"
+        );
+
+        // Re-send, then a negative .con (ctrl1 bit0=1) marks it Error.
+        bau.group_objects_mut()
+            .get_mut(1)
+            .unwrap()
+            .write_value(&[1]);
+        bau.poll(0);
+        let _ = bau.next_outgoing_frame();
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Transmitting
+        );
+        let con_err = CemiFrame::parse(&[
+            0x2E, 0x00, 0xBD, 0xE0, 0x11, 0x01, 0x08, 0x01, 0x01, 0x00, 0x80,
+        ])
+        .unwrap();
+        bau.process_frame(&con_err, 0);
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Error,
+            "negative .con must mark the object Error"
+        );
+    }
+
+    #[test]
+    fn transmit_confirmation_not_dispatched_as_write() {
+        // A .con echoes a frame WE sent; it must not be parsed as an incoming
+        // GroupValueWrite that updates the object with our own payload.
+        let mut bau = test_bau();
+        mark_configured(&mut bau);
+        assert_eq!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Uninitialized
+        );
+
+        let con = CemiFrame::parse(&[
+            0x2E, 0x00, 0xBC, 0xE0, 0x11, 0x01, 0x08, 0x01, 0x02, 0x00, 0x80, 0xAA,
+        ])
+        .unwrap();
+        bau.process_frame(&con, 0);
+
+        assert_ne!(
+            bau.group_objects().get(1).unwrap().comm_flag(),
+            ComFlag::Updated,
+            "a .con must not be dispatched as an incoming write"
+        );
+        assert_ne!(bau.group_objects().get(1).unwrap().value_ref(), &[0xAA]);
+        assert!(
+            bau.next_outgoing_frame().is_none(),
+            "a .con must not produce a response"
         );
     }
 
