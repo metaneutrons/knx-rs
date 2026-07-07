@@ -192,7 +192,7 @@ Without `--key`, `knx-rs-prod` still does everything except the RSA signature, p
 
 ### Signing (bring your own ETS key)
 
-ETS accepts a `.knxprod` only if the `M-XXXX` folder carries a valid RSA-1024 `M-XXXX.signature` and the archive ships a `knx_master.xml`. That signature is produced by the closed-source `Knx.Ets.XmlSigning.dll`, whose signing key is not public — so **`knx-rs-prod` ships the signing algorithm, never a key.** You supply a key extracted from **your own licensed ETS installation** and pass it at runtime; the key never enters this crate. (Signing with key material you are licensed to use, for interoperability, is the supported path; the alternative — obtaining a KNX manufacturer registration so KNX signs — is for commercial products.)
+ETS accepts a `.knxprod` only if the `M-XXXX` folder carries a valid RSA-1024 `M-XXXX.signature` and the archive ships a `knx_master.xml`. That signature is produced by the closed-source `Knx.Ets.XmlSigning.dll`, whose signing key is not public — so **`knx-rs-prod` ships the signing algorithm, never a key.** You supply a key extracted from **your own licensed ETS installation** and pass it at runtime.
 
 Install and sign (signing is built in; `fetch` is only for auto-downloading the master):
 
