@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.5.0...knx-rs-v0.5.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **docs:** clarify signing process in README for ETS key usage ([#25](https://github.com/metaneutrons/knx-rs/issues/25)) ([4f72caf](https://github.com/metaneutrons/knx-rs/commit/4f72caf16d1f86ca5b789700427204b2abcdbdc0))
+
 ## [0.5.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.4.0...knx-rs-v0.5.0) (2026-07-05)
 
 
