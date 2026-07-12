@@ -319,7 +319,10 @@ mod tests {
         // File format: UTF-8 BOM followed by base64 text.
         let raw = std::fs::read(&sig_path).unwrap();
         assert_eq!(&raw[..3], &UTF8_BOM);
-        assert!(sig_path.file_name().unwrap().to_str().unwrap() == "M-00FA.signature");
+        assert_eq!(
+            sig_path.file_name().unwrap().to_str().unwrap(),
+            "M-00FA.signature"
+        );
 
         // A pre-existing .signature must not perturb the signed message.
         let ok = verify_directory_signature(&manu, &sig_path, &priv_key.to_public_key()).unwrap();
