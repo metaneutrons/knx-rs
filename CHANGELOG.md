@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.5.1...knx-rs-v0.5.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* **ci:** fix clippy manual-assert-eq warning and verify all targets in release-please ([#27](https://github.com/metaneutrons/knx-rs/issues/27)) ([0616e0d](https://github.com/metaneutrons/knx-rs/commit/0616e0d71ef08bad113d74eee59f098e2e5c068b))
+
 ## [0.5.1](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.5.0...knx-rs-v0.5.1) (2026-07-07)
 
 
