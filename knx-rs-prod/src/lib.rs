@@ -1,11 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Fabian Schmieder
 
+#![warn(missing_docs)]
+
 //! Cross-platform `.knxprod` builder for KNX ETS product databases.
 //!
-//! Takes a monolithic KNX product XML (as produced by `OpenKNXproducer`),
-//! computes the byte-exact ETS registration hash, splits it into the per-file
-//! layout, and packages it into a `.knxprod` ZIP archive.
+//! Takes a monolithic KNX product XML — authored with this crate's own [`author`]
+//! model or produced by `OpenKNXproducer` / an ETS export — computes the byte-exact
+//! ETS registration hash, splits it into the per-file layout, and packages it into a
+//! `.knxprod` ZIP archive.
+//!
+//! # Authoring
+//!
+//! Rather than hand-writing the product XML, build it code-first with the [`author`]
+//! model: register typed parameters, com-objects, parameter types, and the
+//! `<Dynamic>` UI tree into an [`author::AppProgram`], then emit the whole document
+//! with [`AppProgram::write_knx_document`](author::AppProgram::write_knx_document).
+//! Every cross-reference is an opaque handle, so a dangling reference is a compile- or
+//! build-time error instead of the opaque `NullReferenceException` ETS reports on
+//! import. The [`knxprod!`](macro@crate::knxprod) macro is a declarative front-end to
+//! the same model (see [`author::dsl`]). Its output feeds straight into the pipeline
+//! below.
 //!
 //! # Signing
 //!
@@ -44,6 +59,7 @@
 // the generate_knxprod facade. KnxprodError and KnxMetadata are additionally
 // re-exported at the crate root for convenient imports.
 pub mod archive;
+pub mod author;
 pub mod error;
 pub mod hash;
 pub mod knx_master;
