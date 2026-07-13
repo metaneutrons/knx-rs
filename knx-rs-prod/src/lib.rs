@@ -44,6 +44,7 @@
 // the generate_knxprod facade. KnxprodError and KnxMetadata are additionally
 // re-exported at the crate root for convenient imports.
 pub mod archive;
+pub mod author;
 pub mod error;
 pub mod hash;
 pub mod knx_master;
