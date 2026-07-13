@@ -30,6 +30,12 @@ pub enum ProcType {
     Par,
     /// `grp`
     Grp,
+    /// `full,par`
+    FullPar,
+    /// `full,grp`
+    FullGrp,
+    /// `par,grp`
+    ParGrp,
     /// `all`
     All,
 }
@@ -40,6 +46,9 @@ impl ProcType {
             Self::Full => "full",
             Self::Par => "par",
             Self::Grp => "grp",
+            Self::FullPar => "full,par",
+            Self::FullGrp => "full,grp",
+            Self::ParGrp => "par,grp",
             Self::All => "all",
         }
     }
@@ -370,9 +379,11 @@ impl LoadControl {
                 prop_id,
                 inline_data,
             } => {
-                let mut a = target.attrs();
-                let _ = write!(a, r#" PropId="{prop_id}""#);
+                // ETS emits InlineData before the object address for CompareProp.
+                let mut a = String::new();
                 push_inline(&mut a, inline_data.as_deref());
+                a.push_str(&target.attrs());
+                let _ = write!(a, r#" PropId="{prop_id}""#);
                 ("LdCtrlCompareProp", a)
             }
             Self::LoadImageProp { target, prop_id } => {
@@ -522,7 +533,7 @@ impl AppProgram {
                         }
                         let _ = write!(
                             a,
-                            r#" Size="{size}" LoadStateMachine="{load_state_machine}" Offset="{offset}""#,
+                            r#" Offset="{offset}" Size="{size}" LoadStateMachine="{load_state_machine}""#,
                         );
                         let _ = writeln!(out, "{child}<RelativeSegment {a} />");
                     }
@@ -602,7 +613,7 @@ mod tests {
         app.write_code(12, &mut out);
         let expected = concat!(
             "            <Code>\n",
-            "              <RelativeSegment Id=\"M-00FA_A-FF01-01-0000_RS-04-00000\" Size=\"1024\" LoadStateMachine=\"4\" Offset=\"0\" />\n",
+            "              <RelativeSegment Id=\"M-00FA_A-FF01-01-0000_RS-04-00000\" Offset=\"0\" Size=\"1024\" LoadStateMachine=\"4\" />\n",
             "            </Code>\n",
         );
         assert_eq!(out, expected);
@@ -658,7 +669,7 @@ mod tests {
             "              <LoadProcedure MergeId=\"1\">\n",
             "                <LdCtrlConnect />\n",
             "                <LdCtrlLoad ObjType=\"3\" />\n",
-            "                <LdCtrlCompareProp ObjIdx=\"0\" PropId=\"78\" InlineData=\"0001\">\n",
+            "                <LdCtrlCompareProp InlineData=\"0001\" ObjIdx=\"0\" PropId=\"78\">\n",
             "                  <OnError Cause=\"CompareMismatch\" MessageRef=\"M-00FA_A-FF01-01-0000_M-1\" />\n",
             "                </LdCtrlCompareProp>\n",
             "                <LdCtrlDisconnect />\n",
