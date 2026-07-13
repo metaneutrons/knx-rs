@@ -1,0 +1,40 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    target-branch: main
+    commit-message:
+      prefix: chore
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      actions-dependencies:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: daily
+    target-branch: main
+    commit-message:
+      prefix: chore
+    versioning-strategy: increase
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      prod-dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      dev-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
