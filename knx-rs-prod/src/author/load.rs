@@ -8,9 +8,11 @@
 //! device: connect, unload/load the tables, write the memory segments, compare
 //! the hardware type, disconnect. Segments own `xs:ID` handles (so
 //! [`write_parameters`](super::AppProgram::write_parameters)'s `CodeSegment`
-//! reference becomes a [`SegmentId`] instead of a hard-coded string); the load
-//! steps are a positional list, so they need no ids — mirroring how a
-//! `ComObject` has a handle but a load step does not.
+//! reference can be pinned to a [`SegmentId`] via
+//! [`set_parameter_segment`](super::AppProgram::set_parameter_segment), rather than
+//! only the conventional `_RS-04-00000` default); the load steps are a positional
+//! list, so they need no ids — mirroring how a `ComObject` has a handle but a load
+//! step does not.
 //!
 //! The [`LoadControl`] variant set covers the standard download machine and is
 //! `#[non_exhaustive]`; the exotic task/function-property/property-descriptor
@@ -457,11 +459,20 @@ impl LoadProcedure {
 
 impl AppProgram {
     /// Register a code segment; returns a handle usable as a `CodeSegment`
-    /// reference (e.g. by a future typed parameter placement).
+    /// reference (e.g. via [`set_parameter_segment`](Self::set_parameter_segment)).
     pub fn add_segment(&mut self, segment: Segment) -> SegmentId {
         let idx = self.segments.len();
         self.segments.push(segment);
         SegmentId(idx)
+    }
+
+    /// Pin the segment that every `<Parameter>` `<Memory>` placement references.
+    /// Without this, `write_parameters` uses the conventional `_RS-04-00000` default
+    /// (a relative segment, LSM 4, registered first) — correct only for that layout,
+    /// so any program with a different code-segment arrangement must set it here or the
+    /// `CodeSegment` reference would dangle.
+    pub const fn set_parameter_segment(&mut self, segment: SegmentId) {
+        self.parameter_segment = Some(segment);
     }
 
     /// Register a load procedure.
@@ -597,7 +608,7 @@ fn write_step(indent: usize, control: &LoadControl, base: &StepBase, out: &mut S
 
 #[cfg(test)]
 mod tests {
-    use super::super::AppProgram;
+    use super::super::{AppProgram, Parameter, ParameterType};
     use super::*;
 
     #[test]
@@ -628,8 +639,37 @@ mod tests {
             load_state_machine: 4,
             offset: 0,
         });
-        // Matches the string write_parameters() hard-codes as its CodeSegment.
+        // Matches the conventional default write_parameters() uses when unpinned.
         assert_eq!(app.segment_id(rs), "M-00FA_A-FF01-01-0000_RS-04-00000");
+    }
+
+    #[test]
+    fn set_parameter_segment_pins_the_memory_codesegment() {
+        let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        let ty = app.add_parameter_type(ParameterType::text("Name", 160));
+        // A prior segment pushes the parameter segment to global index 1, so the
+        // hard-coded _RS-04-00000 default would dangle — set_parameter_segment fixes it.
+        let _first = app.add_segment(Segment::Relative {
+            name: None,
+            size: 8,
+            load_state_machine: 4,
+            offset: 0,
+        });
+        let params = app.add_segment(Segment::Relative {
+            name: Some("Parameters".into()),
+            size: 100,
+            load_state_machine: 4,
+            offset: 0,
+        });
+        app.set_parameter_segment(params);
+        app.add_param(Parameter::new("G000", "G_X", ty, "X", "0", 0));
+        let mut out = String::new();
+        app.write_parameters(12, &mut out);
+        assert!(
+            out.contains(r#"CodeSegment="M-00FA_A-FF01-01-0000_RS-04-00001""#),
+            "{out}"
+        );
+        assert!(!out.contains("_RS-04-00000"), "{out}");
     }
 
     #[test]
