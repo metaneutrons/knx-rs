@@ -124,6 +124,48 @@ impl Flags {
     }
 }
 
+/// A language-dependent attribute a `<Translation>` can override for a locale.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Attr {
+    /// `Text` — the primary label of a parameter, com-object, enumeration, …
+    Text,
+    /// `Name`.
+    Name,
+    /// `FunctionText` — a com-object's function label.
+    FunctionText,
+    /// `SuffixText` — a parameter's trailing unit/suffix label.
+    SuffixText,
+    /// `VisibleDescription` — inline help text.
+    VisibleDescription,
+    /// `InitialValue`.
+    InitialValue,
+    /// `Value`.
+    Value,
+}
+
+impl Attr {
+    /// The exact ETS `AttributeName` byte string.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "Text",
+            Self::Name => "Name",
+            Self::FunctionText => "FunctionText",
+            Self::SuffixText => "SuffixText",
+            Self::VisibleDescription => "VisibleDescription",
+            Self::InitialValue => "InitialValue",
+            Self::Value => "Value",
+        }
+    }
+}
+
+/// One `(element, attribute) -> text` override for a single locale.
+#[derive(Clone, Debug)]
+struct Translation {
+    ref_id: String,
+    attribute: &'static str,
+    text: String,
+}
+
 /// A group object — an ETS `<ComObject>`.
 #[derive(Clone, Debug)]
 pub struct ComObject {
@@ -232,6 +274,10 @@ pub struct AppProgram {
     app_prefix: String,
     parameters: Vec<Parameter>,
     com_objects: Vec<ComObject>,
+    /// Locales in first-seen order, so the `<Languages>` block is deterministic.
+    language_order: Vec<String>,
+    /// `(locale, entry)` in insertion order — byte-stable for hashing/signing.
+    translations: Vec<(String, Translation)>,
 }
 
 impl AppProgram {
@@ -242,7 +288,125 @@ impl AppProgram {
             app_prefix: app_prefix.into(),
             parameters: Vec::new(),
             com_objects: Vec::new(),
+            language_order: Vec::new(),
+            translations: Vec::new(),
         }
+    }
+
+    /// Translate a registered parameter's `attribute` into `language` (a BCP-47
+    /// locale such as `en-US`). The `<TranslationElement>` `RefId` is resolved
+    /// from the handle, so it can never point at a non-existent parameter.
+    pub fn translate_param(
+        &mut self,
+        language: impl Into<String>,
+        param: ParamId,
+        attribute: Attr,
+        text: impl Into<String>,
+    ) {
+        let ref_id = self.param_id(&self.parameters[param.0]);
+        self.push_translation(language.into(), ref_id, attribute.as_str(), text.into());
+    }
+
+    /// Translate a registered group object's `attribute` into `language`.
+    pub fn translate_com_object(
+        &mut self,
+        language: impl Into<String>,
+        com_object: ComObjectId,
+        attribute: Attr,
+        text: impl Into<String>,
+    ) {
+        let ref_id = self.com_object_id(&self.com_objects[com_object.0]);
+        self.push_translation(language.into(), ref_id, attribute.as_str(), text.into());
+    }
+
+    /// Escape hatch: translate an arbitrary application-program element by its
+    /// full `Id` (e.g. a `ParameterType`, `Enumeration`, or `ParameterBlock`
+    /// that has no typed handle yet).
+    pub fn translate_raw(
+        &mut self,
+        language: impl Into<String>,
+        ref_id: impl Into<String>,
+        attribute: Attr,
+        text: impl Into<String>,
+    ) {
+        self.push_translation(
+            language.into(),
+            ref_id.into(),
+            attribute.as_str(),
+            text.into(),
+        );
+    }
+
+    fn push_translation(
+        &mut self,
+        language: String,
+        ref_id: String,
+        attribute: &'static str,
+        text: String,
+    ) {
+        if !self.language_order.contains(&language) {
+            self.language_order.push(language.clone());
+        }
+        self.translations.push((
+            language,
+            Translation {
+                ref_id,
+                attribute,
+                text,
+            },
+        ));
+    }
+
+    /// Emit the `<Languages>` block at `indent` spaces (each nesting level +2).
+    /// In the monolithic product XML this block is a child of `<Manufacturer>`
+    /// (sibling of `<ApplicationPrograms>`), so callers pass `indent = 6`.
+    /// Emits nothing when there are no translations.
+    pub fn write_languages(&self, indent: usize, out: &mut String) {
+        if self.translations.is_empty() {
+            return;
+        }
+        let l0 = " ".repeat(indent);
+        let l1 = " ".repeat(indent + 2);
+        let l2 = " ".repeat(indent + 4);
+        let l3 = " ".repeat(indent + 6);
+        let l4 = " ".repeat(indent + 8);
+        let _ = writeln!(out, "{l0}<Languages>");
+        for lang in &self.language_order {
+            let _ = writeln!(
+                out,
+                r#"{l1}<Language Identifier="{id}">"#,
+                id = escape_attr(lang)
+            );
+            let _ = writeln!(
+                out,
+                r#"{l2}<TranslationUnit RefId="{prefix}">"#,
+                prefix = self.app_prefix
+            );
+            // This language's referenced element ids, in first-seen order.
+            let mut order: Vec<&str> = Vec::new();
+            for (l, t) in &self.translations {
+                if l == lang && !order.contains(&t.ref_id.as_str()) {
+                    order.push(&t.ref_id);
+                }
+            }
+            for ref_id in order {
+                let _ = writeln!(out, r#"{l3}<TranslationElement RefId="{ref_id}">"#);
+                for (l, t) in &self.translations {
+                    if l == lang && t.ref_id == ref_id {
+                        let _ = writeln!(
+                            out,
+                            r#"{l4}<Translation AttributeName="{attr}" Text="{text}" />"#,
+                            attr = t.attribute,
+                            text = escape_attr(&t.text),
+                        );
+                    }
+                }
+                let _ = writeln!(out, "{l3}</TranslationElement>");
+            }
+            let _ = writeln!(out, "{l2}</TranslationUnit>");
+            let _ = writeln!(out, "{l1}</Language>");
+        }
+        let _ = writeln!(out, "{l0}</Languages>");
     }
 
     /// Register a memory-backed parameter. Returns a handle to it and to its
@@ -511,6 +675,43 @@ mod tests {
             "            <ParameterRefs>\n              <ParameterRef Id=\"{id}_R-{id}\" RefId=\"{id}\" />\n            </ParameterRefs>\n",
         );
         assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn languages_block_matches_ets_bytes() {
+        let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        let (p, _) = app.add_param(Parameter::new(
+            "Z01002",
+            "Z01_DefVol",
+            "Percent",
+            "Standard-Lautstärke",
+            "50",
+            5,
+            8,
+        ));
+        app.translate_param("en-US", p, Attr::Text, "Default Volume");
+        let mut out = String::new();
+        app.write_languages(6, &mut out);
+        let expected = concat!(
+            "      <Languages>\n",
+            "        <Language Identifier=\"en-US\">\n",
+            "          <TranslationUnit RefId=\"M-00FA_A-FF01-01-0000\">\n",
+            "            <TranslationElement RefId=\"M-00FA_A-FF01-01-0000_UP-Z01002\">\n",
+            "              <Translation AttributeName=\"Text\" Text=\"Default Volume\" />\n",
+            "            </TranslationElement>\n",
+            "          </TranslationUnit>\n",
+            "        </Language>\n",
+            "      </Languages>\n",
+        );
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn no_translations_emits_no_languages_block() {
+        let app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        let mut out = String::new();
+        app.write_languages(6, &mut out);
+        assert!(out.is_empty());
     }
 
     #[test]
