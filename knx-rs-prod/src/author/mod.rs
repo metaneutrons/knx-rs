@@ -37,7 +37,9 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
+mod dynamic;
 mod load;
+pub use dynamic::{Dyn, When};
 pub use load::{
     ErrorCause, LoadControl, LoadProcedure, ObjTarget, OnError, ProcType, SegMemoryType, Segment,
     SegmentId, StepBase,
@@ -362,6 +364,8 @@ pub struct AppProgram {
     segments: Vec<Segment>,
     /// `<LoadProcedures>` procedures, in registration order.
     load_procedures: Vec<LoadProcedure>,
+    /// `<Dynamic>` tree roots, in order.
+    dynamic: Vec<Dyn>,
 }
 
 impl AppProgram {
@@ -377,6 +381,7 @@ impl AppProgram {
             baggages: Vec::new(),
             segments: Vec::new(),
             load_procedures: Vec::new(),
+            dynamic: Vec::new(),
         }
     }
 
