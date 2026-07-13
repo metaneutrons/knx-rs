@@ -38,6 +38,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 mod document;
+pub mod dsl;
 mod dynamic;
 mod load;
 mod product;
