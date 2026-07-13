@@ -37,6 +37,12 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
+mod load;
+pub use load::{
+    ErrorCause, LoadControl, LoadProcedure, ObjTarget, OnError, ProcType, SegMemoryType, Segment,
+    SegmentId, StepBase,
+};
+
 /// Errors surfaced by [`AppProgram::validate`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorError {
@@ -352,6 +358,10 @@ pub struct AppProgram {
     translations: Vec<(String, Translation)>,
     /// Manufacturer-level assets, in registration order.
     baggages: Vec<Baggage>,
+    /// `<Static><Code>` segments, in registration order.
+    segments: Vec<Segment>,
+    /// `<LoadProcedures>` procedures, in registration order.
+    load_procedures: Vec<LoadProcedure>,
 }
 
 impl AppProgram {
@@ -365,6 +375,8 @@ impl AppProgram {
             language_order: Vec::new(),
             translations: Vec::new(),
             baggages: Vec::new(),
+            segments: Vec::new(),
+            load_procedures: Vec::new(),
         }
     }
 
