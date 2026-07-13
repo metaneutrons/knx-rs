@@ -249,6 +249,7 @@ mod tests {
 
     /// The DSL must expand to *exactly* the imperative builder calls — same bytes out.
     #[test]
+    #[allow(clippy::too_many_lines)] // builds the DSL and the hand-written twin side by side
     fn dsl_output_is_byte_identical_to_the_builder() {
         // ── via the DSL ──────────────────────────────────────────────────
         let dsl = knxprod! {
