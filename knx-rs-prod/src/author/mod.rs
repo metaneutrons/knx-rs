@@ -266,6 +266,78 @@ pub struct ParamId(usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ParamRefId(usize);
 
+/// A packable manufacturer asset — an icon pack, help zip, or embedded blob.
+///
+/// It contributes both a `<Baggage>` node to the manufacturer's `<Baggages>`
+/// declaration and a real file (`bytes`) that the packager writes under
+/// `M-XXXX/Baggages/<target_path>/<name>` and folds into the signature.
+#[derive(Clone, Debug)]
+pub struct Baggage {
+    target_path: String,
+    name: String,
+    bytes: Vec<u8>,
+    time_info: Option<String>,
+    file_integrity: Option<u32>,
+}
+
+impl Baggage {
+    /// A baggage packed at `target_path`/`name` (a backslash-separated directory,
+    /// possibly empty) with `bytes` as its content.
+    pub fn new(target_path: impl Into<String>, name: impl Into<String>, bytes: Vec<u8>) -> Self {
+        Self {
+            target_path: target_path.into(),
+            name: name.into(),
+            bytes,
+            time_info: None,
+            file_integrity: None,
+        }
+    }
+
+    /// Set the `FileInfo/@TimeInfo` (.NET round-trip `"O"` timestamp).
+    #[must_use]
+    pub fn with_time_info(mut self, iso: impl Into<String>) -> Self {
+        self.time_info = Some(iso.into());
+        self
+    }
+
+    /// Set the `@FileIntegrity` CRC-32 (rendered as 8 upper-case hex digits).
+    #[must_use]
+    pub const fn with_crc32(mut self, crc: u32) -> Self {
+        self.file_integrity = Some(crc);
+        self
+    }
+
+    /// The file content, for the packager.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+/// Opaque handle to a registered [`Baggage`]. Only obtainable from
+/// [`AppProgram::add_baggage`], so an `@IconFile` / `RefId` can't dangle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BaggageRef(usize);
+
+/// Encode one id component the way ETS `Knx.Ets.XmlSigning.Ids.Id.Encode` does:
+/// keep `[A-Za-z0-9]` verbatim; render every other character as its UTF-8 bytes,
+/// each `".{:02X}"`. (Callers normalise `\` → `/` in paths first, so a path
+/// separator becomes `.2F`.)
+fn encode_id_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else {
+            let mut buf = [0u8; 4];
+            for b in c.encode_utf8(&mut buf).bytes() {
+                let _ = write!(out, ".{b:02X}");
+            }
+        }
+    }
+    out
+}
+
 /// A single ETS application program being authored.
 ///
 /// Registering an entity assigns it a stable id under `app_prefix` and returns
@@ -278,6 +350,8 @@ pub struct AppProgram {
     language_order: Vec<String>,
     /// `(locale, entry)` in insertion order — byte-stable for hashing/signing.
     translations: Vec<(String, Translation)>,
+    /// Manufacturer-level assets, in registration order.
+    baggages: Vec<Baggage>,
 }
 
 impl AppProgram {
@@ -290,7 +364,74 @@ impl AppProgram {
             com_objects: Vec::new(),
             language_order: Vec::new(),
             translations: Vec::new(),
+            baggages: Vec::new(),
         }
+    }
+
+    /// The manufacturer id (`M-XXXX`) — the `app_prefix` up to the `_A-` tail.
+    fn manufacturer(&self) -> &str {
+        self.app_prefix
+            .split_once("_A-")
+            .map_or(self.app_prefix.as_str(), |(m, _)| m)
+    }
+
+    /// Register a manufacturer-level baggage; returns a handle. The file bytes
+    /// are retained for the packager (see [`Baggage::bytes`]).
+    pub fn add_baggage(&mut self, baggage: Baggage) -> BaggageRef {
+        let idx = self.baggages.len();
+        self.baggages.push(baggage);
+        BaggageRef(idx)
+    }
+
+    /// The `_BG-` id of a baggage: `{manufacturer}_BG-{encode(path)}-{encode(name)}`,
+    /// with the path's `\` normalised to `/` before encoding.
+    fn baggage_id(&self, b: &Baggage) -> String {
+        let path = b.target_path.replace('\\', "/");
+        format!(
+            "{}_BG-{}-{}",
+            self.manufacturer(),
+            encode_id_component(&path),
+            encode_id_component(&b.name),
+        )
+    }
+
+    /// Emit the manufacturer-level `<Baggages>` declaration at `indent` spaces
+    /// (each nesting level +2; `indent = 6` in a monolithic product XML).
+    /// Emits nothing when there are no baggages.
+    pub fn write_baggages(&self, indent: usize, out: &mut String) {
+        if self.baggages.is_empty() {
+            return;
+        }
+        let l0 = " ".repeat(indent);
+        let l1 = " ".repeat(indent + 2);
+        let l2 = " ".repeat(indent + 4);
+        let _ = writeln!(out, "{l0}<Baggages>");
+        for b in &self.baggages {
+            let mut attrs = format!(
+                r#"TargetPath="{path}" Name="{name}""#,
+                path = escape_attr(&b.target_path),
+                name = escape_attr(&b.name),
+            );
+            if let Some(crc) = b.file_integrity {
+                let _ = write!(attrs, r#" FileIntegrity="{crc:08X}""#);
+            }
+            let _ = write!(attrs, r#" Id="{id}""#, id = self.baggage_id(b));
+            let _ = writeln!(out, "{l1}<Baggage {attrs}>");
+            match &b.time_info {
+                Some(t) => {
+                    let _ = writeln!(
+                        out,
+                        r#"{l2}<FileInfo TimeInfo="{t}" />"#,
+                        t = escape_attr(t)
+                    );
+                }
+                None => {
+                    let _ = writeln!(out, "{l2}<FileInfo />");
+                }
+            }
+            let _ = writeln!(out, "{l1}</Baggage>");
+        }
+        let _ = writeln!(out, "{l0}</Baggages>");
     }
 
     /// Translate a registered parameter's `attribute` into `language` (a BCP-47
@@ -712,6 +853,38 @@ mod tests {
         let mut out = String::new();
         app.write_languages(6, &mut out);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn baggages_block_matches_ets_bytes() {
+        let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        // path written with backslashes; id path is /-normalised to .2F, name '.' -> .2E
+        app.add_baggage(
+            Baggage::new("AE\\2A\\21", "Icons.zip", vec![])
+                .with_time_info("2026-03-02T18:55:32.8617333Z"),
+        );
+        let mut out = String::new();
+        app.write_baggages(6, &mut out);
+        let expected = concat!(
+            "      <Baggages>\n",
+            "        <Baggage TargetPath=\"AE\\2A\\21\" Name=\"Icons.zip\" Id=\"M-00FA_BG-AE.2F2A.2F21-Icons.2Ezip\">\n",
+            "          <FileInfo TimeInfo=\"2026-03-02T18:55:32.8617333Z\" />\n",
+            "        </Baggage>\n",
+            "      </Baggages>\n",
+        );
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn baggage_id_encoding_matches_ets_examples() {
+        let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        app.add_baggage(Baggage::new("", "ets.png", vec![]));
+        app.add_baggage(Baggage::new("", "Help_de.zip", vec![]));
+        let mut out = String::new();
+        app.write_baggages(6, &mut out);
+        // '.' -> .2E, '_' -> .5F (verified against SmartHomeBridge.knxprod)
+        assert!(out.contains(r#"Id="M-00FA_BG--ets.2Epng""#), "{out}");
+        assert!(out.contains(r#"Id="M-00FA_BG--Help.5Fde.2Ezip""#), "{out}");
     }
 
     #[test]
