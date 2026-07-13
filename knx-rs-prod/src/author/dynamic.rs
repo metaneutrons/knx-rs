@@ -226,19 +226,20 @@ impl AppProgram {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{AppProgram, ComObject, Dpt, Flags, Parameter};
+    use super::super::{AppProgram, ComObject, Dpt, Flags, Parameter, ParameterType};
     use super::*;
 
     fn app_with_one_of_each() -> (AppProgram, ParamRefId, ComObjectRefId) {
         let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        let num_zones =
+            app.add_parameter_type(ParameterType::number("NumZones", 8, "unsignedInt", 1, 10));
         let (_, pr) = app.add_param(Parameter::new(
             "G000",
             "G_NumZones",
-            "NumZones",
+            num_zones,
             "Anzahl Zonen",
             "10",
             0,
-            8,
         ));
         let (_, or) = app.add_com_object(ComObject::new(
             "Z01000",

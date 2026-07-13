@@ -241,43 +241,50 @@ pub struct ComObjectRefId(usize);
 
 /// A memory-backed parameter — an ETS `<Parameter>` inside a `<Union>`.
 ///
-/// The `<Memory>` placement's byte `offset` is single-sourced from the
-/// firmware's memory layout; `size_in_bit` is the `<Union>` size.
+/// The `<Memory>` placement's byte `offset` is single-sourced from the firmware's
+/// memory layout. The `<Union>`'s `SizeInBit` and the `<Parameter>`'s `ParameterType`
+/// reference are both taken from the [`ParameterType`] the parameter references (via
+/// its [`ParamTypeId`]), so a parameter's stored width can never disagree with its type.
 #[derive(Clone, Debug)]
 pub struct Parameter {
     suffix: String,
     name: String,
-    param_type: String,
+    param_type: ParamTypeId,
     text: String,
     value: String,
     offset: usize,
-    size_in_bit: u16,
 }
 
 impl Parameter {
     /// Create a memory-backed parameter. `suffix` is the `_UP-<suffix>` id tail
-    /// (e.g. `Z01002`); `param_type` is the `_PT-<param_type>` type tail.
-    #[allow(clippy::too_many_arguments)]
+    /// (e.g. `Z01002`); `param_type` is a handle from
+    /// [`AppProgram::add_parameter_type`], which supplies both the `_PT-` type
+    /// reference and the `SizeInBit`.
     pub fn new(
         suffix: impl Into<String>,
         name: impl Into<String>,
-        param_type: impl Into<String>,
+        param_type: ParamTypeId,
         text: impl Into<String>,
         value: impl Into<String>,
         offset: usize,
-        size_in_bit: u16,
     ) -> Self {
         Self {
             suffix: suffix.into(),
             name: name.into(),
-            param_type: param_type.into(),
+            param_type,
             text: text.into(),
             value: value.into(),
             offset,
-            size_in_bit,
         }
     }
 }
+
+/// Opaque handle to a registered [`ParameterType`].
+///
+/// Returned by [`AppProgram::add_parameter_type`]. A [`Parameter`] carries one so its
+/// `SizeInBit` is single-sourced from the type it references, never passed independently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParamTypeId(usize);
 
 /// Opaque handle to a registered [`Parameter`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -623,10 +630,13 @@ impl AppProgram {
         let inner = " ".repeat(indent + 4);
         let _ = writeln!(out, "{pad}<Parameters>");
         for p in &self.parameters {
+            // The `<Union>` size and the `_PT-` type reference both come from the
+            // referenced ParameterType, so a parameter can't disagree with its type.
+            let ty = &self.parameter_types[p.param_type.0];
             let _ = writeln!(
                 out,
                 r#"{union}<Union SizeInBit="{bits}">"#,
-                bits = p.size_in_bit
+                bits = ty.size_bits()
             );
             let _ = writeln!(
                 out,
@@ -644,7 +654,7 @@ impl AppProgram {
                 id = self.param_id(p),
                 name = escape_attr(&p.name),
                 prefix = self.app_prefix,
-                pt = p.param_type,
+                pt = ty.name(),
                 text = escape_attr(&p.text),
                 value = escape_attr(&p.value),
             );
@@ -826,14 +836,15 @@ mod tests {
     #[test]
     fn parameters_match_ets_bytes() {
         let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        let percent =
+            app.add_parameter_type(ParameterType::number("Percent", 8, "unsignedInt", 0, 100));
         app.add_param(Parameter::new(
             "Z01002",
             "Z01_DefVol",
-            "Percent",
+            percent,
             "Standard-Lautstärke",
             "50",
             5,
-            8,
         ));
         let mut out = String::new();
         app.write_parameters(12, &mut out);
@@ -852,14 +863,15 @@ mod tests {
     #[test]
     fn parameter_refs_are_self_referential_1to1() {
         let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        let num_zones =
+            app.add_parameter_type(ParameterType::number("NumZones", 8, "unsignedInt", 1, 10));
         app.add_param(Parameter::new(
             "G000",
             "G_NumZones",
-            "NumZones",
+            num_zones,
             "Anzahl Zonen",
             "10",
             0,
-            8,
         ));
         let mut out = String::new();
         app.write_parameter_refs(12, &mut out);
@@ -873,14 +885,15 @@ mod tests {
     #[test]
     fn languages_block_matches_ets_bytes() {
         let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        let percent =
+            app.add_parameter_type(ParameterType::number("Percent", 8, "unsignedInt", 0, 100));
         let (p, _) = app.add_param(Parameter::new(
             "Z01002",
             "Z01_DefVol",
-            "Percent",
+            percent,
             "Standard-Lautstärke",
             "50",
             5,
-            8,
         ));
         app.translate_param("en-US", p, Attr::Text, "Default Volume");
         let mut out = String::new();

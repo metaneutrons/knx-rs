@@ -12,7 +12,7 @@
 
 use std::fmt::Write as _;
 
-use super::{AppProgram, escape_attr};
+use super::{AppProgram, ParamTypeId, escape_attr};
 
 /// The value domain of a [`ParameterType`].
 #[derive(Clone, Debug)]
@@ -127,9 +127,13 @@ impl ParameterType {
 }
 
 impl AppProgram {
-    /// Register a `<ParameterType>`; they are emitted in registration order.
-    pub fn add_parameter_type(&mut self, parameter_type: ParameterType) {
+    /// Register a `<ParameterType>` and return a handle to it. Types are emitted in
+    /// registration order; the handle is what a [`Parameter`](super::Parameter) carries
+    /// to draw its `SizeInBit` and `_PT-` reference from this type.
+    pub fn add_parameter_type(&mut self, parameter_type: ParameterType) -> ParamTypeId {
+        let idx = self.parameter_types.len();
         self.parameter_types.push(parameter_type);
+        ParamTypeId(idx)
     }
 
     /// Emit the `<ParameterTypes>` block at `indent` spaces (each nesting level +2).
