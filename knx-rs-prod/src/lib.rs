@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Fabian Schmieder
 
+#![warn(missing_docs)]
+
 //! Cross-platform `.knxprod` builder for KNX ETS product databases.
 //!
 //! Takes a monolithic KNX product XML — authored with this crate's own [`author`]
