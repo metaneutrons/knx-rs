@@ -27,7 +27,7 @@
 //!
 //! Every id reference in a KNX product XML is a **complete, quoted attribute value**
 //! (`Id="…"`, `RefId="…"`, `ParamRefId="…"`, …). [`renumber_ids`] makes a **single
-//! tokenizing pass** ([`rewrite_ids`]): it walks the document once and, for each
+//! tokenizing pass** (`rewrite_ids`): it walks the document once and, for each
 //! attribute value that exactly matches a remapped id, emits the new value into a
 //! fresh buffer; every other byte (text, comments, non-matching attributes) is copied
 //! verbatim and never re-examined. Because no emitted byte is scanned again, the
