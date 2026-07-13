@@ -39,11 +39,16 @@ use std::fmt::Write as _;
 
 mod dynamic;
 mod load;
+mod product;
 mod ptype;
 pub use dynamic::{Dyn, When};
 pub use load::{
     ErrorCause, LoadControl, LoadProcedure, ObjTarget, OnError, ProcType, SegMemoryType, Segment,
     SegmentId, StepBase,
+};
+pub use product::{
+    CatalogItem, CatalogSection, Hardware, Hardware2Program, Message, Options, Product,
+    write_address_table, write_association_table,
 };
 pub use ptype::{ParamTypeKind, ParameterType};
 
@@ -370,6 +375,12 @@ pub struct AppProgram {
     load_procedures: Vec<LoadProcedure>,
     /// `<Dynamic>` tree roots, in order.
     dynamic: Vec<Dyn>,
+    /// `<Catalog>` sections, in registration order.
+    catalog_sections: Vec<CatalogSection>,
+    /// `<Hardware>` entries, in registration order.
+    hardware: Vec<Hardware>,
+    /// `<Messages>` entries, in registration order.
+    messages: Vec<Message>,
 }
 
 impl AppProgram {
@@ -387,6 +398,9 @@ impl AppProgram {
             segments: Vec::new(),
             load_procedures: Vec::new(),
             dynamic: Vec::new(),
+            catalog_sections: Vec::new(),
+            hardware: Vec::new(),
+            messages: Vec::new(),
         }
     }
 
