@@ -175,12 +175,62 @@ pub struct ComObjectId(usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComObjectRefId(usize);
 
+/// A memory-backed parameter — an ETS `<Parameter>` inside a `<Union>`.
+///
+/// The `<Memory>` placement's byte `offset` is single-sourced from the
+/// firmware's memory layout; `size_in_bit` is the `<Union>` size.
+#[derive(Clone, Debug)]
+pub struct Parameter {
+    suffix: String,
+    name: String,
+    param_type: String,
+    text: String,
+    value: String,
+    offset: usize,
+    size_in_bit: u16,
+}
+
+impl Parameter {
+    /// Create a memory-backed parameter. `suffix` is the `_UP-<suffix>` id tail
+    /// (e.g. `Z01002`); `param_type` is the `_PT-<param_type>` type tail.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        suffix: impl Into<String>,
+        name: impl Into<String>,
+        param_type: impl Into<String>,
+        text: impl Into<String>,
+        value: impl Into<String>,
+        offset: usize,
+        size_in_bit: u16,
+    ) -> Self {
+        Self {
+            suffix: suffix.into(),
+            name: name.into(),
+            param_type: param_type.into(),
+            text: text.into(),
+            value: value.into(),
+            offset,
+            size_in_bit,
+        }
+    }
+}
+
+/// Opaque handle to a registered [`Parameter`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParamId(usize);
+
+/// Opaque handle to the `<ParameterRef>` auto-materialised alongside a
+/// [`Parameter`]. This is what the Dynamic section references.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParamRefId(usize);
+
 /// A single ETS application program being authored.
 ///
 /// Registering an entity assigns it a stable id under `app_prefix` and returns
 /// opaque handles; serialisation renders the exact ETS element bytes.
 pub struct AppProgram {
     app_prefix: String,
+    parameters: Vec<Parameter>,
     com_objects: Vec<ComObject>,
 }
 
@@ -190,8 +240,77 @@ impl AppProgram {
     pub fn new(app_prefix: impl Into<String>) -> Self {
         Self {
             app_prefix: app_prefix.into(),
+            parameters: Vec::new(),
             com_objects: Vec::new(),
         }
+    }
+
+    /// Register a memory-backed parameter. Returns a handle to it and to its
+    /// automatically-materialised 1:1 `<ParameterRef>`.
+    pub fn add_param(&mut self, parameter: Parameter) -> (ParamId, ParamRefId) {
+        let idx = self.parameters.len();
+        self.parameters.push(parameter);
+        (ParamId(idx), ParamRefId(idx))
+    }
+
+    /// The full `_UP-` id of a registered parameter.
+    fn param_id(&self, p: &Parameter) -> String {
+        format!("{}_UP-{}", self.app_prefix, p.suffix)
+    }
+
+    /// Emit the `<Parameters>` block at `indent` spaces. Each parameter is a
+    /// `<Union>` wrapping its `<Memory>` placement and the `<Parameter>` itself.
+    pub fn write_parameters(&self, indent: usize, out: &mut String) {
+        let pad = " ".repeat(indent);
+        let union = " ".repeat(indent + 2);
+        let inner = " ".repeat(indent + 4);
+        let _ = writeln!(out, "{pad}<Parameters>");
+        for p in &self.parameters {
+            let _ = writeln!(
+                out,
+                r#"{union}<Union SizeInBit="{bits}">"#,
+                bits = p.size_in_bit
+            );
+            let _ = writeln!(
+                out,
+                r#"{inner}<Memory CodeSegment="{prefix}_RS-04-00000" Offset="{offset}" BitOffset="0" />"#,
+                prefix = self.app_prefix,
+                offset = p.offset,
+            );
+            let _ = writeln!(
+                out,
+                concat!(
+                    r#"{inner}<Parameter Id="{id}" Name="{name}" Offset="0" BitOffset="0" "#,
+                    r#"ParameterType="{prefix}_PT-{pt}" Text="{text}" Value="{value}" />"#,
+                ),
+                inner = inner,
+                id = self.param_id(p),
+                name = escape_attr(&p.name),
+                prefix = self.app_prefix,
+                pt = p.param_type,
+                text = escape_attr(&p.text),
+                value = escape_attr(&p.value),
+            );
+            let _ = writeln!(out, "{union}</Union>");
+        }
+        let _ = writeln!(out, "{pad}</Parameters>");
+    }
+
+    /// Emit the `<ParameterRefs>` block at `indent` spaces — one 1:1
+    /// `<ParameterRef>` per registered parameter (`<id>_R-<id>`), derived from
+    /// the model rather than re-scraped from the emitted XML.
+    pub fn write_parameter_refs(&self, indent: usize, out: &mut String) {
+        let pad = " ".repeat(indent);
+        let child = " ".repeat(indent + 2);
+        let _ = writeln!(out, "{pad}<ParameterRefs>");
+        for p in &self.parameters {
+            let id = self.param_id(p);
+            let _ = writeln!(
+                out,
+                r#"{child}<ParameterRef Id="{id}_R-{id}" RefId="{id}" />"#
+            );
+        }
+        let _ = writeln!(out, "{pad}</ParameterRefs>");
     }
 
     /// Register a group object. Returns a handle to the object and to its
@@ -345,6 +464,53 @@ mod tests {
     fn dpt_drops_leading_zeros() {
         assert_eq!(Dpt::new(1, 1).dpst(), "DPST-1-1");
         assert_eq!(Dpt::new(5, 1).dpst(), "DPST-5-1");
+    }
+
+    #[test]
+    fn parameters_match_ets_bytes() {
+        let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        app.add_param(Parameter::new(
+            "Z01002",
+            "Z01_DefVol",
+            "Percent",
+            "Standard-Lautstärke",
+            "50",
+            5,
+            8,
+        ));
+        let mut out = String::new();
+        app.write_parameters(12, &mut out);
+        let expected = concat!(
+            "            <Parameters>\n",
+            "              <Union SizeInBit=\"8\">\n",
+            "                <Memory CodeSegment=\"M-00FA_A-FF01-01-0000_RS-04-00000\" Offset=\"5\" BitOffset=\"0\" />\n",
+            "                <Parameter Id=\"M-00FA_A-FF01-01-0000_UP-Z01002\" Name=\"Z01_DefVol\" Offset=\"0\" ",
+            "BitOffset=\"0\" ParameterType=\"M-00FA_A-FF01-01-0000_PT-Percent\" Text=\"Standard-Lautstärke\" Value=\"50\" />\n",
+            "              </Union>\n",
+            "            </Parameters>\n",
+        );
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn parameter_refs_are_self_referential_1to1() {
+        let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        app.add_param(Parameter::new(
+            "G000",
+            "G_NumZones",
+            "NumZones",
+            "Anzahl Zonen",
+            "10",
+            0,
+            8,
+        ));
+        let mut out = String::new();
+        app.write_parameter_refs(12, &mut out);
+        let id = "M-00FA_A-FF01-01-0000_UP-G000";
+        let expected = format!(
+            "            <ParameterRefs>\n              <ParameterRef Id=\"{id}_R-{id}\" RefId=\"{id}\" />\n            </ParameterRefs>\n",
+        );
+        assert_eq!(out, expected);
     }
 
     #[test]
