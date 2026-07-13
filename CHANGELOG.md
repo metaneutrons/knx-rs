@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.6.0...knx-rs-v0.7.0) (2026-07-13)
+
+
+### Features
+
+* **prod:** code-first ETS product XML authoring (author module + knxprod! DSL) ([#32](https://github.com/metaneutrons/knx-rs/issues/32)) ([5b7ffd0](https://github.com/metaneutrons/knx-rs/commit/5b7ffd02cca595eb610dcf5b43543503383fe219))
+
 ## [0.6.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.5.2...knx-rs-v0.6.0) (2026-07-13)
 
 
