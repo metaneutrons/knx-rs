@@ -39,11 +39,13 @@ use std::fmt::Write as _;
 
 mod dynamic;
 mod load;
+mod ptype;
 pub use dynamic::{Dyn, When};
 pub use load::{
     ErrorCause, LoadControl, LoadProcedure, ObjTarget, OnError, ProcType, SegMemoryType, Segment,
     SegmentId, StepBase,
 };
+pub use ptype::{ParamTypeKind, ParameterType};
 
 /// Errors surfaced by [`AppProgram::validate`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,6 +355,8 @@ fn encode_id_component(s: &str) -> String {
 pub struct AppProgram {
     app_prefix: String,
     parameters: Vec<Parameter>,
+    /// `<ParameterTypes>` declarations, in registration order.
+    parameter_types: Vec<ParameterType>,
     com_objects: Vec<ComObject>,
     /// Locales in first-seen order, so the `<Languages>` block is deterministic.
     language_order: Vec<String>,
@@ -375,6 +379,7 @@ impl AppProgram {
         Self {
             app_prefix: app_prefix.into(),
             parameters: Vec::new(),
+            parameter_types: Vec::new(),
             com_objects: Vec::new(),
             language_order: Vec::new(),
             translations: Vec::new(),
