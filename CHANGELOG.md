@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.5.2...knx-rs-v0.6.0) (2026-07-13)
+
+
+### Features
+
+* **prod:** renumber ids to integers + validate for ETS import ([#29](https://github.com/metaneutrons/knx-rs/issues/29)) ([f4b0d1d](https://github.com/metaneutrons/knx-rs/commit/f4b0d1d42c9fb609d552ea5a003855d24a54d327))
+
 ## [0.5.2](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.5.1...knx-rs-v0.5.2) (2026-07-12)
 
 
