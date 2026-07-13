@@ -1,6 +1,6 @@
 [package]
 name = "knx-rs-prod"
-description = "Cross-platform .knxprod generator for KNX ETS product databases"
+description = "Cross-platform .knxprod builder for KNX ETS product databases: renumber, hash, sign, and package — pure Rust, no .NET"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

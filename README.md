@@ -101,6 +101,7 @@ version requirement deliberately and apply the changes below.
 
 ### knx-rs-prod
 
+- **Renumber + validate** — rewrite readable string ids (`_UP-Z01000`, …) to the integer suffixes ETS requires at import, remapping every reference in lock-step, then a structural sanity check (id format, dangling refs, duplicate ids); optional XSD validation. See [Renumbering ids for ETS](#renumbering-ids-for-ets)
 - **Hash** — clean-room Rust reimplementation of the ETS `Knx.Ets.XmlSigning.dll` *registration-hash* algorithm, verified byte-exact against 28 test files from 5 manufacturers
 - **Fingerprint** — compute the registration-relevant MD5 hash and patch the resulting fingerprint into the application ID
 - **Split** — split monolithic XML into Catalog.xml, Hardware.xml, Application.xml with per-category translation filtering
@@ -179,14 +180,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 Rust source code (GO definitions, parameters)
          ↓  cargo xtask generate-xml
-   MyDevice.xml (generated, not hand-written)
-         ↓  knx-rs-prod --key signing-key.pem --fetch-master
-   MyDevice.knxprod  (registration hash + M-XXXX.signature + knx_master.xml)
+   MyDevice.xml (generated, not hand-written; readable string ids OK)
+         ↓  knx-rs-prod --renumber --key signing-key.pem --fetch-master
+   MyDevice.knxprod  (integer ids + registration hash + M-XXXX.signature + knx_master.xml)
          ↓
    ETS Import
 ```
 
-This is the approach used by [SnapDog](https://github.com/metaneutrons/snapdog): a Rust `xtask` reads the group object definitions from the device firmware (SSOT — the same constants that configure the BAU at runtime) and generates the complete ETS product XML. Then `knx-rs-prod` hashes, signs, and packages it. The XML is a build artifact, never hand-edited.
+This is the approach used by [SnapDog](https://github.com/metaneutrons/snapdog): a Rust `xtask` reads the group object definitions from the device firmware (SSOT — the same constants that configure the BAU at runtime) and generates the complete ETS product XML with human-readable ids. Then `knx-rs-prod` normalises the ids (`--renumber`, see below), hashes, signs, and packages it. The XML is a build artifact, never hand-edited.
 
 Without `--key`, `knx-rs-prod` still does everything except the RSA signature, producing an unsigned archive (maybe not importable by ETS). Authoring the XML by hand? [OpenKNXproducer](https://github.com/OpenKNX/OpenKNXproducer) remains a fine front end — `knx-rs-prod` replaces only its signing step.
 
@@ -211,6 +212,10 @@ knx-rs-prod MyDevice.xml -o MyDevice.knxprod \
 The `--key` file may be **PEM** (PKCS#8 or PKCS#1) or the **.NET `<RSAKeyValue>` XML** that `RSA.ToXmlString(true)` emits — the zero-conversion export from a .NET/ETS context. `knx_master.xml` is the public KNX master-data file for your schema version (`--fetch-master` pulls it from `update.knx.org`, or point `--knx-master` at a local copy). As a library, call `knx_rs_prod::generate_signed_knxprod`.
 
 > **Verified byte-exact.** `knx-rs-prod` reproduces the `M-XXXX.signature` that the ETS `Knx.Ets.XmlSigning.dll` produces, byte-for-byte, validated against a reference `.knxprod`. The algorithm: for each file under the folder, `"<relpath>:Base64(SHA1(bytes))"`, sorted by path and joined with `,`, then RSA-PKCS#1-v1.5/SHA-1 signed. One residual caveat — `InvariantCulture` collation of deeply-nested `Baggages\…` names uses ordinal ordering here (correct for the common flat layout). See [issue #9](https://github.com/metaneutrons/knx-rs/issues/9).
+
+### Renumbering ids for ETS
+
+ETS parses the integer suffix of every id (`_P-`, `_UP-`, `_O-`, `_R-`, `_PB-`, `_PS-`) as a base-10 number **at import time** — a rule the schema does not enforce, so XML with **readable string ids** (e.g. `_UP-Z01000`) validates but then fails import with `'G' is not a legal digit for base 10`. `--renumber` rewrites every `ApplicationProgram`-scoped id suffix to a unique integer and remaps every reference in lock-step, then runs a structural **sanity check** (id format, dangling refs, duplicate ids) — the pure-Rust equivalent of OpenKNXproducer's `Renumber`/`ConvertKoIds`. Add `--xsd <schema.xsd>` to also validate against an ETS `project/NN` schema (via `xmllint`; schema is caller-supplied). As a library: `knx_rs_prod::normalize_ids(&xml)`.
 
 ### Writing an xtask for XML generation
 
@@ -246,6 +251,9 @@ cargo build --release -p knx-rs-prod
 
 # Generate .knxprod from product XML
 knx-rs-prod MyDevice.xml -o MyDevice.knxprod
+
+# Normalise readable ids, validate, and sign
+knx-rs-prod MyDevice.xml -o MyDevice.knxprod --renumber --xsd knx_project-20.xsd --key signing-key.pem --fetch-master
 ```
 
 ### As a library
