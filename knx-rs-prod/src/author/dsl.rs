@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Fabian Schmieder
 
-//! The [`knxprod!`] declarative DSL for populating an [`AppProgram`](crate::author::AppProgram).
+//! The [`knxprod!`](macro@crate::knxprod) declarative DSL for populating an
+//! [`AppProgram`](crate::author::AppProgram).
 //!
 //! The builder API is precise but verbose: every parameter and group object hands
 //! back a handle you must bind to a local and thread — sometimes far — down into the

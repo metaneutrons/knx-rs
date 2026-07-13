@@ -25,13 +25,18 @@
 //! * **Numbering** is re-derived at each call site. Here the object `Number`
 //!   is supplied once (from the firmware's own `*_asap` SSOT) and stored.
 //!
-//! # Status
+//! # Coverage
 //!
-//! This is the Phase 1 foundation of a phased migration: the escaping writer,
-//! the typed model, and the `ComObject` / `ComObjectRef` pass (the first
-//! section strangled out of the hand-written generator). Further sections
-//! (parameters, dynamic, load procedures, catalog, hardware) land in later
-//! phases behind the same model.
+//! The model spans a whole application program: [`ParameterType`]s,
+//! [`Parameter`]s (+ auto-materialised `<ParameterRef>`s), [`ComObject`]s (+
+//! `<ComObjectRef>`s), the [`Dyn`] `<Dynamic>` tree, `<Code>` [`Segment`]s and the
+//! [`LoadProcedure`] download machine, `<Languages>` translations, [`Baggage`]s,
+//! and the manufacturer-level [`Catalog`](CatalogSection)/[`Hardware`]/[`Message`]/
+//! [`Options`] sections. [`AppProgram::write_knx_document`] emits the entire product
+//! XML — envelope included — from one populated program.
+//!
+//! Build a program with the builder methods, or declaratively with the
+//! [`knxprod!`](macro@crate::knxprod) macro (see [`dsl`]).
 
 use std::borrow::Cow;
 use std::collections::HashSet;
