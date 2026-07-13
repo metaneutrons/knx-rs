@@ -32,6 +32,19 @@ struct Cli {
     /// Requires `--features fetch`.
     #[arg(long)]
     fetch_master: bool,
+
+    /// Renumber all `ApplicationProgram` id suffixes to pure integers and run the
+    /// structural sanity check before splitting/signing. Required for XML that
+    /// uses readable string id suffixes (e.g. `_UP-Z01000`), which ETS rejects
+    /// at import (`'G' is not a legal digit for base 10`).
+    #[arg(long)]
+    renumber: bool,
+
+    /// Validate the (renumbered) XML against an ETS `project/NN` XSD before
+    /// packaging, via `xmllint` on `PATH`. The schema is ETS-proprietary and
+    /// caller-supplied — never bundled.
+    #[arg(long, value_name = "FILE")]
+    xsd: Option<PathBuf>,
 }
 
 fn main() {
@@ -45,10 +58,26 @@ fn main() {
     eprintln!("Input:  {}", cli.input.display());
     eprintln!("Output: {}", output.display());
 
+    // Optionally normalise ids (renumber + sanity) and/or XSD-validate first,
+    // writing the result to a temp file that becomes the effective input.
+    let _tmp; // keeps the temp file alive for the rest of main.
+    let input: PathBuf = match prepare_input(&cli) {
+        Ok(Some(tmp)) => {
+            let p = tmp.path().to_path_buf();
+            _tmp = tmp;
+            p
+        }
+        Ok(None) => cli.input.clone(),
+        Err(e) => {
+            eprintln!("Error: {e}");
+            process::exit(1);
+        }
+    };
+
     let result = if cli.key.is_some() {
-        run_signed(&cli, &output)
+        run_signed(&cli, &input, &output)
     } else {
-        knx_rs_prod::generate_knxprod(&cli.input, &output)
+        knx_rs_prod::generate_knxprod(&input, &output)
     };
 
     match result {
@@ -70,9 +99,79 @@ fn main() {
     }
 }
 
+/// Normalise ids (`--renumber`) and/or XSD-validate (`--xsd`) the input.
+///
+/// Returns `Some(tempfile)` holding the transformed XML when `--renumber` is
+/// set, or `None` when the original input should be used as-is. When `--xsd` is
+/// set, `xmllint` is run against whichever of the two is the effective input.
+fn prepare_input(cli: &Cli) -> Result<Option<tempfile::NamedTempFile>, knx_rs_prod::KnxprodError> {
+    use knx_rs_prod::KnxprodError;
+
+    let tmp: Option<tempfile::NamedTempFile> = if cli.renumber {
+        let xml =
+            std::fs::read_to_string(&cli.input).map_err(|e| KnxprodError::io(&cli.input, e))?;
+        let normalized = knx_rs_prod::normalize_ids(&xml)?;
+        let file = tempfile::Builder::new()
+            .suffix(".xml")
+            .tempfile()
+            .map_err(|e| KnxprodError::io(&cli.input, e))?;
+        std::fs::write(file.path(), &normalized).map_err(|e| KnxprodError::io(file.path(), e))?;
+        eprintln!("Renumbered ids to integers; sanity check passed.");
+        Some(file)
+    } else {
+        None
+    };
+
+    if let Some(xsd) = cli.xsd.as_ref() {
+        let target = tmp
+            .as_ref()
+            .map_or_else(|| cli.input.clone(), |t| t.path().to_path_buf());
+        run_xmllint(xsd, &target)?;
+    }
+
+    Ok(tmp)
+}
+
+/// Validate `xml` against `xsd` using `xmllint` on `PATH`.
+fn run_xmllint(
+    xsd: &std::path::Path,
+    xml: &std::path::Path,
+) -> Result<(), knx_rs_prod::KnxprodError> {
+    use knx_rs_prod::KnxprodError;
+
+    eprintln!("Validating against XSD: {}", xsd.display());
+    let out = process::Command::new("xmllint")
+        .arg("--noout")
+        .arg("--schema")
+        .arg(xsd)
+        .arg(xml)
+        .output()
+        .map_err(|e| {
+            KnxprodError::Validation(format!(
+                "could not run xmllint (is libxml2 installed and on PATH?): {e}"
+            ))
+        })?;
+    if out.status.success() {
+        eprintln!("XSD: valid.");
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    // xmllint exit codes: 3/4 = the document failed validation; anything else
+    // (1 usage, 5 schema-compile error, …) is a tooling/config problem, not a defect
+    // in the product XML — don't mislabel it "validation failed".
+    match out.status.code() {
+        Some(3 | 4) => Err(KnxprodError::Validation(stderr)),
+        other => Err(KnxprodError::Validation(format!(
+            "xmllint tooling/config error (exit {}) — check the --xsd path and libxml2 install:\n{stderr}",
+            other.map_or_else(|| "signal".to_string(), |c| c.to_string()),
+        ))),
+    }
+}
+
 /// Run the signing pipeline (key + `knx_master.xml`).
 fn run_signed(
     cli: &Cli,
+    input: &std::path::Path,
     output: &std::path::Path,
 ) -> Result<knx_rs_prod::KnxMetadata, knx_rs_prod::KnxprodError> {
     use knx_rs_prod::KnxprodError;
@@ -88,7 +187,7 @@ fn run_signed(
     let master = if let Some(path) = cli.knx_master.as_ref() {
         KnxMaster::from_path(path)?
     } else if cli.fetch_master {
-        fetch_master(&cli.input)?
+        fetch_master(input)?
     } else {
         return Err(KnxprodError::MasterData(
             "signing needs a knx_master.xml: pass --knx-master <FILE> or --fetch-master".into(),
@@ -96,7 +195,7 @@ fn run_signed(
     };
 
     eprintln!("Signing with key: {}", key_path.display());
-    knx_rs_prod::generate_signed_knxprod(&cli.input, output, &key, &master)
+    knx_rs_prod::generate_signed_knxprod(input, output, &key, &master)
 }
 
 /// Download `knx_master.xml` for the input's schema version (needs `fetch`).

@@ -48,14 +48,38 @@ pub mod error;
 pub mod hash;
 pub mod knx_master;
 pub mod parse;
+pub mod renumber;
+pub mod sanity;
 pub mod sign;
 pub mod signature;
 pub mod split;
+mod xml_scan;
 
 pub use error::KnxprodError;
 pub use parse::KnxMetadata;
 
 use std::path::Path;
+
+/// Normalise a product XML for ETS import: renumber all `ApplicationProgram` id
+/// suffixes to pure integers ([`renumber::renumber_ids`]) and then verify the
+/// result structurally ([`sanity::sanity_check`]).
+///
+/// This is the pure-Rust replacement for `OpenKNXproducer`'s renumber/sanity
+/// passes. Run it on product XML that uses readable string id suffixes (as
+/// snapdog's `xtask` emits) before splitting/signing, otherwise ETS rejects the
+/// archive at import time (`'G' is not a legal digit for base 10`).
+///
+/// # Errors
+///
+/// Returns [`KnxprodError`] if the `ApplicationProgram` id cannot be extracted
+/// ([`KnxprodError::MissingElement`]/[`KnxprodError::Xml`]), the id remap fails
+/// ([`KnxprodError::InvalidStructure`] — undeclared parent or non-integer key), or
+/// the sanity check finds a problem ([`KnxprodError::Validation`]).
+pub fn normalize_ids(xml: &str) -> Result<String, KnxprodError> {
+    let renumbered = renumber::renumber_ids(xml)?;
+    sanity::sanity_check(&renumbered)?;
+    Ok(renumbered)
+}
 
 /// Generate a .knxprod file from a KNX product XML.
 ///

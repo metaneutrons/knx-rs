@@ -55,7 +55,12 @@ fn extract_manufacturer_id(xml: &str) -> Result<String, KnxprodError> {
     extract_xml_attribute(xml, b"Manufacturer", b"RefId", "Manufacturer/@RefId")
 }
 
-fn extract_application_id(xml: &str) -> Result<String, KnxprodError> {
+/// Extract the `ApplicationProgram/@Id` (e.g. `M-00FA_A-FF01-01-0000`).
+///
+/// # Errors
+///
+/// Returns [`KnxprodError::MissingElement`] if no `ApplicationProgram` is found.
+pub fn extract_application_id(xml: &str) -> Result<String, KnxprodError> {
     extract_xml_attribute(xml, b"ApplicationProgram", b"Id", "ApplicationProgram/@Id")
 }
 

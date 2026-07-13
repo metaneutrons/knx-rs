@@ -14,6 +14,21 @@ Takes a monolithic KNX product XML (from [OpenKNXproducer](https://github.com/Op
 4. **Sign** — RSA-sign the `M-XXXX` folder into `M-XXXX.signature` and embed `knx_master.xml`
 5. **Package** — ZIP into `.knxprod`
 
+## Making readable ids ETS-importable (`--renumber`)
+
+ETS parses the integer suffix of every id (`_P-`, `_UP-`, `_O-`, `_R-`, `_PB-`, `_PS-`) as a base-10 number **at import time** — a rule the `project/NN` XSD does *not* encode. Product XML authored with **readable string ids** (e.g. `_UP-Z01000`, `_O-Zone1Play`, `_PB-General`) validates against the schema but then fails import with `'G' is not a legal digit for base 10`.
+
+`--renumber` rewrites every `ApplicationProgram`-scoped id suffix to a unique integer and remaps **every** reference (`RefId`, `RefRefId`, `ParamRefId`, …) in lock-step, then runs a structural **sanity check** (id format, dangling references, duplicate ids). It is the pure-Rust equivalent of OpenKNXproducer's `Renumber`/`ConvertKoIds` passes — so you can author products with human-readable ids and let `knx-rs-prod` normalise them:
+
+```sh
+knx-rs-prod MyDevice.xml -o MyDevice.knxprod --renumber \
+    --key signing-key.pem --fetch-master
+```
+
+`--xsd <schema.xsd>` additionally validates the normalised XML against an ETS `project/NN` schema via `xmllint` (bring your own schema — it is ETS-proprietary).
+
+As a library, `normalize_ids(&xml)` runs renumber + sanity and returns the rewritten XML; `renumber::renumber_ids` and `sanity::sanity_check` are also exposed individually.
+
 ## Signing (bring your own ETS key)
 
 ETS validates each product against an RSA-1024 `M-XXXX.signature` produced by the closed-source `Knx.Ets.XmlSigning.dll`, whose signing key is not public. `knx-rs-prod` reimplements the signing **algorithm** — reproducing ETS's output byte-for-byte (verified against a reference `.knxprod`) — but **never ships a key**. You supply a key extracted from **your own licensed ETS installation** (PEM or the .NET `<RSAKeyValue>` XML that `RSA.ToXmlString(true)` emits); it never enters this crate.
@@ -47,11 +62,16 @@ cargo install knx-rs-prod            # add `--features fetch` for --fetch-master
 knx-rs-prod MyDevice.xml -o MyDevice.knxprod \
     --key signing-key.pem --knx-master knx_master.xml
 
+# Readable string ids → integers, validated, then signed:
+knx-rs-prod MyDevice.xml -o MyDevice.knxprod \
+    --renumber --xsd knx_project-20.xsd \
+    --key signing-key.pem --fetch-master
+
 # Unsigned (hash + package only):
 knx-rs-prod MyDevice.xml -o MyDevice.knxprod
 ```
 
-`--key` accepts PEM or .NET `<RSAKeyValue>` XML. `knx_master.xml` is the public KNX master file for your schema version — pass a local copy with `--knx-master`, or `--fetch-master` (requires `--features fetch`) to download it from `update.knx.org`.
+`--key` accepts PEM or .NET `<RSAKeyValue>` XML. `knx_master.xml` is the public KNX master file for your schema version — pass a local copy with `--knx-master`, or `--fetch-master` (requires `--features fetch`) to download it from `update.knx.org`. `--renumber` normalises readable string ids to integers (see above); `--xsd` validates against an ETS schema via `xmllint`.
 
 ### As a library
 
@@ -69,7 +89,10 @@ generate_signed_knxprod(
 ).expect("failed to generate signed knxprod");
 ```
 
-`generate_knxprod(input, output)` is the unsigned variant.
+`generate_knxprod(input, output)` is the unsigned variant. To normalise readable
+string ids before generating, run `knx_rs_prod::normalize_ids(&xml)` (renumber +
+sanity) and feed the result — or call `renumber::renumber_ids` / `sanity::sanity_check`
+directly.
 
 ### Hash only
 

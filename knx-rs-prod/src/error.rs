@@ -40,6 +40,12 @@ pub enum KnxprodError {
     /// `knx_master.xml` could not be obtained.
     #[error("knx_master error: {0}")]
     MasterData(String),
+
+    /// The product XML failed a structural sanity check (id format, dangling
+    /// references, duplicate ids). Reaching this before ETS import turns a
+    /// cryptic ETS runtime failure into an actionable build error.
+    #[error("validation failed:\n{0}")]
+    Validation(String),
 }
 
 impl KnxprodError {
