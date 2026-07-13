@@ -37,10 +37,12 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
+mod document;
 mod dynamic;
 mod load;
 mod product;
 mod ptype;
+pub use document::ProgramInfo;
 pub use dynamic::{Dyn, When};
 pub use load::{
     ErrorCause, LoadControl, LoadProcedure, ObjTarget, OnError, ProcType, SegMemoryType, Segment,
@@ -51,6 +53,11 @@ pub use product::{
     write_address_table, write_association_table,
 };
 pub use ptype::{ParamTypeKind, ParameterType};
+
+/// The XML text for a boolean attribute value.
+pub(crate) const fn xml_bool(b: bool) -> &'static str {
+    if b { "true" } else { "false" }
+}
 
 /// Errors surfaced by [`AppProgram::validate`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,6 +388,12 @@ pub struct AppProgram {
     hardware: Vec<Hardware>,
     /// `<Messages>` entries, in registration order.
     messages: Vec<Message>,
+    /// `<AddressTable MaxEntries>` (in `<Static>`), if set.
+    address_table_max: Option<u32>,
+    /// `<AssociationTable MaxEntries>` (in `<Static>`), if set.
+    association_table_max: Option<u32>,
+    /// `<Options>` (in `<Static>`), if set.
+    options: Option<Options>,
 }
 
 impl AppProgram {
@@ -401,6 +414,9 @@ impl AppProgram {
             catalog_sections: Vec::new(),
             hardware: Vec::new(),
             messages: Vec::new(),
+            address_table_max: None,
+            association_table_max: None,
+            options: None,
         }
     }
 

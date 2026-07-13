@@ -13,12 +13,7 @@
 
 use std::fmt::Write as _;
 
-use super::{AppProgram, escape_attr};
-
-/// The XML for a boolean attribute value.
-const fn xml_bool(b: bool) -> &'static str {
-    if b { "true" } else { "false" }
-}
+use super::{AppProgram, escape_attr, xml_bool};
 
 // ── Hardware ────────────────────────────────────────────────────────────────
 
@@ -323,6 +318,21 @@ impl AppProgram {
     /// Register a `<Message>`; messages are emitted in registration order.
     pub fn add_message(&mut self, message: Message) {
         self.messages.push(message);
+    }
+
+    /// Set the `<AddressTable MaxEntries>` emitted in `<Static>`.
+    pub const fn set_address_table(&mut self, max_entries: u32) {
+        self.address_table_max = Some(max_entries);
+    }
+
+    /// Set the `<AssociationTable MaxEntries>` emitted in `<Static>`.
+    pub const fn set_association_table(&mut self, max_entries: u32) {
+        self.association_table_max = Some(max_entries);
+    }
+
+    /// Set the `<Options>` element emitted in `<Static>`.
+    pub fn set_options(&mut self, options: Options) {
+        self.options = Some(options);
     }
 
     /// Emit the manufacturer-level `<Catalog>` block at `indent` spaces. Emits
