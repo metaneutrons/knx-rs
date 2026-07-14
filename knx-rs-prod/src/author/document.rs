@@ -170,8 +170,9 @@ impl AppProgram {
     }
 
     /// Emit a complete `<KNX>` product document: the XML declaration, the
-    /// `<ManufacturerData>`/`<Manufacturer>` wrapper, and — in ETS order — the
-    /// `<Catalog>`, the application program, and the `<Hardware>`.
+    /// `<ManufacturerData>`/`<Manufacturer>` wrapper, and — in ETS schema order — the
+    /// `<Catalog>`, the application program, `<Baggages>`, `<Hardware>`, and
+    /// `<Languages>` (the last two of each emit nothing when nothing is registered).
     pub fn write_knx_document(
         &self,
         info: &ProgramInfo,
@@ -192,9 +193,13 @@ impl AppProgram {
             r#"    <Manufacturer RefId="{mfr}">"#,
             mfr = self.manufacturer(),
         );
+        // ETS <Manufacturer> child order: Catalog, ApplicationPrograms, Baggages,
+        // Hardware, Languages. write_baggages/write_languages emit nothing when empty.
         self.write_catalog(6, out);
         self.write_application_program(info, 6, out);
+        self.write_baggages(6, out);
         self.write_hardware(6, out);
+        self.write_languages(6, out);
         let _ = writeln!(out, "    </Manufacturer>");
         let _ = writeln!(out, "  </ManufacturerData>");
         let _ = writeln!(out, "</KNX>");
@@ -255,5 +260,38 @@ mod tests {
             )),
             "{out}"
         );
+    }
+
+    #[test]
+    fn write_knx_document_includes_baggages_and_languages() {
+        use crate::author::{Attr, Baggage, Parameter, ParameterType};
+
+        let mut app = AppProgram::new("M-00FA_A-FF01-01-0000");
+        let ty = app.add_parameter_type(ParameterType::text("Name", 160));
+        let (p, _) = app.add_param(Parameter::new(
+            "Z01000",
+            "Z01_Name",
+            ty,
+            "Zonenname",
+            "Zone 1",
+            0,
+        ));
+        app.translate_param("en-US", p, Attr::Text, "Zone name");
+        app.add_baggage(Baggage::new("icons/zone.png", "zone.png", vec![1, 2, 3]));
+
+        let info = ProgramInfo::new("SnapDog", "MV-07B0", "de-DE", 65281, 1);
+        let mut out = String::new();
+        app.write_knx_document(&info, "me", "1.0", &mut out);
+
+        // The review found write_knx_document silently dropped both blocks.
+        assert!(out.contains("<Baggages>"), "{out}");
+        assert!(out.contains("<Languages>"), "{out}");
+        // ETS schema order: Baggages after </ApplicationPrograms>, Languages after that.
+        // (find returns Option<usize>; comparing them keeps the test unwrap-free.)
+        assert!(
+            out.find("</ApplicationPrograms>") < out.find("<Baggages>"),
+            "{out}"
+        );
+        assert!(out.find("<Baggages>") < out.find("<Languages>"), "{out}");
     }
 }

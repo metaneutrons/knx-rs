@@ -20,8 +20,10 @@
 //!   so you can only reference something you actually created, and the `_O-` /
 //!   `_R-` id grammar lives in exactly one place.
 //! * **Attribute values** are interpolated raw, so one label containing `&`
-//!   breaks the XML. Here every value flows through [`escape_attr`] exactly
-//!   once, by construction.
+//!   breaks the XML. Here every free-text/label attribute value flows through
+//!   [`escape_attr`] exactly once, by construction. (Id components — the `_UP-` /
+//!   `_O-` / `_PT-` suffixes and names woven into `xs:ID`s — must be caller-supplied
+//!   `NCName`-safe, the same contract ETS itself imposes on ids.)
 //! * **Numbering** is re-derived at each call site. Here the object `Number`
 //!   is supplied once (from the firmware's own `*_asap` SSOT) and stored.
 //!
@@ -391,6 +393,9 @@ pub struct AppProgram {
     baggages: Vec<Baggage>,
     /// `<Static><Code>` segments, in registration order.
     segments: Vec<Segment>,
+    /// The segment `<Parameter>` `<Memory>` placements reference. When unset, the
+    /// conventional `_RS-04-00000` default is used (a relative segment, LSM 4, first).
+    parameter_segment: Option<SegmentId>,
     /// `<LoadProcedures>` procedures, in registration order.
     load_procedures: Vec<LoadProcedure>,
     /// `<Dynamic>` tree roots, in order.
@@ -422,6 +427,7 @@ impl AppProgram {
             translations: Vec::new(),
             baggages: Vec::new(),
             segments: Vec::new(),
+            parameter_segment: None,
             load_procedures: Vec::new(),
             dynamic: Vec::new(),
             catalog_sections: Vec::new(),
@@ -634,6 +640,12 @@ impl AppProgram {
         let pad = " ".repeat(indent);
         let union = " ".repeat(indent + 2);
         let inner = " ".repeat(indent + 4);
+        // Every parameter's `<Memory>` sits in the same code segment: the one pinned
+        // via `set_parameter_segment`, else the conventional `_RS-04-00000` default.
+        let code_segment = self.parameter_segment.map_or_else(
+            || format!("{}_RS-04-00000", self.app_prefix),
+            |seg| self.segment_id(seg),
+        );
         let _ = writeln!(out, "{pad}<Parameters>");
         for p in &self.parameters {
             // The `<Union>` size and the `_PT-` type reference both come from the
@@ -646,8 +658,7 @@ impl AppProgram {
             );
             let _ = writeln!(
                 out,
-                r#"{inner}<Memory CodeSegment="{prefix}_RS-04-00000" Offset="{offset}" BitOffset="0" />"#,
-                prefix = self.app_prefix,
+                r#"{inner}<Memory CodeSegment="{code_segment}" Offset="{offset}" BitOffset="0" />"#,
                 offset = p.offset,
             );
             let _ = writeln!(
