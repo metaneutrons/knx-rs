@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.7.0...knx-rs-v0.8.0) (2026-07-14)
+
+
+### Features
+
+* **prod:** author by-name/suffix lookups for data-driven builders ([#41](https://github.com/metaneutrons/knx-rs/issues/41)) ([9810889](https://github.com/metaneutrons/knx-rs/commit/98108893a34223163357ba2bda390039c02fce8a))
+
+
+### Bug Fixes
+
+* **ci:** drop invalid cargo versioning-strategy from Dependabot config ([#34](https://github.com/metaneutrons/knx-rs/issues/34)) ([761f621](https://github.com/metaneutrons/knx-rs/commit/761f62135841842a2a0f7d12b123f737808908dd))
+* **prod:** author — review fixes (document completeness, segment ref, escaping) ([f64bdbd](https://github.com/metaneutrons/knx-rs/commit/f64bdbd7171bb68947a7c83f08029afa1e2bf26b))
+
 ## [0.7.0](https://github.com/metaneutrons/knx-rs/compare/knx-rs-v0.6.0...knx-rs-v0.7.0) (2026-07-13)
 
 

@@ -28,7 +28,7 @@ tempfile.workspace = true
 rsa = { version = "0.9", features = ["pem"] }
 sha1 = { version = "0.10", features = ["oid"] }
 # Optional: download knx_master.xml from update.knx.org (pulls in a TLS stack).
-ureq = { version = "2", optional = true }
+ureq = { version = "3", optional = true }
 
 [dependencies.clap]
 workspace = true

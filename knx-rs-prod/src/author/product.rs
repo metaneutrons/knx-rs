@@ -412,8 +412,9 @@ impl AppProgram {
             for p in &hw.products {
                 let _ = writeln!(
                     out,
-                    r#"{l3}<Product Id="{hw_id}_P-{order}" Text="{text}" OrderNumber="{order}" IsRailMounted="{rail}" DefaultLanguage="{lang}">"#,
+                    r#"{l3}<Product Id="{hw_id}_P-{order}" Text="{text}" OrderNumber="{order_attr}" IsRailMounted="{rail}" DefaultLanguage="{lang}">"#,
                     order = p.order_number,
+                    order_attr = escape_attr(&p.order_number),
                     text = escape_attr(&p.text),
                     rail = xml_bool(p.is_rail_mounted),
                     lang = escape_attr(&p.default_language),

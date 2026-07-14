@@ -20,8 +20,10 @@
 //!   so you can only reference something you actually created, and the `_O-` /
 //!   `_R-` id grammar lives in exactly one place.
 //! * **Attribute values** are interpolated raw, so one label containing `&`
-//!   breaks the XML. Here every value flows through [`escape_attr`] exactly
-//!   once, by construction.
+//!   breaks the XML. Here every free-text/label attribute value flows through
+//!   [`escape_attr`] exactly once, by construction. (Id components — the `_UP-` /
+//!   `_O-` / `_PT-` suffixes and names woven into `xs:ID`s — must be caller-supplied
+//!   `NCName`-safe, the same contract ETS itself imposes on ids.)
 //! * **Numbering** is re-derived at each call site. Here the object `Number`
 //!   is supplied once (from the firmware's own `*_asap` SSOT) and stored.
 //!
@@ -391,6 +393,9 @@ pub struct AppProgram {
     baggages: Vec<Baggage>,
     /// `<Static><Code>` segments, in registration order.
     segments: Vec<Segment>,
+    /// The segment `<Parameter>` `<Memory>` placements reference. When unset, the
+    /// conventional `_RS-04-00000` default is used (a relative segment, LSM 4, first).
+    parameter_segment: Option<SegmentId>,
     /// `<LoadProcedures>` procedures, in registration order.
     load_procedures: Vec<LoadProcedure>,
     /// `<Dynamic>` tree roots, in order.
@@ -422,6 +427,7 @@ impl AppProgram {
             translations: Vec::new(),
             baggages: Vec::new(),
             segments: Vec::new(),
+            parameter_segment: None,
             load_procedures: Vec::new(),
             dynamic: Vec::new(),
             catalog_sections: Vec::new(),
@@ -628,12 +634,32 @@ impl AppProgram {
         format!("{}_UP-{}", self.app_prefix, p.suffix)
     }
 
+    /// The ref handle of an already-registered parameter, looked up by its `_UP-<suffix>`
+    /// tail. Lets the Dynamic tree reference a parameter by the same suffix it was
+    /// registered under, without threading a handle map through every block builder.
+    ///
+    /// # Panics
+    /// Panics if no parameter with `suffix` was registered — a caller build-order error.
+    #[must_use]
+    pub fn param_ref(&self, suffix: &str) -> ParamRefId {
+        let Some(idx) = self.parameters.iter().position(|p| p.suffix == suffix) else {
+            panic!("parameter {suffix:?} was not registered");
+        };
+        ParamRefId(idx)
+    }
+
     /// Emit the `<Parameters>` block at `indent` spaces. Each parameter is a
     /// `<Union>` wrapping its `<Memory>` placement and the `<Parameter>` itself.
     pub fn write_parameters(&self, indent: usize, out: &mut String) {
         let pad = " ".repeat(indent);
         let union = " ".repeat(indent + 2);
         let inner = " ".repeat(indent + 4);
+        // Every parameter's `<Memory>` sits in the same code segment: the one pinned
+        // via `set_parameter_segment`, else the conventional `_RS-04-00000` default.
+        let code_segment = self.parameter_segment.map_or_else(
+            || format!("{}_RS-04-00000", self.app_prefix),
+            |seg| self.segment_id(seg),
+        );
         let _ = writeln!(out, "{pad}<Parameters>");
         for p in &self.parameters {
             // The `<Union>` size and the `_PT-` type reference both come from the
@@ -646,8 +672,7 @@ impl AppProgram {
             );
             let _ = writeln!(
                 out,
-                r#"{inner}<Memory CodeSegment="{prefix}_RS-04-00000" Offset="{offset}" BitOffset="0" />"#,
-                prefix = self.app_prefix,
+                r#"{inner}<Memory CodeSegment="{code_segment}" Offset="{offset}" BitOffset="0" />"#,
                 offset = p.offset,
             );
             let _ = writeln!(
@@ -697,6 +722,19 @@ impl AppProgram {
     /// The full `_O-` id of a registered object.
     fn com_object_id(&self, co: &ComObject) -> String {
         format!("{}_O-{}", self.app_prefix, co.suffix)
+    }
+
+    /// The ref handle of an already-registered group object, looked up by its `_O-<suffix>`
+    /// tail — the com-object analogue of [`param_ref`](Self::param_ref).
+    ///
+    /// # Panics
+    /// Panics if no group object with `suffix` was registered — a caller build-order error.
+    #[must_use]
+    pub fn com_object_ref(&self, suffix: &str) -> ComObjectRefId {
+        let Some(idx) = self.com_objects.iter().position(|c| c.suffix == suffix) else {
+            panic!("com object {suffix:?} was not registered");
+        };
+        ComObjectRefId(idx)
     }
 
     /// Emit the `<ComObjectTable>` block at `indent` spaces (children at
