@@ -136,6 +136,22 @@ impl AppProgram {
         ParamTypeId(idx)
     }
 
+    /// The handle of an already-registered parameter type, looked up by its `name`.
+    ///
+    /// Lets a caller that builds parameters from data (rather than threading every
+    /// [`ParamTypeId`] by hand) resolve a type by the same name it was registered under.
+    ///
+    /// # Panics
+    /// Panics if no parameter type named `name` has been registered — a programming
+    /// error in the caller's build order, not a runtime condition.
+    #[must_use]
+    pub fn parameter_type_id(&self, name: &str) -> ParamTypeId {
+        let Some(idx) = self.parameter_types.iter().position(|t| t.name() == name) else {
+            panic!("parameter type {name:?} was not registered");
+        };
+        ParamTypeId(idx)
+    }
+
     /// Emit the `<ParameterTypes>` block at `indent` spaces (each nesting level +2).
     /// Emits nothing when no types were registered.
     pub fn write_parameter_types(&self, indent: usize, out: &mut String) {

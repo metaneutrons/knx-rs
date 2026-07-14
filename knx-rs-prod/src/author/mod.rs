@@ -634,6 +634,20 @@ impl AppProgram {
         format!("{}_UP-{}", self.app_prefix, p.suffix)
     }
 
+    /// The ref handle of an already-registered parameter, looked up by its `_UP-<suffix>`
+    /// tail. Lets the Dynamic tree reference a parameter by the same suffix it was
+    /// registered under, without threading a handle map through every block builder.
+    ///
+    /// # Panics
+    /// Panics if no parameter with `suffix` was registered — a caller build-order error.
+    #[must_use]
+    pub fn param_ref(&self, suffix: &str) -> ParamRefId {
+        let Some(idx) = self.parameters.iter().position(|p| p.suffix == suffix) else {
+            panic!("parameter {suffix:?} was not registered");
+        };
+        ParamRefId(idx)
+    }
+
     /// Emit the `<Parameters>` block at `indent` spaces. Each parameter is a
     /// `<Union>` wrapping its `<Memory>` placement and the `<Parameter>` itself.
     pub fn write_parameters(&self, indent: usize, out: &mut String) {
@@ -708,6 +722,19 @@ impl AppProgram {
     /// The full `_O-` id of a registered object.
     fn com_object_id(&self, co: &ComObject) -> String {
         format!("{}_O-{}", self.app_prefix, co.suffix)
+    }
+
+    /// The ref handle of an already-registered group object, looked up by its `_O-<suffix>`
+    /// tail — the com-object analogue of [`param_ref`](Self::param_ref).
+    ///
+    /// # Panics
+    /// Panics if no group object with `suffix` was registered — a caller build-order error.
+    #[must_use]
+    pub fn com_object_ref(&self, suffix: &str) -> ComObjectRefId {
+        let Some(idx) = self.com_objects.iter().position(|c| c.suffix == suffix) else {
+            panic!("com object {suffix:?} was not registered");
+        };
+        ComObjectRefId(idx)
     }
 
     /// Emit the `<ComObjectTable>` block at `indent` spaces (children at
