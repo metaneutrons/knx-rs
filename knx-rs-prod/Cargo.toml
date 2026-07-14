@@ -26,7 +26,7 @@ tempfile.workspace = true
 # usable `.knxprod`, so always compiled in. The signing key is always supplied
 # by the caller at runtime — never bundled.
 rsa = { version = "0.9", features = ["pem"] }
-sha1 = { version = "0.10", features = ["oid"] }
+sha1 = { version = "0.11", features = ["oid"] }
 # Optional: download knx_master.xml from update.knx.org (pulls in a TLS stack).
 ureq = { version = "2", optional = true }
 
