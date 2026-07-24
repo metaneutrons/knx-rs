@@ -20,7 +20,7 @@ homepage = "https://github.com/metaneutrons/knx-rs"
 authors = ["Fabian Schmieder"]
 
 [workspace.dependencies]
-base64 = "0.22.1"
+base64 = "0.23.0"
 clap = { version = "4.6.1", features = ["derive"] }
 knx-rs-core = { path = "knx-rs-core", version = "0.8.0", default-features = false }
 knx-rs-device = { path = "knx-rs-device", version = "0.8.0" }
