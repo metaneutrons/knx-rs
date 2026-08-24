@@ -163,7 +163,7 @@ async fn discover_on(
 // follows the control HPAI). Layout: length(1) type(1) medium(1) status(1)
 // individual_addr(2) project_id(2) serial(6) multicast(4) mac(6) name(30).
 const DIB_IA_OFFSET: usize = 4;
-const DIB_NAME_OFFSET: usize = 22;
+const DIB_NAME_OFFSET: usize = 24;
 const DIB_NAME_LEN: usize = 30;
 const MIN_SEARCH_RESPONSE_LEN: usize = Hpai::LEN as usize + DIB_NAME_OFFSET + DIB_NAME_LEN;
 
