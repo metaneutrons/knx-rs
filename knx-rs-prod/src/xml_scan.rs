@@ -12,7 +12,7 @@
 /// Find the byte index of the `>` that closes the tag opened at `start` (which must
 /// point at a `<`), treating `"`/`'`-quoted attribute values as opaque. Returns `None`
 /// if the tag is unterminated.
-pub fn find_tag_end(xml: &str, start: usize) -> Option<usize> {
+pub const fn find_tag_end(xml: &str, start: usize) -> Option<usize> {
     let b = xml.as_bytes();
     let mut i = start + 1;
     let mut quote: Option<u8> = None;

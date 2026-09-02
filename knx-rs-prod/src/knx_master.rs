@@ -52,7 +52,11 @@ impl KnxMaster {
         let xml = ureq::get(&url)
             .call()
             .map_err(|e| KnxprodError::MasterData(format!("download {url}: {e}")))?
-            .into_string()
+            // ureq 3 removed Response::into_string(). read_to_string keeps the
+            // same 10 MB default limit that into_string had, so the behaviour
+            // is unchanged.
+            .body_mut()
+            .read_to_string()
             .map_err(|e| KnxprodError::MasterData(format!("read {url}: {e}")))?;
         Ok(Self { xml })
     }
