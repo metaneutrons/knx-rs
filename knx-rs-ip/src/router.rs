@@ -80,7 +80,9 @@ impl RouterConnection {
     ///
     /// Returns [`KnxIpError`] if the socket cannot be created or joined.
     // async for symmetry with the rest of the connection API and forward-compat.
-    #[allow(clippy::unused_async)]
+    // clippy split the lint; the pedantic unused_async_trait_impl now fires
+    // here too, so both names are named.
+    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
     pub async fn connect_v4(
         local_addr: Ipv4Addr,
         multicast: SocketAddrV4,
@@ -113,7 +115,9 @@ impl RouterConnection {
     ///
     /// Returns [`KnxIpError`] if the socket cannot be created or joined.
     // async for symmetry with the rest of the connection API and forward-compat.
-    #[allow(clippy::unused_async)]
+    // clippy split the lint; the pedantic unused_async_trait_impl now fires
+    // here too, so both names are named.
+    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
     pub async fn connect_v6(interface: u32, multicast: SocketAddrV6) -> Result<Self, KnxIpError> {
         if !multicast.ip().is_multicast() {
             return Err(KnxIpError::InvalidConfig(format!(
