@@ -1,0 +1,5 @@
+---
+engines:
+  metric:
+    exclude_paths:
+      - "Cargo.lock"
