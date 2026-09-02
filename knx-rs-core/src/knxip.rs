@@ -21,6 +21,8 @@
 use alloc::vec::Vec;
 use core::fmt;
 
+pub mod dib;
+
 /// KNXnet/IP header length (always 6 bytes).
 pub const HEADER_LEN: u8 = 0x06;
 

@@ -12,6 +12,7 @@
 //! - [`cemi`] — Common External Message Interface frame parsing and serialization
 //! - [`tpdu`] — Transport Protocol Data Unit
 //! - [`apdu`] — Application Protocol Data Unit
+//! - [`knxip`] — KNXnet/IP frames, endpoints, and Description Information Blocks
 //!
 //! # `no_std` Support
 //!
