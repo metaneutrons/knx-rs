@@ -135,7 +135,7 @@ impl GroupObject {
     }
 
     /// Size of the value in bytes.
-    pub fn value_size(&self) -> usize {
+    pub const fn value_size(&self) -> usize {
         self.data.len()
     }
 
@@ -286,10 +286,10 @@ impl GroupObjectStore {
         for asap in 1..=count {
             if let Some(desc) = table.get_descriptor(asap) {
                 let size = desc.go_size();
-                if let Some(go) = self.get_mut(asap) {
-                    if go.value_size() != size {
-                        go.resize_data(size);
-                    }
+                if let Some(go) = self.get_mut(asap)
+                    && go.value_size() != size
+                {
+                    go.resize_data(size);
                 }
             }
         }

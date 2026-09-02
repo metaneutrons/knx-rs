@@ -132,12 +132,12 @@ fn build_document(
         doc.push_str(child);
         doc.push('\n');
     }
-    if let Some(t) = translations {
-        if !t.is_empty() {
-            doc.push_str("      ");
-            doc.push_str(t);
-            doc.push('\n');
-        }
+    if let Some(t) = translations
+        && !t.is_empty()
+    {
+        doc.push_str("      ");
+        doc.push_str(t);
+        doc.push('\n');
     }
     doc.push_str("    ");
     doc.push_str(suffix);
@@ -295,10 +295,10 @@ fn filter_units_in_language(
 
     for unit_range in find_child_element_ranges(xml, lang_range, "TranslationUnit") {
         let unit_xml = &xml[unit_range.outer_start..unit_range.outer_end];
-        if let Some(ref_id) = extract_attribute(unit_xml, "RefId") {
-            if matches_category(&ref_id, category) {
-                result.push_str(unit_xml);
-            }
+        if let Some(ref_id) = extract_attribute(unit_xml, "RefId")
+            && matches_category(&ref_id, category)
+        {
+            result.push_str(unit_xml);
         }
     }
 

@@ -133,7 +133,7 @@ impl InterfaceObject {
     }
 
     /// Number of properties in this object.
-    pub fn property_count(&self) -> usize {
+    pub const fn property_count(&self) -> usize {
         self.properties.len()
     }
 }

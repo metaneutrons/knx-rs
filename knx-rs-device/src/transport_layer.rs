@@ -362,43 +362,44 @@ impl TransportLayer {
     /// Must be called periodically. Checks timeouts and retries buffered requests.
     pub fn poll(&mut self, now_ms: u64) {
         // Connection timeout
-        if let Some(deadline) = self.connection_timeout_deadline {
-            if now_ms >= deadline {
-                self.connection_timeout_deadline = None;
-                // E16: connection timeout
-                match self.state {
-                    State::OpenIdle | State::OpenWait | State::Connecting => {
-                        self.active_disconnect();
-                        self.state = State::Closed;
-                    }
-                    State::Closed => {}
-                }
-                return;
-            }
-        }
-
-        // `ACK` timeout
-        if let Some(deadline) = self.ack_timeout_deadline {
-            if now_ms >= deadline && self.state == State::OpenWait {
-                self.ack_timeout_deadline = None;
-                if self.rep_count < MAX_REP_COUNT {
-                    // E17: retry
-                    self.a9_retransmit(now_ms);
-                } else {
-                    // E18: max retries
+        if let Some(deadline) = self.connection_timeout_deadline
+            && now_ms >= deadline
+        {
+            self.connection_timeout_deadline = None;
+            // E16: connection timeout
+            match self.state {
+                State::OpenIdle | State::OpenWait | State::Connecting => {
                     self.active_disconnect();
                     self.state = State::Closed;
                 }
-                return;
+                State::Closed => {}
             }
+            return;
+        }
+
+        // `ACK` timeout
+        if let Some(deadline) = self.ack_timeout_deadline
+            && now_ms >= deadline
+            && self.state == State::OpenWait
+        {
+            self.ack_timeout_deadline = None;
+            if self.rep_count < MAX_REP_COUNT {
+                // E17: retry
+                self.a9_retransmit(now_ms);
+            } else {
+                // E18: max retries
+                self.active_disconnect();
+                self.state = State::Closed;
+            }
+            return;
         }
 
         // Retry buffered request
-        if self.state == State::OpenIdle {
-            if let Some(req) = self.buffered_request.take() {
-                self.a7_send_data(req.priority, req.apdu, now_ms);
-                self.state = State::OpenWait;
-            }
+        if self.state == State::OpenIdle
+            && let Some(req) = self.buffered_request.take()
+        {
+            self.a7_send_data(req.priority, req.apdu, now_ms);
+            self.state = State::OpenWait;
         }
     }
 

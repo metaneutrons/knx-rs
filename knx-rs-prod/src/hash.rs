@@ -858,12 +858,9 @@ fn serialize_registry_attrs(
                     );
                 attr_map.insert(key, val);
             }
-            let mut sort_key = None;
-            if let Some(sa) = sort_attr_name {
-                if let Some(val) = attr_map.get(sa.as_bytes()) {
-                    sort_key = Some(normalize_appl_prog_id(val));
-                }
-            }
+            let sort_key = sort_attr_name
+                .and_then(|name| attr_map.get(name.as_bytes()))
+                .map(|value| normalize_appl_prog_id(value));
             let mut buf = Vec::new();
             for a in attrs {
                 let raw = attr_map.get(a.xml_name.as_bytes()).map(String::as_str);

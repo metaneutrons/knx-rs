@@ -238,10 +238,10 @@ fn build_map(xml: &str, app_id: &str) -> Result<HashMap<String, String>, Knxprod
         if !id.starts_with(&prefix) {
             continue;
         }
-        if let Some((parent, rsuffix)) = split_ref(id, &map) {
-            if let Ok(n) = rsuffix.parse::<u64>() {
-                used_coref.entry(parent.to_string()).or_default().insert(n);
-            }
+        if let Some((parent, rsuffix)) = split_ref(id, &map)
+            && let Ok(n) = rsuffix.parse::<u64>()
+        {
+            used_coref.entry(parent.to_string()).or_default().insert(n);
         }
     }
 

@@ -665,17 +665,14 @@ async fn wait_for_tunneling_ack(
         };
 
         // Check if this is our ack
-        if let Ok(frame) = KnxIpFrame::parse(&buf[..n]) {
-            if frame.service_type == ServiceType::TunnelingAck {
-                if let Some(ack_ch) = ConnectionHeader::parse(&frame.body) {
-                    if src == expected_src
-                        && ack_ch.channel_id == channel_id
-                        && ack_ch.sequence_counter == seq
-                    {
-                        return Ok(());
-                    }
-                }
-            }
+        if let Ok(frame) = KnxIpFrame::parse(&buf[..n])
+            && frame.service_type == ServiceType::TunnelingAck
+            && let Some(ack_ch) = ConnectionHeader::parse(&frame.body)
+            && src == expected_src
+            && ack_ch.channel_id == channel_id
+            && ack_ch.sequence_counter == seq
+        {
+            return Ok(());
         }
 
         // Not our ack — stash for re-processing
