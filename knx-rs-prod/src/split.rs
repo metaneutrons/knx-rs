@@ -496,23 +496,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let result = split_xml(MINIMAL_XML, &meta, dir.path()).unwrap();
 
-        assert!(
-            result
-                .catalog
-                .to_string_lossy()
-                .contains("M-00FA/Catalog.xml")
-        );
-        assert!(
-            result
-                .hardware
-                .to_string_lossy()
-                .contains("M-00FA/Hardware.xml")
-        );
-        assert!(
-            result
-                .application
-                .to_string_lossy()
-                .contains("M-00FA_A-0001-00-0001.xml")
+        let manufacturer_dir = dir.path().join("M-00FA");
+        assert_eq!(result.catalog, manufacturer_dir.join("Catalog.xml"));
+        assert_eq!(result.hardware, manufacturer_dir.join("Hardware.xml"));
+        assert_eq!(
+            result.application,
+            manufacturer_dir.join("M-00FA_A-0001-00-0001.xml")
         );
     }
 
