@@ -580,12 +580,6 @@ fn build_registry() -> HashMap<&'static str, (usize, &'static ElementInfo)> {
 // XML traversal — forward-only reader mirroring C# ChildElementHashGenerator
 // ---------------------------------------------------------------------------
 
-fn local_name(tag: &[u8]) -> &[u8] {
-    tag.iter()
-        .position(|&b| b == b':')
-        .map_or(tag, |pos| &tag[pos + 1..])
-}
-
 /// Result of processing one XML element (mirrors C# `ChildElementHashGenerator`).
 struct GenResult {
     bytes: Vec<u8>,
@@ -682,7 +676,7 @@ fn scan_for_inner_text(
             Event::Start(_) => depth += 1,
             Event::End(_) => depth -= 1,
             Event::Text(ref t) => {
-                let raw = std::str::from_utf8(t.as_ref()).unwrap_or("");
+                let raw = t.as_ref();
                 let unescaped = quick_xml::escape::unescape(raw).unwrap_or_default();
                 let normalized = unescaped.replace("\r\n", "\n").replace('\r', "\n");
                 if normalized.trim().is_empty() {
@@ -695,7 +689,7 @@ fn scan_for_inner_text(
                 return collect_remaining_text(reader, kind, normalized, stream);
             }
             Event::CData(ref c) => {
-                let raw = std::str::from_utf8(c.as_ref()).unwrap_or("");
+                let raw = c.as_ref();
                 let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
                 if normalized.trim().is_empty() {
                     continue;
@@ -707,7 +701,7 @@ fn scan_for_inner_text(
                 return collect_remaining_text(reader, kind, normalized, stream);
             }
             Event::GeneralRef(ref r) => {
-                let decoded = decode_entity(std::str::from_utf8(r.as_ref()).unwrap_or(""));
+                let decoded = decode_entity(r.as_ref());
                 if !decoded.is_empty() {
                     if depth > 0 {
                         write_collected_text(kind, decoded, stream)?;
@@ -733,16 +727,16 @@ fn collect_remaining_text(
     loop {
         match reader.read_event()? {
             Event::Text(ref t) => {
-                let raw = std::str::from_utf8(t.as_ref()).unwrap_or("");
+                let raw = t.as_ref();
                 let u = quick_xml::escape::unescape(raw).unwrap_or_default();
                 text_buf.push_str(&u.replace("\r\n", "\n").replace('\r', "\n"));
             }
             Event::CData(ref c) => {
-                let raw = std::str::from_utf8(c.as_ref()).unwrap_or("");
+                let raw = c.as_ref();
                 text_buf.push_str(&raw.replace("\r\n", "\n").replace('\r', "\n"));
             }
             Event::GeneralRef(ref r) => {
-                text_buf.push_str(decode_entity(std::str::from_utf8(r.as_ref()).unwrap_or("")));
+                text_buf.push_str(decode_entity(r.as_ref()));
             }
             _ => {
                 write_collected_text(kind, &text_buf, stream)?;
@@ -817,8 +811,8 @@ fn read_children(
             Event::End(_) | Event::Eof => break,
             _ => continue,
         };
-        let qn = e_ref.name();
-        let name = std::str::from_utf8(local_name(qn.as_ref())).unwrap_or("");
+        let local_name = e_ref.local_name();
+        let name = local_name.as_ref();
         let result = process_element(reader, name, &e_ref, is_empty, registry, parent_name)?;
         if let Some(key) = result.order_key {
             let sk = if result.order_is_relevant {
@@ -847,23 +841,23 @@ fn serialize_registry_attrs(
 ) -> Result<(Vec<u8>, Option<String>, bool), KnxprodError> {
     match info.kind {
         ElementKind::Attrs(attrs, sort_attr_name) => {
-            let mut attr_map: HashMap<Vec<u8>, String> = HashMap::new();
+            let mut attr_map: HashMap<String, String> = HashMap::new();
             for attr in start.attributes().flatten() {
-                let key = local_name(attr.key.as_ref()).to_vec();
+                let key = attr.key.local_name().as_ref().to_owned();
                 let val = attr
                     .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                     .map_or_else(
-                        |_| String::from_utf8_lossy(&attr.value).into_owned(),
+                        |_| attr.value.as_ref().to_owned(),
                         std::borrow::Cow::into_owned,
                     );
                 attr_map.insert(key, val);
             }
             let sort_key = sort_attr_name
-                .and_then(|name| attr_map.get(name.as_bytes()))
+                .and_then(|name| attr_map.get(name))
                 .map(|value| normalize_appl_prog_id(value));
             let mut buf = Vec::new();
             for a in attrs {
-                let raw = attr_map.get(a.xml_name.as_bytes()).map(String::as_str);
+                let raw = attr_map.get(a.xml_name).map(String::as_str);
                 write_attr(&mut buf, a, raw)?;
             }
             Ok((buf, sort_key, info.ordered))
@@ -960,8 +954,8 @@ fn serialize_app_program(
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                let qn = e.name();
-                let name = std::str::from_utf8(local_name(qn.as_ref())).unwrap_or("");
+                let local_name = e.local_name();
+                let name = local_name.as_ref();
                 if name == "ApplicationPrograms" {
                     // Create top-level generator for ApplicationPrograms
                     let mut buf = Vec::new();

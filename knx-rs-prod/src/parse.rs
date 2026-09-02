@@ -52,7 +52,7 @@ fn extract_ns_version(xml: &str) -> Result<u32, KnxprodError> {
 }
 
 fn extract_manufacturer_id(xml: &str) -> Result<String, KnxprodError> {
-    extract_xml_attribute(xml, b"Manufacturer", b"RefId", "Manufacturer/@RefId")
+    extract_xml_attribute(xml, "Manufacturer", "RefId", "Manufacturer/@RefId")
 }
 
 /// Extract the `ApplicationProgram/@Id` (e.g. `M-00FA_A-FF01-01-0000`).
@@ -61,14 +61,14 @@ fn extract_manufacturer_id(xml: &str) -> Result<String, KnxprodError> {
 ///
 /// Returns [`KnxprodError::MissingElement`] if no `ApplicationProgram` is found.
 pub fn extract_application_id(xml: &str) -> Result<String, KnxprodError> {
-    extract_xml_attribute(xml, b"ApplicationProgram", b"Id", "ApplicationProgram/@Id")
+    extract_xml_attribute(xml, "ApplicationProgram", "Id", "ApplicationProgram/@Id")
 }
 
 /// Extract an attribute value from the first matching XML element.
 fn extract_xml_attribute(
     xml: &str,
-    element: &[u8],
-    attr_name: &[u8],
+    element: &str,
+    attr_name: &str,
     error_context: &'static str,
 ) -> Result<String, KnxprodError> {
     let mut reader = Reader::from_str(xml);
@@ -79,7 +79,7 @@ fn extract_xml_attribute(
             Ok(Event::Start(ref e) | Event::Empty(ref e)) if e.local_name().as_ref() == element => {
                 for attr in e.attributes().flatten() {
                     if attr.key.as_ref() == attr_name {
-                        return Ok(String::from_utf8_lossy(&attr.value).into_owned());
+                        return Ok(attr.value.into_owned());
                     }
                 }
             }
