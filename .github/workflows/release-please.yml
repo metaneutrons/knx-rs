@@ -1,106 +1,71 @@
+# The only automated path that creates a production tag.
 name: Release Please
 
 on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
     steps:
-      # Author the release PR with a GitHub App token, not the default
-      # GITHUB_TOKEN. GitHub blocks GITHUB_TOKEN-authored PRs/pushes from
-      # triggering other workflows (recursion guard), so ci.yml never ran on the
-      # release PR and its required checks stayed stuck. An App token is a real
-      # actor, so its pushes DO fire ci.yml.
-      # Both RELEASE_PLEASE_APP_* secrets exist now, so this step must not
-      # be softened and the token must not have a fallback. A fallback
-      # would silently produce a release PR without CI, which is exactly
-      # what the App token is here to prevent.
-      - uses: actions/create-github-app-token@v3
+      # An App-authored release PR triggers the required pull-request checks.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
-          app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
-      - uses: googleapis/release-please-action@v5
-        id: release
+
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: rp
         with:
           token: ${{ steps.app-token.outputs.token }}
-          manifest-file: .release-please-manifest.json
           config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
-  verify:
-    name: Verify before publish
-    needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace -- --test-threads=1
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo check -p knx-rs-core --no-default-features
-      - run: cargo check -p knx-rs-device --no-default-features
-      - run: cargo check -p knx-rs-tp --no-default-features
-
-  publish:
-    name: Publish to crates.io
-    needs: verify
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Check for CARGO_REGISTRY_TOKEN
-        id: check_token
+      # release-please updates Cargo.toml but not Cargo.lock. Synchronize only
+      # the release PR branch with the same App identity so CI evaluates its
+      # new head. This never pushes to main.
+      - name: Synchronize Cargo.lock in the release PR
+        if: ${{ steps.rp.outputs.pr }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_JSON: ${{ steps.rp.outputs.pr }}
         run: |
-          if [[ -n "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]]; then
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          branch=$(printf '%s' "$PR_JSON" | jq -r .headBranchName)
+          git clone --branch "$branch" --depth 1 \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" rp-lock
+          cd rp-lock
+          cargo update --workspace -q
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock already matches the release version."
           else
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::CARGO_REGISTRY_TOKEN not set — skipping crates.io publish"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: sync Cargo.lock to the release version" -- Cargo.lock
+            git push origin "HEAD:$branch"
           fi
 
-      # Publish in dependency order: core → device/tp → ip → prod
-      - name: Publish knx-rs-core
-        if: steps.check_token.outputs.has_token == 'true'
-        run: cargo publish -p knx-rs-core --token ${{ secrets.CARGO_REGISTRY_TOKEN }} || echo "::warning::knx-rs-core already published or failed"
-
-      - name: Publish knx-rs-device (with retry)
-        if: steps.check_token.outputs.has_token == 'true'
+      # workflow_dispatch is an explicit GITHUB_TOKEN recursion exception.
+      # release.yml deliberately has no tag or release trigger.
+      - name: Dispatch the verified release workflow
+        if: ${{ steps.rp.outputs.release_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.rp.outputs.tag_name }}
         run: |
-          for i in 1 2 3; do
-            cargo publish -p knx-rs-device --token ${{ secrets.CARGO_REGISTRY_TOKEN }} && break
-            echo "::warning::Attempt $i failed, waiting 30s..."
-            sleep 30
-          done
-
-      - name: Publish knx-rs-tp (with retry)
-        if: steps.check_token.outputs.has_token == 'true'
-        run: |
-          for i in 1 2 3; do
-            cargo publish -p knx-rs-tp --token ${{ secrets.CARGO_REGISTRY_TOKEN }} && break
-            echo "::warning::Attempt $i failed, waiting 30s..."
-            sleep 30
-          done
-
-      - name: Publish knx-rs-ip (with retry)
-        if: steps.check_token.outputs.has_token == 'true'
-        run: |
-          for i in 1 2 3; do
-            cargo publish -p knx-rs-ip --token ${{ secrets.CARGO_REGISTRY_TOKEN }} && break
-            echo "::warning::Attempt $i failed, waiting 30s..."
-            sleep 30
-          done
-
-      - name: Publish knx-rs-prod
-        if: steps.check_token.outputs.has_token == 'true'
-        run: cargo publish -p knx-rs-prod --token ${{ secrets.CARGO_REGISTRY_TOKEN }} || echo "::warning::knx-rs-prod already published or failed"
+          set -euo pipefail
+          test -n "$TAG"
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
