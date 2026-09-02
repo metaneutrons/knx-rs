@@ -42,7 +42,17 @@ fi
 grep -Fq 'tag is not canonical SemVer' <<< "$output" \
   || fail "non-canonical tag failed for the wrong reason"
 
-git tag "$wrong_target_tag" HEAD^
+wrong_target_commit=$(
+  printf 'synthetic wrong release target\n' \
+    | GIT_AUTHOR_NAME='Release Contract Test' \
+      GIT_AUTHOR_EMAIL='release-contract@example.invalid' \
+      GIT_AUTHOR_DATE='2000-01-01T00:00:00Z' \
+      GIT_COMMITTER_NAME='Release Contract Test' \
+      GIT_COMMITTER_EMAIL='release-contract@example.invalid' \
+      GIT_COMMITTER_DATE='2000-01-01T00:00:00Z' \
+      git commit-tree "$(git rev-parse 'HEAD^{tree}')"
+)
+git tag "$wrong_target_tag" "$wrong_target_commit"
 if output=$(scripts/release/validate-release-tag.sh "$wrong_target_tag" 2>&1); then
   fail "wrong tag target unexpectedly passed"
 fi
