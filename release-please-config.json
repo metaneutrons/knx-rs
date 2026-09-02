@@ -4,8 +4,12 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "component": "knx-rs",
+      "package-name": "knx-rs",
+      "changelog-path": "CHANGELOG.md",
       "initial-version": "0.1.0",
+      "draft": true,
+      "force-tag-creation": true,
+      "include-component-in-tag": false,
       "extra-files": [
         {
           "type": "toml",
