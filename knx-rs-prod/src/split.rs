@@ -206,7 +206,6 @@ fn find_child_element_range(
 ) -> Option<ElementRange> {
     let search_area = &xml[parent.children_start..parent.inner_end];
     let offset = parent.children_start;
-    let name_bytes = local_name.as_bytes();
 
     let mut reader = Reader::from_str(search_area);
     let mut buf = Vec::new();
@@ -217,7 +216,7 @@ fn find_child_element_range(
     loop {
         let event_offset = usize::try_from(reader.buffer_position()).unwrap_or(0);
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) if e.local_name().as_ref() == name_bytes => {
+            Ok(Event::Start(ref e)) if e.local_name().as_ref() == local_name => {
                 if depth == 0 {
                     outer_start = Some(event_offset + offset);
                     // children_start is after the '>' of this opening tag
@@ -226,7 +225,7 @@ fn find_child_element_range(
                 }
                 depth += 1;
             }
-            Ok(Event::End(ref e)) if e.local_name().as_ref() == name_bytes => {
+            Ok(Event::End(ref e)) if e.local_name().as_ref() == local_name => {
                 depth -= 1;
                 if depth == 0 {
                     let inner_end = event_offset + offset;
@@ -313,7 +312,6 @@ fn find_child_element_ranges(
 ) -> Vec<ElementRange> {
     let search_area = &xml[parent.children_start..parent.inner_end];
     let offset = parent.children_start;
-    let name_bytes = local_name.as_bytes();
 
     let mut reader = Reader::from_str(search_area);
     let mut buf = Vec::new();
@@ -325,7 +323,7 @@ fn find_child_element_ranges(
     loop {
         let event_offset = usize::try_from(reader.buffer_position()).unwrap_or(0);
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) if e.local_name().as_ref() == name_bytes => {
+            Ok(Event::Start(ref e)) if e.local_name().as_ref() == local_name => {
                 if depth == 0 {
                     let start = event_offset + offset;
                     outer_start = Some(start);
@@ -335,7 +333,7 @@ fn find_child_element_ranges(
                 }
                 depth += 1;
             }
-            Ok(Event::Empty(ref e)) if e.local_name().as_ref() == name_bytes && depth == 0 => {
+            Ok(Event::Empty(ref e)) if e.local_name().as_ref() == local_name && depth == 0 => {
                 let start = event_offset + offset;
                 if let Some(tag_end) = xml[start..].find('>') {
                     let outer_end = start + tag_end + 1;
@@ -347,7 +345,7 @@ fn find_child_element_ranges(
                     });
                 }
             }
-            Ok(Event::End(ref e)) if e.local_name().as_ref() == name_bytes && depth > 0 => {
+            Ok(Event::End(ref e)) if e.local_name().as_ref() == local_name && depth > 0 => {
                 depth -= 1;
                 if depth == 0 {
                     let inner_end = event_offset + offset;
@@ -376,7 +374,6 @@ fn find_child_element_ranges(
 fn extract_attribute(tag: &str, attr_name: &str) -> Option<String> {
     let mut reader = Reader::from_str(tag);
     let mut buf = Vec::new();
-    let attr_name = attr_name.as_bytes();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -386,7 +383,7 @@ fn extract_attribute(tag: &str, attr_name: &str) -> Option<String> {
                         return Some(
                             attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
                                 .map_or_else(
-                                    |_| String::from_utf8_lossy(&attr.value).into_owned(),
+                                    |_| attr.value.as_ref().to_owned(),
                                     std::borrow::Cow::into_owned,
                                 ),
                         );
