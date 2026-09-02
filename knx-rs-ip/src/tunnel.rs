@@ -493,19 +493,19 @@ impl TunnelState {
             let n = self.recv_until(&mut buf, deadline, "tunneling ack").await?;
 
             if let Ok(resp) = KnxIpFrame::parse(&buf[..n]) {
-                if resp.service_type == ServiceType::TunnelingAck {
-                    if let Some(ch) = ConnectionHeader::parse(&resp.body) {
-                        let channel_matches = ch.channel_id == self.channel_id;
-                        let seq_matches = ch.sequence_counter == self.send_seq;
-                        if channel_matches && seq_matches {
-                            if ch.status != E_NO_ERROR {
-                                return Err(KnxIpError::Protocol(format!(
-                                    "tunneling ack error: {:#04x}",
-                                    ch.status
-                                )));
-                            }
-                            return Ok(buffered_frames);
+                if resp.service_type == ServiceType::TunnelingAck
+                    && let Some(ch) = ConnectionHeader::parse(&resp.body)
+                {
+                    let channel_matches = ch.channel_id == self.channel_id;
+                    let seq_matches = ch.sequence_counter == self.send_seq;
+                    if channel_matches && seq_matches {
+                        if ch.status != E_NO_ERROR {
+                            return Err(KnxIpError::Protocol(format!(
+                                "tunneling ack error: {:#04x}",
+                                ch.status
+                            )));
                         }
+                        return Ok(buffered_frames);
                     }
                 }
                 // Not our ack — buffer for later processing

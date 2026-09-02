@@ -899,12 +899,12 @@ impl Bau {
     pub fn init_read_requests(&mut self) {
         let count = self.group_object_table.entry_count();
         for asap in 1..=count {
-            if let Some(desc) = self.group_object_table.get_descriptor(asap) {
-                if desc.communication_enable() && desc.read_on_init() {
-                    if let Some(go) = self.group_objects.get_mut(asap) {
-                        go.request_object_read();
-                    }
-                }
+            if let Some(desc) = self.group_object_table.get_descriptor(asap)
+                && desc.communication_enable()
+                && desc.read_on_init()
+                && let Some(go) = self.group_objects.get_mut(asap)
+            {
+                go.request_object_read();
             }
         }
     }
@@ -1068,10 +1068,10 @@ impl Bau {
             return;
         };
         for asap in self.association_table.asaps_for_tsap(tsap) {
-            if let Some(desc) = self.group_object_table.get_descriptor(asap) {
-                if !desc.communication_enable() || !check_flag(desc) {
-                    continue;
-                }
+            if let Some(desc) = self.group_object_table.get_descriptor(asap)
+                && (!desc.communication_enable() || !check_flag(desc))
+            {
+                continue;
             }
             if let Some(go) = self.group_objects.get_mut(asap) {
                 go.value_from_bus(data);
@@ -1086,17 +1086,17 @@ impl Bau {
         };
         for asap in self.association_table.asaps_for_tsap(tsap) {
             // Check communication and read flags (C++ ref: groupValueReadIndication)
-            if let Some(desc) = self.group_object_table.get_descriptor(asap) {
-                if !desc.communication_enable() || !desc.read_enable() {
-                    continue;
-                }
+            if let Some(desc) = self.group_object_table.get_descriptor(asap)
+                && (!desc.communication_enable() || !desc.read_enable())
+            {
+                continue;
             }
-            if let Some(go) = self.group_objects.get(asap) {
-                if go.initialized() {
-                    let data = go.value_ref().to_vec();
-                    self.queue_group_value_response(ga_raw, &data);
-                    return;
-                }
+            if let Some(go) = self.group_objects.get(asap)
+                && go.initialized()
+            {
+                let data = go.value_ref().to_vec();
+                self.queue_group_value_response(ga_raw, &data);
+                return;
             }
         }
     }

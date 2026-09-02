@@ -2,10 +2,17 @@
 
 [![CI](https://github.com/metaneutrons/knx-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/metaneutrons/knx-rs/actions/workflows/ci.yml)
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
-[![MSRV: 1.85](https://img.shields.io/badge/MSRV-1.85-orange.svg)](https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html)
+[![MSRV: 1.94](https://img.shields.io/badge/MSRV-1.94-orange.svg)](https://blog.rust-lang.org/2026/03/05/Rust-1.94.0.html)
 [![no_std](https://img.shields.io/badge/no__std-compatible-green.svg)](https://docs.rust-embedded.org/book/)
 
 A platform-independent KNX protocol stack in Rust — for embedded devices, servers, and everything in between.
+
+## Toolchain support
+
+The minimum supported Rust version (MSRV) is **1.94**. The project targets a
+rolling window of stable Rust minus four releases, reviewed with each minor
+crate release. MSRV increases are made only in minor releases and documented
+in the changelog. CI verifies every workspace crate against the MSRV.
 
 ## Crates
 

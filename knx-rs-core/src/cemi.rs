@@ -338,7 +338,7 @@ impl CemiFrame {
     }
 
     /// Total frame length in bytes.
-    pub fn total_length(&self) -> usize {
+    pub const fn total_length(&self) -> usize {
         self.data.len()
     }
 

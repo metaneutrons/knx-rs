@@ -5,7 +5,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
@@ -44,11 +44,11 @@ fn add_directory_recursive<W: Write + std::io::Seek>(
         let relative = path
             .strip_prefix(base)
             .map_err(|e| KnxprodError::InvalidStructure(e.to_string()))?;
-        let name = relative.to_string_lossy();
 
         if path.is_dir() {
             add_directory_recursive(zip, base, &path, options)?;
         } else {
+            let name = archive_entry_name(relative)?;
             zip.start_file(name, options).map_err(KnxprodError::Zip)?;
             let content = fs::read(&path).map_err(|e| KnxprodError::io(&path, e))?;
             zip.write_all(&content)
@@ -57,6 +57,38 @@ fn add_directory_recursive<W: Write + std::io::Seek>(
     }
 
     Ok(())
+}
+
+fn archive_entry_name(path: &Path) -> Result<String, KnxprodError> {
+    let mut name = String::new();
+
+    for component in path.components() {
+        let Component::Normal(segment) = component else {
+            return Err(KnxprodError::InvalidStructure(format!(
+                "invalid archive path: {}",
+                path.display()
+            )));
+        };
+        let segment = segment.to_str().ok_or_else(|| {
+            KnxprodError::InvalidStructure(format!(
+                "archive path is not valid UTF-8: {}",
+                path.display()
+            ))
+        })?;
+
+        if !name.is_empty() {
+            name.push('/');
+        }
+        name.push_str(segment);
+    }
+
+    if name.is_empty() {
+        return Err(KnxprodError::InvalidStructure(
+            "archive path must not be empty".to_string(),
+        ));
+    }
+
+    Ok(name)
 }
 
 #[cfg(test)]
@@ -106,5 +138,11 @@ mod tests {
             names.iter().any(|n| n.starts_with("M-00FA/")),
             "no M-00FA/ entry found in: {names:?}"
         );
+    }
+
+    #[test]
+    fn archive_entry_names_use_zip_separators() {
+        let path = Path::new("M-00FA").join("nested").join("test.xml");
+        assert_eq!(archive_entry_name(&path).unwrap(), "M-00FA/nested/test.xml");
     }
 }
