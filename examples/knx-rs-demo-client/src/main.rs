@@ -46,7 +46,7 @@ fn usage() {
     eprintln!("  knx-demo-client write <url> <group-address> <value>");
     eprintln!();
     eprintln!("URLs: udp://192.168.1.50:3671, udp://224.0.23.12:3671");
-    eprintln!("Values: on, off, 0-100 (percent), or raw hex bytes");
+    eprintln!("Values: on, off, or 0-100 (percent)");
 }
 
 fn parse_ga(s: &str) -> GroupAddress {
@@ -59,26 +59,30 @@ fn parse_ga(s: &str) -> GroupAddress {
 fn encode_value(s: &str) -> Vec<u8> {
     match s {
         "on" | "ON" | "1" | "true" => {
-            dpt::encode(DPT_SWITCH, &DptValue::Bool(true)).unwrap_or_else(|_| vec![1])
+            encode_or_exit(s, dpt::encode(DPT_SWITCH, &DptValue::Bool(true)))
         }
         "off" | "OFF" | "0" | "false" => {
-            dpt::encode(DPT_SWITCH, &DptValue::Bool(false)).unwrap_or_else(|_| vec![0])
+            encode_or_exit(s, dpt::encode(DPT_SWITCH, &DptValue::Bool(false)))
         }
         _ => {
-            if let Ok(pct) = s.parse::<f64>() {
-                if pct > 1.0 {
-                    dpt::encode(DPT_SCALING, &DptValue::Float(pct))
-                        .unwrap_or_else(|_| vec![pct as u8])
-                } else {
-                    dpt::encode(DPT_SWITCH, &DptValue::Bool(pct != 0.0))
-                        .unwrap_or_else(|_| vec![pct as u8])
-                }
-            } else {
+            let pct = s.parse::<f64>().unwrap_or_else(|_| {
                 eprintln!("Unknown value: {s}");
                 std::process::exit(1);
+            });
+            if !(0.0..=100.0).contains(&pct) {
+                eprintln!("Percentage must be between 0 and 100: {s}");
+                std::process::exit(1);
             }
+            encode_or_exit(s, dpt::encode(DPT_SCALING, &DptValue::Float(pct)))
         }
     }
+}
+
+fn encode_or_exit(s: &str, result: Result<Vec<u8>, dpt::DptError>) -> Vec<u8> {
+    result.unwrap_or_else(|error| {
+        eprintln!("Cannot encode value {s}: {error}");
+        std::process::exit(1);
+    })
 }
 
 fn build_group_write(ga: GroupAddress, data: &[u8]) -> CemiFrame {
@@ -109,7 +113,7 @@ fn build_group_read(ga: GroupAddress) -> CemiFrame {
     )
 }
 
-fn decode_and_print(ga: &GroupAddress, payload: &[u8]) {
+fn decode_and_print(ga: GroupAddress, payload: &[u8]) {
     // Try common DPTs
     if let Some(f) = dpt::decode(DPT_VALUE_TEMP, payload)
         .ok()
@@ -135,8 +139,98 @@ fn decode_and_print(ga: &GroupAddress, payload: &[u8]) {
     println!();
 }
 
+type CommandResult = Result<(), Box<dyn std::error::Error>>;
+
+fn command_arg(args: &[String], index: usize) -> &str {
+    args.get(index).map_or_else(
+        || {
+            usage();
+            std::process::exit(1);
+        },
+        String::as_str,
+    )
+}
+
+async fn discover() -> CommandResult {
+    println!("Searching for KNX gateways...");
+    let gateways = knx_rs_ip::discovery::discover(Ipv4Addr::UNSPECIFIED).await?;
+    if gateways.is_empty() {
+        println!("No gateways found.");
+    } else {
+        for gateway in &gateways {
+            println!(
+                "  {} — {} ({})",
+                gateway.address,
+                gateway.name,
+                IndividualAddress::from_raw(gateway.individual_address)
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn monitor(url: &str) -> CommandResult {
+    println!("Connecting to {url}...");
+    let spec = parse_url(url)?;
+    let mut connection = connect(spec).await?;
+    println!("Connected. Monitoring group traffic (Ctrl+C to stop):\n");
+
+    while let Some(frame) = connection.recv().await {
+        let destination = frame.destination_address();
+        let source = frame.source_address();
+        let payload = frame.payload();
+        print!("{source} → ");
+        if payload.len() < 2 {
+            println!("{destination}");
+            continue;
+        }
+
+        match destination {
+            DestinationAddress::Group(group) => decode_and_print(group, &payload[1..]),
+            DestinationAddress::Individual(individual) => {
+                println!("{individual}: {:02X?}", &payload[1..]);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn write(url: &str, address: &str, value: &str) -> CommandResult {
+    let group = parse_ga(address);
+    let data = encode_value(value);
+
+    println!("Connecting to {url}...");
+    let spec = parse_url(url)?;
+    let mut connection = connect(spec).await?;
+    connection.send(build_group_write(group, &data)).await?;
+    println!("Sent GroupValueWrite to {group}: {data:02X?}");
+    connection.close().await;
+    Ok(())
+}
+
+async fn read(url: &str, address: &str) -> CommandResult {
+    let group = parse_ga(address);
+    println!("Connecting to {url}...");
+    let spec = parse_url(url)?;
+    let mut connection = connect(spec).await?;
+    connection.send(build_group_read(group)).await?;
+    println!("Sent GroupValueRead to {group}, waiting for response...");
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), connection.recv()).await;
+    match response {
+        Ok(Some(frame)) if frame.payload().len() >= 2 => {
+            decode_and_print(group, &frame.payload()[1..]);
+        }
+        Ok(Some(_)) => println!("Received an empty response."),
+        Ok(None) => println!("Connection closed before a response arrived."),
+        Err(_) => println!("No response received (timeout)."),
+    }
+    connection.close().await;
+    Ok(())
+}
+
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> CommandResult {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
@@ -144,108 +238,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        usage();
-        return Ok(());
-    }
-
-    match args[1].as_str() {
-        "discover" => {
-            println!("Searching for KNX gateways...");
-            let gateways = knx_rs_ip::discovery::discover(Ipv4Addr::UNSPECIFIED).await?;
-            if gateways.is_empty() {
-                println!("No gateways found.");
-            } else {
-                for gw in &gateways {
-                    println!(
-                        "  {} — {} ({})",
-                        gw.address,
-                        gw.name,
-                        knx_rs_core::address::IndividualAddress::from_raw(gw.individual_address)
-                    );
-                }
-            }
-        }
-
-        "monitor" => {
-            let url = args.get(2).map(String::as_str).unwrap_or_else(|| {
-                usage();
-                std::process::exit(1);
-            });
-            println!("Connecting to {url}...");
-            let spec = parse_url(url)?;
-            let mut conn = connect(spec).await?;
-            println!("Connected. Monitoring group traffic (Ctrl+C to stop):\n");
-
-            while let Some(frame) = conn.recv().await {
-                let ga = frame.destination_address();
-                let src = frame.source_address();
-                let payload = frame.payload();
-                print!("{src} → {ga}");
-                if payload.len() >= 2 {
-                    decode_and_print(
-                        &match ga {
-                            DestinationAddress::Group(g) => g,
-                            _ => GroupAddress::from_raw(0),
-                        },
-                        &payload[1..], // skip TPCI
-                    );
-                } else {
-                    println!();
-                }
-            }
-        }
-
+    match command_arg(&args, 1) {
+        "discover" => discover().await?,
+        "monitor" => monitor(command_arg(&args, 2)).await?,
         "write" => {
-            if args.len() < 5 {
-                usage();
-                return Ok(());
-            }
-            let url = &args[2];
-            let ga = parse_ga(&args[3]);
-            let data = encode_value(&args[4]);
-
-            println!("Connecting to {url}...");
-            let spec = parse_url(url)?;
-            let mut conn = connect(spec).await?;
-
-            let frame = build_group_write(ga, &data);
-            conn.send(frame).await?;
-            println!("Sent GroupValueWrite to {ga}: {:02X?}", data);
-            conn.close().await;
+            write(
+                command_arg(&args, 2),
+                command_arg(&args, 3),
+                command_arg(&args, 4),
+            )
+            .await?;
         }
-
-        "read" => {
-            if args.len() < 4 {
-                usage();
-                return Ok(());
-            }
-            let url = &args[2];
-            let ga = parse_ga(&args[3]);
-
-            println!("Connecting to {url}...");
-            let spec = parse_url(url)?;
-            let mut conn = connect(spec).await?;
-
-            let frame = build_group_read(ga);
-            conn.send(frame).await?;
-            println!("Sent GroupValueRead to {ga}, waiting for response...");
-
-            let response =
-                tokio::time::timeout(std::time::Duration::from_secs(5), conn.recv()).await;
-
-            match response {
-                Ok(Some(frame)) => {
-                    let payload = frame.payload();
-                    if payload.len() >= 2 {
-                        decode_and_print(&ga, &payload[1..]);
-                    }
-                }
-                _ => println!("No response received (timeout)."),
-            }
-            conn.close().await;
-        }
-
+        "read" => read(command_arg(&args, 2), command_arg(&args, 3)).await?,
         _ => usage(),
     }
 

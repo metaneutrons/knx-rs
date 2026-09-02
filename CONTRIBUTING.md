@@ -2,17 +2,25 @@
 
 ## Development setup
 
-Install the Rust toolchain and run the local quality gates before opening a
-pull request:
+Install the repository toolchain, Lefthook, Gitleaks, and the Cargo quality
+tools, then install the hooks:
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features -- --test-threads=1
+brew install lefthook gitleaks
+cargo install cargo-nextest cargo-deny cargo-llvm-cov
+make setup
 ```
 
-The CI workflow also checks the MSRV, `no_std` targets, feature combinations,
-documentation, and dependency advisories.
+Run the local quality gates before opening a pull request:
+
+```bash
+make check
+```
+
+The CI workflow additionally checks the MSRV, `no_std` targets, feature
+combinations, documentation, the coverage floor, and the complete Git history
+for credentials. The pre-push Clippy and test gates take about 21 seconds on a
+warm Apple Silicon development build; the complete feature matrix stays in CI.
 
 ## Branches and commits
 

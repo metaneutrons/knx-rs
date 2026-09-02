@@ -98,8 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let address = args
         .windows(2)
         .find(|w| w[0] == "--address")
-        .map(|w| parse_address(&w[1]))
-        .unwrap_or(0xFFFF);
+        .map_or(0xFFFF, |w| parse_address(&w[1]));
 
     let mut bau = create_demo_bau(address);
 
@@ -116,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Device server listening on port 3671");
 
     let mut temp_interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
-    let mut tick: u64 = 0;
+    let mut phase = 0.0_f64;
     let mut server = server;
 
     loop {
@@ -137,8 +136,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             _ = temp_interval.tick() => {
-                let temp = 22.0 + 4.0 * libm::sin(tick as f64 * 0.2);
-                tick += 1;
+                let temp = 4.0_f64.mul_add(libm::sin(phase), 22.0);
+                phase = (phase + 0.2) % std::f64::consts::TAU;
                 if let Some(go) = bau.group_objects_mut().get_mut(1) {
                     let _ = go.set_value(&DptValue::Float(temp));
                 }
