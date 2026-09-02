@@ -1,39 +1,63 @@
 version: 2
+
 updates:
-  - package-ecosystem: github-actions
+  - package-ecosystem: cargo
     directory: /
     schedule:
-      interval: daily
-    target-branch: main
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
     commit-message:
       prefix: chore
-    open-pull-requests-limit: 5
     labels:
       - dependencies
     groups:
-      actions-dependencies:
+      rust-minor-patch:
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch
 
-  - package-ecosystem: cargo
+  - package-ecosystem: rust-toolchain
     directory: /
     schedule:
-      interval: daily
-    target-branch: main
+      interval: weekly
+      day: monday
+      time: "05:05"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 1
+    cooldown:
+      default-days: 14
     commit-message:
       prefix: chore
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:15"
+      timezone: Europe/Berlin
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+    commit-message:
+      prefix: chore
     labels:
       - dependencies
     groups:
-      prod-dependencies:
-        dependency-type: production
-        update-types:
-          - minor
-          - patch
-      dev-dependencies:
-        dependency-type: development
+      github-actions-minor-patch:
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch

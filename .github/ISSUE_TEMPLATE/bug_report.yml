@@ -1,0 +1,61 @@
+name: Bug report
+description: Report reproducible incorrect behavior in knx-rs
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Do not disclose security vulnerabilities here. Use private vulnerability
+        reporting as described in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Crate version, Git commit, or release tag where the problem occurs.
+      placeholder: knx-rs-ip 0.8.0
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Embedded no_std target
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Explain the observed and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest reproducible example and exact commands.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Include logs or protocol captures after removing sensitive data.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: I removed keys, credentials, and private network data.
+          required: true
