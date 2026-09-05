@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/metaneutrons/knx-rs/compare/v0.9.0...v0.9.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **prod:** encode ETS identity components and memory types ([#62](https://github.com/metaneutrons/knx-rs/issues/62)) ([36513c2](https://github.com/metaneutrons/knx-rs/commit/36513c24bdc4e799b4c4ec012150cada0800e687))
+
 ## [0.9.0](https://github.com/metaneutrons/knx-rs/compare/v0.8.0...v0.9.0) (2026-09-02)
 
 
