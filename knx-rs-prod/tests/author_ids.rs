@@ -86,6 +86,30 @@ fn product_document(serial: &str, order: &str, section: &str, type_name: &str) -
     xml
 }
 
+fn package_product_documents(xml: &str) -> (String, [String; 3]) {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let input = temp.path().join("device.xml");
+    let output = temp.path().join("device.knxprod");
+    std::fs::write(&input, xml).expect("write product XML");
+    let metadata = knx_rs_prod::generate_knxprod(&input, &output).expect("generate archive");
+    let mut zip =
+        zip::ZipArchive::new(std::fs::File::open(output).expect("archive")).expect("valid ZIP");
+    let documents = [
+        "Catalog.xml".to_string(),
+        "Hardware.xml".to_string(),
+        format!("{}.xml", metadata.application_id),
+    ]
+    .map(|file| {
+        let mut xml = String::new();
+        zip.by_name(&format!("M-013A/{file}"))
+            .expect("product XML in archive")
+            .read_to_string(&mut xml)
+            .expect("UTF-8 XML");
+        xml
+    });
+    (metadata.application_id, documents)
+}
+
 #[test]
 fn catalog_and_hardware_encode_components_without_changing_identity_attributes() {
     for (raw, encoded) in [
@@ -209,26 +233,7 @@ fn issue_45_ids_survive_normalization_hashing_and_packaging() {
         knx_rs_prod::normalize_ids(&normalized).expect("second normalization"),
         normalized
     );
-    let temp = tempfile::tempdir().expect("temporary directory");
-    let input = temp.path().join("device.xml");
-    let output = temp.path().join("device.knxprod");
-    std::fs::write(&input, &normalized).expect("write product XML");
-    let metadata = knx_rs_prod::generate_knxprod(&input, &output).expect("generate archive");
-    let mut zip =
-        zip::ZipArchive::new(std::fs::File::open(output).expect("archive")).expect("valid ZIP");
-    let mut documents = Vec::new();
-    for file in [
-        "Catalog.xml".to_string(),
-        "Hardware.xml".to_string(),
-        format!("{}.xml", metadata.application_id),
-    ] {
-        let mut xml = String::new();
-        zip.by_name(&format!("M-013A/{file}"))
-            .expect("product XML in archive")
-            .read_to_string(&mut xml)
-            .expect("UTF-8 XML");
-        documents.push(xml);
-    }
+    let (application_id, documents) = package_product_documents(&normalized);
     let catalog = &elements(&documents[0], "CatalogItem")[0];
     let product = &elements(&documents[1], "Product")[0];
     assert_eq!(
@@ -242,13 +247,13 @@ fn issue_45_ids_survive_normalization_hashing_and_packaging() {
     );
     assert_eq!(
         elements(&documents[1], "ApplicationProgramRef")[0]["RefId"],
-        metadata.application_id
+        application_id
     );
     assert_eq!(
         elements(&documents[0], "CatalogSection")[0]["Id"],
         "M-013A_CS-RIOT.20KNX.20Device.20123"
     );
-    let type_id = format!("{}_PT-General.5FStartupTime", metadata.application_id);
+    let type_id = format!("{application_id}_PT-General.5FStartupTime");
     assert_eq!(elements(&documents[2], "ParameterType")[0]["Id"], type_id);
     assert_eq!(
         elements(&documents[2], "Parameter")[0]["ParameterType"],
