@@ -13,7 +13,11 @@
 
 use std::fmt::Write as _;
 
-use super::{AppProgram, escape_attr, xml_bool};
+use super::{AppProgram, encode_id_component, escape_attr, xml_bool};
+
+fn product_id(hardware_id: &str, order_number: &str) -> String {
+    format!("{hardware_id}_P-{}", encode_id_component(order_number))
+}
 
 // ── Hardware ────────────────────────────────────────────────────────────────
 
@@ -27,7 +31,10 @@ pub struct Product {
 }
 
 impl Product {
-    /// A product identified by its `order_number` (also its `_P-` id tail).
+    /// A product identified by its raw `order_number`.
+    ///
+    /// The order number is preserved in `OrderNumber` and ETS-encoded in the
+    /// `_P-` id tail. Do not pre-encode it.
     #[must_use]
     pub fn new(
         order_number: impl Into<String>,
@@ -85,6 +92,7 @@ pub struct Hardware {
 
 impl Hardware {
     /// A device identified by `serial_number` + `version_number` (its `_H-` id).
+    /// Supply the raw serial number; it is ETS-encoded only in IDs and references.
     #[must_use]
     pub fn new(
         serial_number: impl Into<String>,
@@ -158,6 +166,7 @@ pub struct CatalogItem {
 
 impl CatalogItem {
     /// A catalog entry for the hardware identified by `serial`/`version`/`order`.
+    /// Supply the same raw serial and order number as in [`Hardware`] and [`Product`].
     #[must_use]
     pub fn new(
         name: impl Into<String>,
@@ -189,7 +198,8 @@ pub struct CatalogSection {
 }
 
 impl CatalogSection {
-    /// A section whose `_CS-` id tail is `key`.
+    /// A section whose `_CS-` id tail is the ETS-encoded raw `key`.
+    /// Spaces, punctuation and Unicode are accepted; do not pre-encode the key.
     #[must_use]
     pub fn new(
         key: impl Into<String>,
@@ -297,6 +307,14 @@ pub fn write_association_table(indent: usize, max_entries: u32, out: &mut String
 }
 
 impl AppProgram {
+    fn hardware_id(&self, serial_number: &str, version_number: u32) -> String {
+        format!(
+            "{}_H-{}-{version_number}",
+            self.manufacturer(),
+            encode_id_component(serial_number),
+        )
+    }
+
     /// The application-program id tail after `_A-` (e.g. `FF01-01-0000`), which the
     /// hardware↔program id (`_HP-`) is built from.
     fn app_tail(&self) -> &str {
@@ -351,25 +369,21 @@ impl AppProgram {
             let _ = writeln!(
                 out,
                 r#"{l1}<CatalogSection Id="{mfr}_CS-{key}" Name="{name}" Number="{number}" DefaultLanguage="{lang}">"#,
-                key = section.key,
+                key = encode_id_component(&section.key),
                 name = escape_attr(&section.name),
                 number = escape_attr(&section.number),
                 lang = escape_attr(&section.default_language),
             );
             for item in &section.items {
-                let hw = format!(
-                    "{mfr}_H-{s}-{v}",
-                    s = item.serial_number,
-                    v = item.version_number
-                );
+                let hw = self.hardware_id(&item.serial_number, item.version_number);
                 let _ = writeln!(
                     out,
-                    r#"{l2}<CatalogItem Id="{hw}_HP-{app_tail}_CI-{s}-{v}" Name="{name}" Number="{number}" ProductRefId="{hw}_P-{order}" Hardware2ProgramRefId="{hw}_HP-{app_tail}" DefaultLanguage="{lang}" />"#,
-                    s = item.serial_number,
+                    r#"{l2}<CatalogItem Id="{hw}_HP-{app_tail}_CI-{s}-{v}" Name="{name}" Number="{number}" ProductRefId="{product}" Hardware2ProgramRefId="{hw}_HP-{app_tail}" DefaultLanguage="{lang}" />"#,
+                    s = encode_id_component(&item.serial_number),
                     v = item.version_number,
                     name = escape_attr(&item.name),
                     number = escape_attr(&item.number),
-                    order = item.order_number,
+                    product = product_id(&hw, &item.order_number),
                     lang = escape_attr(&item.default_language),
                 );
             }
@@ -384,7 +398,6 @@ impl AppProgram {
         if self.hardware.is_empty() {
             return;
         }
-        let mfr = self.manufacturer().to_string();
         let app_tail = self.app_tail().to_string();
         let l0 = " ".repeat(indent);
         let l1 = " ".repeat(indent + 2);
@@ -393,11 +406,7 @@ impl AppProgram {
         let l4 = " ".repeat(indent + 8);
         let _ = writeln!(out, "{l0}<Hardware>");
         for hw in &self.hardware {
-            let hw_id = format!(
-                "{mfr}_H-{s}-{v}",
-                s = hw.serial_number,
-                v = hw.version_number
-            );
+            let hw_id = self.hardware_id(&hw.serial_number, hw.version_number);
             let _ = writeln!(
                 out,
                 r#"{l1}<Hardware Id="{hw_id}" Name="{name}" SerialNumber="{serial}" VersionNumber="{ver}" BusCurrent="{bus}" HasIndividualAddress="{hia}" HasApplicationProgram="{hap}">"#,
@@ -412,8 +421,8 @@ impl AppProgram {
             for p in &hw.products {
                 let _ = writeln!(
                     out,
-                    r#"{l3}<Product Id="{hw_id}_P-{order}" Text="{text}" OrderNumber="{order_attr}" IsRailMounted="{rail}" DefaultLanguage="{lang}">"#,
-                    order = p.order_number,
+                    r#"{l3}<Product Id="{id}" Text="{text}" OrderNumber="{order_attr}" IsRailMounted="{rail}" DefaultLanguage="{lang}">"#,
+                    id = product_id(&hw_id, &p.order_number),
                     order_attr = escape_attr(&p.order_number),
                     text = escape_attr(&p.text),
                     rail = xml_bool(p.is_rail_mounted),

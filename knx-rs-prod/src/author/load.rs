@@ -59,20 +59,20 @@ impl ProcType {
 /// `MemoryType_t` for a `<Code>` segment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SegMemoryType {
-    /// `Ram`
+    /// `RAM`
     Ram,
-    /// `Eeprom`
+    /// `EEPROM`
     Eeprom,
-    /// `Flash`
+    /// `FLASH`
     Flash,
 }
 
 impl SegMemoryType {
     const fn ets(self) -> &'static str {
         match self {
-            Self::Ram => "Ram",
-            Self::Eeprom => "Eeprom",
-            Self::Flash => "Flash",
+            Self::Ram => "RAM",
+            Self::Eeprom => "EEPROM",
+            Self::Flash => "FLASH",
         }
     }
 }

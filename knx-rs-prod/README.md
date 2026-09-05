@@ -94,6 +94,24 @@ string ids before generating, run `knx_rs_prod::normalize_ids(&xml)` (renumber +
 sanity) and feed the result — or call `renumber::renumber_ids` / `sanity::sanity_check`
 directly.
 
+### Authoring identifiers
+
+Pass raw hardware serial numbers, product order numbers, catalog section keys,
+and parameter type names to the `author` builders. Their ID components are
+encoded using ETS's `.XX` notation for non-alphanumeric UTF-8 bytes. Definitions
+and references use the same encoding, while attributes such as `OrderNumber`,
+`SerialNumber`, and `Name` retain the original text (with XML escaping).
+
+For example, `RIOT-KNX-DEVICE-1CH` becomes `RIOT.2DKNX.2DDEVICE.2D1CH` in a
+product ID, `General_StartupTime` becomes `General.5FStartupTime` in a parameter
+type ID, and spaces in catalog section keys become `.20`.
+
+Do not pre-encode these inputs: a literal `.2D` in a raw name is encoded as
+`.2E2D`. Explicit full IDs, including those passed to `translate_raw`, must
+already use the final ID grammar. Readable suffixes for integer-typed IDs still
+require `normalize_ids`; that pass does not repair arbitrary hand-written
+product, catalog, or parameter type IDs.
+
 ### Hash only
 
 ```rust
