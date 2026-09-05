@@ -12,7 +12,7 @@
 
 use std::fmt::Write as _;
 
-use super::{AppProgram, ParamTypeId, escape_attr};
+use super::{AppProgram, ParamTypeId, encode_id_component, escape_attr};
 
 /// The value domain of a [`ParameterType`].
 #[derive(Clone, Debug)]
@@ -56,7 +56,10 @@ impl ParamTypeKind {
     }
 }
 
-/// A `<ParameterType>` (id `_PT-<name>`).
+/// A `<ParameterType>` (id `_PT-<encoded-name>`).
+///
+/// Supply the raw name, including spaces or punctuation. It is preserved in
+/// `Name` and ETS-encoded when used in IDs and parameter type references.
 #[derive(Clone, Debug)]
 pub struct ParameterType {
     name: String,
@@ -107,7 +110,7 @@ impl ParameterType {
         }
     }
 
-    /// This type's name (its `_PT-` id tail).
+    /// This type's raw name (ETS-encoded when used as its `_PT-` id tail).
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
@@ -127,6 +130,15 @@ impl ParameterType {
 }
 
 impl AppProgram {
+    /// The same encoded ID is used for type declarations, enumerations and references.
+    pub(super) fn param_type_xml_id(&self, parameter_type: &ParameterType) -> String {
+        format!(
+            "{}_PT-{}",
+            self.app_prefix,
+            encode_id_component(parameter_type.name()),
+        )
+    }
+
     /// Register a `<ParameterType>` and return a handle to it. Types are emitted in
     /// registration order; the handle is what a [`Parameter`](super::Parameter) carries
     /// to draw its `SizeInBit` and `_PT-` reference from this type.
@@ -164,7 +176,7 @@ impl AppProgram {
         let l3 = " ".repeat(indent + 6);
         let _ = writeln!(out, "{l0}<ParameterTypes>");
         for pt in &self.parameter_types {
-            let id = format!("{}_PT-{}", self.app_prefix, pt.name);
+            let id = self.param_type_xml_id(pt);
             let _ = writeln!(
                 out,
                 r#"{l1}<ParameterType Id="{id}" Name="{name}">"#,

@@ -21,9 +21,12 @@
 //!   `_R-` id grammar lives in exactly one place.
 //! * **Attribute values** are interpolated raw, so one label containing `&`
 //!   breaks the XML. Here every free-text/label attribute value flows through
-//!   [`escape_attr`] exactly once, by construction. (Id components — the `_UP-` /
-//!   `_O-` / `_PT-` suffixes and names woven into `xs:ID`s — must be caller-supplied
-//!   `NCName`-safe, the same contract ETS itself imposes on ids.)
+//!   [`escape_attr`] exactly once, by construction. Hardware serials, product order
+//!   numbers, catalog section keys and parameter type names are supplied as raw
+//!   text; their ID components use ETS `.XX` encoding in both declarations and
+//!   references. Explicit IDs and readable suffixes for integer-typed IDs (such as
+//!   `_UP-` / `_O-`) must still be caller-supplied `NCName`-safe values; run
+//!   [`crate::normalize_ids`] before import to renumber those suffixes.
 //! * **Numbering** is re-derived at each call site. Here the object `Number`
 //!   is supplied once (from the firmware's own `*_asap` SSOT) and stored.
 //!
@@ -679,13 +682,12 @@ impl AppProgram {
                 out,
                 concat!(
                     r#"{inner}<Parameter Id="{id}" Name="{name}" Offset="0" BitOffset="0" "#,
-                    r#"ParameterType="{prefix}_PT-{pt}" Text="{text}" Value="{value}" />"#,
+                    r#"ParameterType="{pt}" Text="{text}" Value="{value}" />"#,
                 ),
                 inner = inner,
                 id = self.param_id(p),
                 name = escape_attr(&p.name),
-                prefix = self.app_prefix,
-                pt = ty.name(),
+                pt = self.param_type_xml_id(ty),
                 text = escape_attr(&p.text),
                 value = escape_attr(&p.value),
             );
