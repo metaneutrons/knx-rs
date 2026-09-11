@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2](https://github.com/metaneutrons/knx-rs/compare/v0.9.1...v0.9.2) (2026-09-11)
+
+
+### Bug Fixes
+
+* **ip:** derive group-value encoding from DPT wire size ([#69](https://github.com/metaneutrons/knx-rs/issues/69)) ([f1b5079](https://github.com/metaneutrons/knx-rs/commit/f1b50794abedcd3dde2bdd1d748d9e4d48ccae81))
+
 ## [0.9.1](https://github.com/metaneutrons/knx-rs/compare/v0.9.0...v0.9.1) (2026-09-05)
 
 
