@@ -3,6 +3,7 @@
 
 //! Error types for KNXnet/IP connections.
 
+use knx_rs_core::apdu::ApduEncodeError;
 use knx_rs_core::cemi::CemiError;
 use knx_rs_core::dpt::DptError;
 use knx_rs_core::knxip::KnxIpParseError;
@@ -61,4 +62,24 @@ pub enum KnxIpError {
     /// Invalid URL or connection specification.
     #[error("invalid URL: {0}")]
     InvalidUrl(String),
+}
+
+impl From<ApduEncodeError> for KnxIpError {
+    fn from(error: ApduEncodeError) -> Self {
+        Self::Protocol(format!("APDU error: {error}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apdu_encoding_errors_preserve_the_existing_public_error_shape() {
+        let error = KnxIpError::from(ApduEncodeError::EmptyBytePayload);
+        assert_eq!(
+            error.to_string(),
+            "protocol error: APDU error: byte-sized group value is empty"
+        );
+    }
 }
