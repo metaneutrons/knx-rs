@@ -34,6 +34,24 @@ pub struct Dpt {
     pub index: u16,
 }
 
+/// Size of a DPT value as represented on the KNX wire.
+///
+/// Bit-sized values are carried in the six-bit data field of a group-value
+/// APDU. Byte-sized values follow the APCI bytes even when their significant
+/// value would fit in that field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DptWireSize {
+    /// A value shorter than one octet.
+    Bits(u8),
+    /// A fixed number of complete octets.
+    Bytes(u8),
+    /// A variable number of complete octets.
+    VariableBytes,
+    /// The DPT main group is not known to this crate.
+    Unknown,
+}
+
 impl Dpt {
     /// Create a new DPT identifier.
     pub const fn new(main: u16, sub: u16) -> Self {
@@ -49,21 +67,41 @@ impl Dpt {
         Self { main, sub, index }
     }
 
+    /// Size of this DPT's value on the KNX wire.
+    ///
+    /// DPT 17 is intentionally byte-sized despite having only six significant
+    /// value bits. DPT 31 is bit-sized metadata but is not valid for runtime
+    /// group communication according to the KNX specification.
+    #[must_use]
+    pub const fn wire_size(self) -> DptWireSize {
+        match self.main {
+            1 => DptWireSize::Bits(1),
+            2 | 23 => DptWireSize::Bits(2),
+            3 => DptWireSize::Bits(4),
+            31 => DptWireSize::Bits(3),
+            4 | 5 | 6 | 17 | 18 | 26 | 238 => DptWireSize::Bytes(1),
+            7 | 8 | 9 | 22 | 207 | 217 | 234 | 237 | 239 | 244 | 246 => DptWireSize::Bytes(2),
+            10 | 11 | 30 | 206 | 225 | 232 | 240 | 250 | 254 => DptWireSize::Bytes(3),
+            12 | 13 | 14 | 15 | 27 | 231 | 241 | 251 => DptWireSize::Bytes(4),
+            252 => DptWireSize::Bytes(5),
+            219 | 221 | 222 | 229 | 235 | 242 | 245 | 249 => DptWireSize::Bytes(6),
+            19 | 29 | 230 | 255 | 275 => DptWireSize::Bytes(8),
+            16 => DptWireSize::Bytes(14),
+            285 => DptWireSize::Bytes(16),
+            28 => DptWireSize::VariableBytes,
+            _ => DptWireSize::Unknown,
+        }
+    }
+
     /// Wire data length in bytes for this DPT's main group.
     ///
     /// Falls back to `1` for variable-length and unrecognised main groups; use
     /// [`Dpt::wire_len`] to distinguish a genuine 1-byte DPT from that fallback.
+    #[must_use]
     pub const fn data_length(self) -> u8 {
-        match self.main {
-            7 | 8 | 9 | 22 | 207 | 217 | 234 | 237 | 239 | 244 | 246 => 2,
-            10 | 11 | 30 | 206 | 225 | 232 | 240 | 250 | 254 => 3,
-            12 | 13 | 14 | 15 | 27 | 231 | 241 | 251 => 4,
-            252 => 5,
-            219 | 221 | 222 | 229 | 235 | 242 | 245 | 249 => 6,
-            19 | 29 | 230 | 255 | 275 => 8,
-            16 => 14,
-            285 => 16,
-            _ => 1,
+        match self.wire_size() {
+            DptWireSize::Bytes(bytes) => bytes,
+            DptWireSize::Bits(_) | DptWireSize::VariableBytes | DptWireSize::Unknown => 1,
         }
     }
 
@@ -72,7 +110,7 @@ impl Dpt {
     /// DPT 28 (Unicode string) is null-terminated and has no fixed size.
     #[must_use]
     pub const fn is_variable_length(self) -> bool {
-        matches!(self.main, 28)
+        matches!(self.wire_size(), DptWireSize::VariableBytes)
     }
 
     /// The fixed wire length in bytes, or `None` for variable-length DPTs.
@@ -83,10 +121,10 @@ impl Dpt {
     /// allocating a 1-byte buffer.
     #[must_use]
     pub const fn wire_len(self) -> Option<u8> {
-        if self.is_variable_length() {
-            None
-        } else {
-            Some(self.data_length())
+        match self.wire_size() {
+            DptWireSize::Bits(_) | DptWireSize::Unknown => Some(1),
+            DptWireSize::Bytes(bytes) => Some(bytes),
+            DptWireSize::VariableBytes => None,
         }
     }
 }
@@ -440,5 +478,19 @@ mod tests {
         let dpt28 = Dpt::new(28, 1);
         assert!(dpt28.is_variable_length());
         assert_eq!(dpt28.wire_len(), None);
+    }
+
+    #[test]
+    fn wire_size_distinguishes_inline_bits_from_complete_octets() {
+        assert_eq!(Dpt::new(1, 1).wire_size(), DptWireSize::Bits(1));
+        assert_eq!(Dpt::new(2, 1).wire_size(), DptWireSize::Bits(2));
+        assert_eq!(Dpt::new(3, 7).wire_size(), DptWireSize::Bits(4));
+        assert_eq!(Dpt::new(23, 1).wire_size(), DptWireSize::Bits(2));
+        assert_eq!(Dpt::new(31, 101).wire_size(), DptWireSize::Bits(3));
+        assert_eq!(DPT_SCALING.wire_size(), DptWireSize::Bytes(1));
+        assert_eq!(DPT_SCENE_NUMBER.wire_size(), DptWireSize::Bytes(1));
+        assert_eq!(DPT_VALUE_TEMP.wire_size(), DptWireSize::Bytes(2));
+        assert_eq!(Dpt::new(28, 1).wire_size(), DptWireSize::VariableBytes);
+        assert_eq!(Dpt::new(999, 1).wire_size(), DptWireSize::Unknown);
     }
 }

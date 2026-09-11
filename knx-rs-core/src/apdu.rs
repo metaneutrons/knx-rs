@@ -19,6 +19,7 @@
 //! of byte 1 carry small data values directly.
 
 use alloc::vec::Vec;
+use core::fmt;
 
 use crate::message::ApduType;
 
@@ -36,6 +37,115 @@ const APCI_SHORT_FAMILY_MAX: u16 = 11;
 /// Opcode family `7` (the `0x1Cx` escape range) is long despite being below the
 /// short-family threshold.
 const APCI_LONG_ESCAPE_FAMILY: u16 = 7;
+
+/// Wire representation of a group-value payload.
+///
+/// Use [`Self::Inline`] only for DPT values whose complete wire representation
+/// is shorter than one octet. A byte-sized DPT remains [`Self::Bytes`] even
+/// when its numeric value fits in six bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GroupValuePayload<'a> {
+    /// A value carried in the lower six bits of the second APCI byte.
+    Inline(u8),
+    /// One or more complete octets following the APCI bytes.
+    Bytes(&'a [u8]),
+}
+
+/// A group-value APDU with an explicit payload representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum GroupValueApdu<'a> {
+    /// Read a group object value.
+    Read,
+    /// Respond with a group object value.
+    Response(GroupValuePayload<'a>),
+    /// Write a group object value.
+    Write(GroupValuePayload<'a>),
+}
+
+/// Error returned when a group-value APDU cannot be encoded safely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ApduEncodeError {
+    /// An inline value exceeds the six-bit APCI data field.
+    InlineValueOutOfRange {
+        /// The rejected value.
+        value: u8,
+        /// Largest value allowed by the relevant wire field.
+        max: u8,
+    },
+    /// A byte-sized group value contained no bytes.
+    EmptyBytePayload,
+    /// An encoded DPT value did not match its declared fixed wire size.
+    PayloadLengthMismatch {
+        /// Required number of bytes.
+        expected: usize,
+        /// Encoded number of bytes.
+        actual: usize,
+    },
+    /// The DPT wire size cannot be represented as a runtime group value.
+    UnsupportedGroupValueSize,
+}
+
+impl fmt::Display for ApduEncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InlineValueOutOfRange { value, max } => {
+                write!(f, "inline group value {value:#04x} exceeds {max:#04x}")
+            }
+            Self::EmptyBytePayload => f.write_str("byte-sized group value is empty"),
+            Self::PayloadLengthMismatch { expected, actual } => write!(
+                f,
+                "group value payload length mismatch: expected {expected}, got {actual}"
+            ),
+            Self::UnsupportedGroupValueSize => {
+                f.write_str("DPT wire size is unsupported for runtime group communication")
+            }
+        }
+    }
+}
+
+impl core::error::Error for ApduEncodeError {}
+
+impl GroupValueApdu<'_> {
+    /// Encode this group-value APDU into TPDU payload bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApduEncodeError`] if an inline value exceeds six bits or a
+    /// byte-sized payload is empty.
+    pub fn try_to_bytes(self, tpci_bits: u8) -> Result<Vec<u8>, ApduEncodeError> {
+        let (apdu_type, payload) = match self {
+            Self::Read => (ApduType::GroupValueRead, None),
+            Self::Response(payload) => (ApduType::GroupValueResponse, Some(payload)),
+            Self::Write(payload) => (ApduType::GroupValueWrite, Some(payload)),
+        };
+        let (byte0, apci_low) = encode_apci_header(apdu_type, tpci_bits);
+
+        match payload {
+            None => Ok(alloc::vec![byte0, apci_low]),
+            Some(GroupValuePayload::Inline(value)) => {
+                if value > APCI_SHORT_DATA_MASK {
+                    return Err(ApduEncodeError::InlineValueOutOfRange {
+                        value,
+                        max: APCI_SHORT_DATA_MASK,
+                    });
+                }
+                Ok(alloc::vec![byte0, apci_low | value])
+            }
+            Some(GroupValuePayload::Bytes(data)) => {
+                if data.is_empty() {
+                    return Err(ApduEncodeError::EmptyBytePayload);
+                }
+                let mut encoded = Vec::with_capacity(2 + data.len());
+                encoded.extend_from_slice(&[byte0, apci_low]);
+                encoded.extend_from_slice(data);
+                Ok(encoded)
+            }
+        }
+    }
+}
 
 /// A parsed Application Protocol Data Unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,9 +185,7 @@ impl Apdu {
     /// Returns the bytes starting from the TPCI/APCI position.
     pub fn to_bytes(&self, tpci_bits: u8) -> Vec<u8> {
         let apci = self.apdu_type as u16;
-        let byte0 = (tpci_bits & 0xFC) | ((apci >> 8) as u8 & 0x03);
-        #[expect(clippy::cast_possible_truncation)]
-        let apci_low = apci as u8;
+        let (byte0, apci_low) = encode_apci_header(self.apdu_type, tpci_bits);
 
         if uses_short_form(apci, &self.data) {
             // Short APDU: a single 6-bit value packed into the lower bits of
@@ -93,6 +201,15 @@ impl Apdu {
             buf
         }
     }
+}
+
+/// Encode the two bytes containing TPCI bits and an APCI service code.
+const fn encode_apci_header(apdu_type: ApduType, tpci_bits: u8) -> (u8, u8) {
+    let apci = apdu_type as u16;
+    let byte0 = (tpci_bits & 0xFC) | ((apci >> 8) as u8 & 0x03);
+    #[expect(clippy::cast_possible_truncation)]
+    let byte1 = apci as u8;
+    (byte0, byte1)
 }
 
 /// Determine if an APCI value uses the "short" encoding (6-bit data in byte 1).
@@ -312,6 +429,71 @@ mod tests {
         };
         let bytes = apdu.to_bytes(0x00);
         assert_eq!(bytes, &[0x00, 0x80, 0x0C, 0x1A]);
+    }
+
+    #[test]
+    fn explicit_group_value_forms_have_distinct_wire_encodings() {
+        assert_eq!(
+            GroupValueApdu::Read.try_to_bytes(0x00).unwrap(),
+            &[0x00, 0x00]
+        );
+        assert_eq!(
+            GroupValueApdu::Response(GroupValuePayload::Inline(1))
+                .try_to_bytes(0x00)
+                .unwrap(),
+            &[0x00, 0x41]
+        );
+        assert_eq!(
+            GroupValueApdu::Write(GroupValuePayload::Inline(1))
+                .try_to_bytes(0x00)
+                .unwrap(),
+            &[0x00, 0x81]
+        );
+        assert_eq!(
+            GroupValueApdu::Write(GroupValuePayload::Bytes(&[1]))
+                .try_to_bytes(0x00)
+                .unwrap(),
+            &[0x00, 0x80, 0x01]
+        );
+    }
+
+    #[test]
+    fn explicit_group_value_encoding_rejects_invalid_payloads() {
+        assert_eq!(
+            GroupValueApdu::Write(GroupValuePayload::Inline(0x40)).try_to_bytes(0x00),
+            Err(ApduEncodeError::InlineValueOutOfRange {
+                value: 0x40,
+                max: APCI_SHORT_DATA_MASK,
+            })
+        );
+        assert_eq!(
+            GroupValueApdu::Write(GroupValuePayload::Bytes(&[])).try_to_bytes(0x00),
+            Err(ApduEncodeError::EmptyBytePayload)
+        );
+    }
+
+    #[test]
+    fn every_inline_group_value_roundtrips() {
+        for value in 0..=APCI_SHORT_DATA_MASK {
+            let bytes = GroupValueApdu::Write(GroupValuePayload::Inline(value))
+                .try_to_bytes(0x00)
+                .unwrap();
+            let parsed = Apdu::parse(&bytes, 1).unwrap();
+            assert_eq!(parsed.apdu_type, ApduType::GroupValueWrite);
+            assert_eq!(parsed.data, &[value]);
+        }
+    }
+
+    #[test]
+    fn every_byte_sized_group_value_roundtrips_without_inline_inference() {
+        for value in 0..=u8::MAX {
+            let bytes = GroupValueApdu::Write(GroupValuePayload::Bytes(&[value]))
+                .try_to_bytes(0x00)
+                .unwrap();
+            let parsed = Apdu::parse(&bytes, 2).unwrap();
+            assert_eq!(parsed.apdu_type, ApduType::GroupValueWrite);
+            assert_eq!(parsed.data, &[value]);
+        }
     }
 
     #[test]
