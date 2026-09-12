@@ -11,6 +11,7 @@ use alloc::vec::Vec;
 
 use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
 use knx_rs_core::cemi::CemiFrame;
+use knx_rs_core::dpt::Dpt;
 use knx_rs_core::message::MessageCode;
 use knx_rs_core::tpdu::Tpdu;
 use knx_rs_core::types::{AddressType, Confirm, Priority};
@@ -824,7 +825,7 @@ impl Bau {
             };
             // Snapshot the request; the immutable borrow ends with this clone.
             let write_data = match go.comm_flag() {
-                ComFlag::WriteRequest => Some(go.value_ref().to_vec()),
+                ComFlag::WriteRequest => Some((go.dpt(), go.value_ref().to_vec())),
                 ComFlag::ReadRequest => None,
                 _ => break,
             };
@@ -836,7 +837,11 @@ impl Bau {
                 .resolve_group_address(asap)
                 .map_or(ComFlag::Error, |ga| {
                     match &write_data {
-                        Some(data) => self.queue_group_value_write(ga, data),
+                        Some((dpt, data)) => {
+                            if !self.queue_group_value_write(ga, *dpt, data) {
+                                return ComFlag::Error;
+                            }
+                        }
                         None => self.queue_group_value_read(ga),
                     }
                     ComFlag::Transmitting
@@ -1095,7 +1100,7 @@ impl Bau {
                 && go.initialized()
             {
                 let data = go.value_ref().to_vec();
-                self.queue_group_value_response(ga_raw, &data);
+                let _ = self.queue_group_value_response(ga_raw, go.dpt(), &data);
                 return;
             }
         }
@@ -1649,9 +1654,13 @@ impl Bau {
 
     // ── Frame builders ────────────────────────────────────────
 
-    fn queue_group_value_write(&mut self, ga: u16, data: &[u8]) {
-        let payload = application_layer::encode_group_value_write(data);
+    fn queue_group_value_write(&mut self, ga: u16, dpt: Option<Dpt>, data: &[u8]) -> bool {
+        let Ok(payload) = application_layer::encode::encode_group_value_write_for_dpt(dpt, data)
+        else {
+            return false;
+        };
         self.queue_group_frame(ga, Priority::Low, &payload);
+        true
     }
 
     fn queue_group_value_read(&mut self, ga: u16) {
@@ -1659,9 +1668,13 @@ impl Bau {
         self.queue_group_frame(ga, Priority::Low, &payload);
     }
 
-    fn queue_group_value_response(&mut self, ga: u16, data: &[u8]) {
-        let payload = application_layer::encode_group_value_response(data);
+    fn queue_group_value_response(&mut self, ga: u16, dpt: Option<Dpt>, data: &[u8]) -> bool {
+        let Ok(payload) = application_layer::encode::encode_group_value_response_for_dpt(dpt, data)
+        else {
+            return false;
+        };
         self.queue_group_frame(ga, Priority::Low, &payload);
+        true
     }
 
     fn queue_individual_address_response(&mut self) {
@@ -1833,6 +1846,7 @@ mod tests {
     use super::*;
     use crate::device_object;
     use crate::property::LoadState;
+    use knx_rs_core::dpt::{DPT_SCALING, DPT_VALUE_1_UCOUNT};
 
     fn test_bau() -> Bau {
         let device =
@@ -1883,16 +1897,16 @@ mod tests {
     #[test]
     fn group_value_read_sends_response() {
         let mut bau = test_bau();
-        bau.group_objects
-            .get_mut(1)
-            .unwrap()
-            .write_value_no_send(&[42]);
+        let go = bau.group_objects.get_mut(1).unwrap();
+        go.set_dpt(DPT_VALUE_1_UCOUNT);
+        go.write_value_no_send(&[42]);
         let frame = CemiFrame::parse(&[
             0x29, 0x00, 0xBC, 0xE0, 0x11, 0x02, 0x08, 0x01, 0x01, 0x00, 0x00,
         ])
         .unwrap();
         bau.process_frame(&frame, 0);
-        assert!(bau.next_outgoing_frame().is_some());
+        let response = bau.next_outgoing_frame().unwrap();
+        assert_eq!(response.payload(), &[0x00, 0x40, 42]);
     }
 
     #[test]
@@ -1912,6 +1926,21 @@ mod tests {
             bau.group_objects().get(1).unwrap().comm_flag(),
             ComFlag::Transmitting
         );
+    }
+
+    #[test]
+    fn poll_keeps_low_byte_sized_dpt_values_out_of_the_apci_field() {
+        let mut bau = test_bau();
+        mark_configured(&mut bau);
+
+        let go = bau.group_objects_mut().get_mut(1).unwrap();
+        go.set_dpt(DPT_SCALING);
+        go.write_value(&[42]);
+
+        bau.poll(0);
+        let frame = bau.next_outgoing_frame().unwrap();
+        assert_eq!(frame.payload(), &[0x00, 0x80, 42]);
+        assert_eq!(frame.npdu_length(), 2);
     }
 
     #[test]
