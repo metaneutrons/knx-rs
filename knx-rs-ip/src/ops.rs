@@ -7,6 +7,15 @@
 //! methods to any [`KnxConnection`]. Import it to use `group_write_raw`,
 //! `group_read`, and DPT-aware variants.
 //!
+//! # Migration from 0.9.x
+//!
+//! `group_write` and `group_respond` were removed for the 0.10.0 API because
+//! they inferred the KNX wire representation from the encoded numeric value.
+//! Use [`GroupOps::group_write_raw`] or [`GroupOps::group_respond_raw`] with
+//! an explicit [`GroupValuePayload`], or prefer the DPT-aware
+//! [`GroupOps::group_write_value`] and [`GroupOps::group_respond_value`]
+//! methods.
+//!
 //! ```rust,no_run
 //! use knx_rs_ip::{KnxConnection, connect, parse_url};
 //! use knx_rs_ip::ops::{GroupOps, GroupValuePayload};
@@ -26,10 +35,10 @@
 //! ```
 
 use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
-use knx_rs_core::apdu::{APCI_SHORT_DATA_MASK, Apdu, ApduEncodeError, GroupValueApdu};
+use knx_rs_core::apdu::{APCI_SHORT_DATA_MASK, ApduEncodeError, GroupValueApdu};
 use knx_rs_core::cemi::CemiFrame;
 use knx_rs_core::dpt::{self, Dpt, DptValue, DptWireSize};
-use knx_rs_core::message::{ApduType, MessageCode};
+use knx_rs_core::message::MessageCode;
 use knx_rs_core::types::Priority;
 
 pub use knx_rs_core::apdu::GroupValuePayload;
@@ -45,27 +54,6 @@ const TPCI_DATA_GROUP: u8 = 0x00;
 /// Provides high-level methods on top of any [`KnxConnection`].
 /// All APDU encoding is handled internally.
 pub trait GroupOps: KnxConnection {
-    /// Write a raw value to a group address.
-    ///
-    /// This legacy method infers the KNX wire representation from the encoded
-    /// value. Low byte-sized values are therefore ambiguous. Use
-    /// [`Self::group_write_raw`] or [`Self::group_write_value`] instead.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`KnxIpError`](crate::KnxIpError) if the frame could not be sent.
-    #[deprecated(
-        since = "0.9.2",
-        note = "use `group_write_raw` with an explicit `GroupValuePayload`, or `group_write_value`"
-    )]
-    fn group_write(&self, ga: GroupAddress, data: &[u8]) -> KnxFuture<'_, Result<()>> {
-        let frame = match build_legacy_group_frame(ga, ApduType::GroupValueWrite, data) {
-            Ok(frame) => frame,
-            Err(err) => return Box::pin(core::future::ready(Err(err))),
-        };
-        self.send(frame)
-    }
-
     /// Write a raw group value with an explicit wire representation.
     ///
     /// # Errors
@@ -111,27 +99,6 @@ pub trait GroupOps: KnxConnection {
     /// Returns [`KnxIpError`](crate::KnxIpError) if the frame could not be sent.
     fn group_read(&self, ga: GroupAddress) -> KnxFuture<'_, Result<()>> {
         let frame = match build_group_read(ga) {
-            Ok(frame) => frame,
-            Err(err) => return Box::pin(core::future::ready(Err(err))),
-        };
-        self.send(frame)
-    }
-
-    /// Send a group value response.
-    ///
-    /// This legacy method infers the KNX wire representation from the encoded
-    /// value. Low byte-sized values are therefore ambiguous. Use
-    /// [`Self::group_respond_raw`] or [`Self::group_respond_value`] instead.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`KnxIpError`](crate::KnxIpError) if the frame could not be sent.
-    #[deprecated(
-        since = "0.9.2",
-        note = "use `group_respond_raw` with an explicit `GroupValuePayload`, or `group_respond_value`"
-    )]
-    fn group_respond(&self, ga: GroupAddress, data: &[u8]) -> KnxFuture<'_, Result<()>> {
-        let frame = match build_legacy_group_frame(ga, ApduType::GroupValueResponse, data) {
             Ok(frame) => frame,
             Err(err) => return Box::pin(core::future::ready(Err(err))),
         };
@@ -258,20 +225,6 @@ fn encoded_group_value_payload(
     }
 }
 
-/// Preserve the value-based behavior of the deprecated raw APIs.
-fn build_legacy_group_frame(
-    ga: GroupAddress,
-    apdu_type: ApduType,
-    data: &[u8],
-) -> Result<CemiFrame> {
-    let apdu = Apdu {
-        apdu_type,
-        data: data.to_vec(),
-    };
-    let payload = apdu.to_bytes(TPCI_DATA_GROUP);
-    build_cemi_group_frame(ga, &payload)
-}
-
 fn build_group_read(ga: GroupAddress) -> Result<CemiFrame> {
     build_group_value_frame(ga, GroupValueApdu::Read)
 }
@@ -391,12 +344,5 @@ mod tests {
             encoded_group_value_payload(Dpt::new(999, 1), &[0x01]),
             Err(ApduEncodeError::UnsupportedGroupValueSize)
         );
-    }
-
-    #[test]
-    fn deprecated_raw_builder_retains_legacy_inference() {
-        let frame =
-            build_legacy_group_frame(TEST_GROUP, ApduType::GroupValueWrite, &[0x01]).unwrap();
-        assert_eq!(frame.payload(), &[0x00, 0x81]);
     }
 }
