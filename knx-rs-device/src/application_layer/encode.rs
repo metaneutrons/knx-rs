@@ -5,6 +5,8 @@
 
 use alloc::vec::Vec;
 
+use knx_rs_core::apdu::{ApduEncodeError, GroupValueApdu, GroupValuePayload};
+use knx_rs_core::dpt::Dpt;
 use knx_rs_core::message::ApduType;
 
 use super::{
@@ -22,6 +24,30 @@ pub fn encode_group_value_write(data: &[u8]) -> Vec<u8> {
 pub fn encode_group_value_response(data: &[u8]) -> Vec<u8> {
     let [hi, lo] = apci_bytes(ApduType::GroupValueResponse);
     encode_group_value(hi, lo, data)
+}
+
+/// Encode a DPT-configured `GroupValueWrite` APDU payload.
+///
+/// A missing DPT preserves the historical raw-data inference used by
+/// [`encode_group_value_write`]. Configured DPTs select the wire form from
+/// their [`Dpt::wire_size`] metadata.
+pub(crate) fn encode_group_value_write_for_dpt(
+    dpt: Option<Dpt>,
+    data: &[u8],
+) -> Result<Vec<u8>, ApduEncodeError> {
+    encode_group_value_for_dpt(dpt, data, GroupValueService::Write)
+}
+
+/// Encode a DPT-configured `GroupValueResponse` APDU payload.
+///
+/// A missing DPT preserves the historical raw-data inference used by
+/// [`encode_group_value_response`]. Configured DPTs select the wire form from
+/// their [`Dpt::wire_size`] metadata.
+pub(crate) fn encode_group_value_response_for_dpt(
+    dpt: Option<Dpt>,
+    data: &[u8],
+) -> Result<Vec<u8>, ApduEncodeError> {
+    encode_group_value_for_dpt(dpt, data, GroupValueService::Response)
 }
 
 /// Encode a `GroupValueRead` APDU payload.
@@ -306,6 +332,32 @@ fn encode_group_value(tpci: u8, apci: u8, data: &[u8]) -> Vec<u8> {
     payload
 }
 
+#[derive(Clone, Copy)]
+enum GroupValueService {
+    Response,
+    Write,
+}
+
+fn encode_group_value_for_dpt(
+    dpt: Option<Dpt>,
+    data: &[u8],
+    service: GroupValueService,
+) -> Result<Vec<u8>, ApduEncodeError> {
+    let Some(dpt) = dpt else {
+        return Ok(match service {
+            GroupValueService::Response => encode_group_value_response(data),
+            GroupValueService::Write => encode_group_value_write(data),
+        });
+    };
+
+    let payload = GroupValuePayload::from_dpt_encoded(dpt, data)?;
+    let apdu = match service {
+        GroupValueService::Response => GroupValueApdu::Response(payload),
+        GroupValueService::Write => GroupValueApdu::Write(payload),
+    };
+    apdu.try_to_bytes(0)
+}
+
 /// Encode a `PropertyExtDescriptionResponse` APDU payload.
 ///
 /// Uses the shared extended property header for `object_type`/`object_instance`/`property_id`,
@@ -373,4 +425,33 @@ pub fn encode_raw_apdu(apdu: &knx_rs_core::apdu::Apdu) -> Vec<u8> {
     buf.push(lo);
     buf.extend_from_slice(&apdu.data);
     buf
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use knx_rs_core::dpt::{DPT_SCALING, DPT_SWITCH, DPT_VALUE_1_UCOUNT};
+
+    #[test]
+    fn raw_group_value_encoders_retain_legacy_inference() {
+        assert_eq!(encode_group_value_write(&[0x01]), &[0x00, 0x81]);
+        assert_eq!(encode_group_value_response(&[0x01]), &[0x00, 0x41]);
+    }
+
+    #[test]
+    fn dpt_aware_group_value_encoders_keep_complete_octets_separate() {
+        assert_eq!(
+            encode_group_value_write_for_dpt(Some(DPT_SCALING), &[0x2A]).unwrap(),
+            &[0x00, 0x80, 0x2A]
+        );
+        assert_eq!(
+            encode_group_value_response_for_dpt(Some(DPT_VALUE_1_UCOUNT), &[0x2A]).unwrap(),
+            &[0x00, 0x40, 0x2A]
+        );
+        assert_eq!(
+            encode_group_value_write_for_dpt(Some(DPT_SWITCH), &[0x01]).unwrap(),
+            &[0x00, 0x81]
+        );
+    }
 }
