@@ -21,6 +21,7 @@
 use alloc::vec::Vec;
 use core::fmt;
 
+use crate::dpt::{Dpt, DptWireSize};
 use crate::message::ApduType;
 
 /// Mask for the 10-bit APCI field carried in the two TPCI/APCI bytes.
@@ -50,6 +51,54 @@ pub enum GroupValuePayload<'a> {
     Inline(u8),
     /// One or more complete octets following the APCI bytes.
     Bytes(&'a [u8]),
+}
+
+impl<'a> GroupValuePayload<'a> {
+    /// Select the KNX group-value wire representation for DPT-encoded bytes.
+    ///
+    /// Values whose DPT has a sub-octet wire size are represented by
+    /// [`Self::Inline`]. Complete-octet and variable-size DPTs are represented
+    /// by [`Self::Bytes`], even when their numeric value fits in six bits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ApduEncodeError`] when `data` does not match the DPT's wire
+    /// metadata or when the DPT is not valid for runtime group communication.
+    pub fn from_dpt_encoded(dpt: Dpt, data: &'a [u8]) -> Result<Self, ApduEncodeError> {
+        // DPT 31 is metadata for functional blocks, not a runtime group value.
+        if dpt.main == 31 {
+            return Err(ApduEncodeError::UnsupportedGroupValueSize);
+        }
+
+        match dpt.wire_size() {
+            DptWireSize::Bits(bits @ 1..=6) => {
+                if data.len() != 1 {
+                    return Err(ApduEncodeError::PayloadLengthMismatch {
+                        expected: 1,
+                        actual: data.len(),
+                    });
+                }
+                let max = APCI_SHORT_DATA_MASK >> (6 - bits);
+                let value = data[0];
+                if value > max {
+                    return Err(ApduEncodeError::InlineValueOutOfRange { value, max });
+                }
+                Ok(Self::Inline(value))
+            }
+            DptWireSize::Bytes(expected) => {
+                let expected = usize::from(expected);
+                if data.len() != expected {
+                    return Err(ApduEncodeError::PayloadLengthMismatch {
+                        expected,
+                        actual: data.len(),
+                    });
+                }
+                Ok(Self::Bytes(data))
+            }
+            DptWireSize::VariableBytes => Ok(Self::Bytes(data)),
+            _ => Err(ApduEncodeError::UnsupportedGroupValueSize),
+        }
+    }
 }
 
 /// A group-value APDU with an explicit payload representation.
@@ -373,6 +422,7 @@ const fn match_apdu_type(bits: u16) -> Option<ApduType> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::dpt::{DPT_SCALING, DPT_SWITCH, DPT_VALUE_1_UCOUNT};
 
     #[test]
     fn parse_group_value_write_short() {
@@ -469,6 +519,44 @@ mod tests {
         assert_eq!(
             GroupValueApdu::Write(GroupValuePayload::Bytes(&[])).try_to_bytes(0x00),
             Err(ApduEncodeError::EmptyBytePayload)
+        );
+    }
+
+    #[test]
+    fn dpt_encoded_payload_uses_wire_metadata() {
+        assert_eq!(
+            GroupValuePayload::from_dpt_encoded(DPT_SWITCH, &[0x01]),
+            Ok(GroupValuePayload::Inline(0x01))
+        );
+        assert_eq!(
+            GroupValuePayload::from_dpt_encoded(DPT_SCALING, &[0x2A]),
+            Ok(GroupValuePayload::Bytes(&[0x2A]))
+        );
+        assert_eq!(
+            GroupValuePayload::from_dpt_encoded(DPT_VALUE_1_UCOUNT, &[0x2A]),
+            Ok(GroupValuePayload::Bytes(&[0x2A]))
+        );
+        assert_eq!(
+            GroupValuePayload::from_dpt_encoded(Dpt::new(9, 1), &[0x01]),
+            Err(ApduEncodeError::PayloadLengthMismatch {
+                expected: 2,
+                actual: 1,
+            })
+        );
+        assert_eq!(
+            GroupValuePayload::from_dpt_encoded(DPT_SWITCH, &[0x02]),
+            Err(ApduEncodeError::InlineValueOutOfRange {
+                value: 0x02,
+                max: 0x01,
+            })
+        );
+        assert_eq!(
+            GroupValuePayload::from_dpt_encoded(Dpt::new(31, 101), &[0x01]),
+            Err(ApduEncodeError::UnsupportedGroupValueSize)
+        );
+        assert_eq!(
+            GroupValuePayload::from_dpt_encoded(Dpt::new(999, 1), &[0x01]),
+            Err(ApduEncodeError::UnsupportedGroupValueSize)
         );
     }
 
