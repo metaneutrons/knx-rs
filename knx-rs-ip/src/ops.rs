@@ -35,9 +35,9 @@
 //! ```
 
 use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
-use knx_rs_core::apdu::{APCI_SHORT_DATA_MASK, ApduEncodeError, GroupValueApdu};
+use knx_rs_core::apdu::GroupValueApdu;
 use knx_rs_core::cemi::CemiFrame;
-use knx_rs_core::dpt::{self, Dpt, DptValue, DptWireSize};
+use knx_rs_core::dpt::{self, Dpt, DptValue};
 use knx_rs_core::message::MessageCode;
 use knx_rs_core::types::Priority;
 
@@ -184,45 +184,8 @@ fn build_dpt_group_frame(
     value: &DptValue,
 ) -> Result<CemiFrame> {
     let encoded = dpt::encode(dpt, value)?;
-    let payload = encoded_group_value_payload(dpt, &encoded)?;
+    let payload = GroupValuePayload::from_dpt_encoded(dpt, &encoded)?;
     build_group_value_frame(ga, service.with_payload(payload))
-}
-
-fn encoded_group_value_payload(
-    dpt: Dpt,
-    encoded: &[u8],
-) -> core::result::Result<GroupValuePayload<'_>, ApduEncodeError> {
-    if dpt.main == 31 {
-        return Err(ApduEncodeError::UnsupportedGroupValueSize);
-    }
-    match dpt.wire_size() {
-        DptWireSize::Bits(bits @ 1..=6) => {
-            if encoded.len() != 1 {
-                return Err(ApduEncodeError::PayloadLengthMismatch {
-                    expected: 1,
-                    actual: encoded.len(),
-                });
-            }
-            let max = APCI_SHORT_DATA_MASK >> (6 - bits);
-            let value = encoded[0];
-            if value > max {
-                return Err(ApduEncodeError::InlineValueOutOfRange { value, max });
-            }
-            Ok(GroupValuePayload::Inline(value))
-        }
-        DptWireSize::Bytes(expected) => {
-            let expected = usize::from(expected);
-            if encoded.len() != expected {
-                return Err(ApduEncodeError::PayloadLengthMismatch {
-                    expected,
-                    actual: encoded.len(),
-                });
-            }
-            Ok(GroupValuePayload::Bytes(encoded))
-        }
-        DptWireSize::VariableBytes => Ok(GroupValuePayload::Bytes(encoded)),
-        _ => Err(ApduEncodeError::UnsupportedGroupValueSize),
-    }
 }
 
 fn build_group_read(ga: GroupAddress) -> Result<CemiFrame> {
@@ -318,31 +281,5 @@ mod tests {
     fn group_read_has_no_payload_form_to_misconfigure() {
         let frame = build_group_read(TEST_GROUP).unwrap();
         assert_eq!(frame.payload(), &[0x00, 0x00]);
-    }
-
-    #[test]
-    fn encoded_dpt_payload_must_match_its_wire_metadata() {
-        assert_eq!(
-            encoded_group_value_payload(DPT_VALUE_TEMP, &[0x01]),
-            Err(ApduEncodeError::PayloadLengthMismatch {
-                expected: 2,
-                actual: 1,
-            })
-        );
-        assert_eq!(
-            encoded_group_value_payload(DPT_SWITCH, &[0x02]),
-            Err(ApduEncodeError::InlineValueOutOfRange {
-                value: 0x02,
-                max: 0x01,
-            })
-        );
-        assert_eq!(
-            encoded_group_value_payload(Dpt::new(31, 101), &[0x01]),
-            Err(ApduEncodeError::UnsupportedGroupValueSize)
-        );
-        assert_eq!(
-            encoded_group_value_payload(Dpt::new(999, 1), &[0x01]),
-            Err(ApduEncodeError::UnsupportedGroupValueSize)
-        );
     }
 }
