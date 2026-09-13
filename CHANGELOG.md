@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3](https://github.com/metaneutrons/knx-rs/compare/v0.9.2...v0.9.3) (2026-09-12)
+
+
+### Bug Fixes
+
+* **device:** encode group values from DPT wire size ([#74](https://github.com/metaneutrons/knx-rs/issues/74)) ([05e4fad](https://github.com/metaneutrons/knx-rs/commit/05e4fadef24593d895f2eb779d55776fc57482dd))
+
 ## [0.9.2](https://github.com/metaneutrons/knx-rs/compare/v0.9.1...v0.9.2) (2026-09-11)
 
 
