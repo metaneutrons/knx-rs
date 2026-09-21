@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.0](https://github.com/metaneutrons/knx-rs/compare/v0.9.2...v0.10.0) (2026-09-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ip:** remove inferred group-value methods ([#72](https://github.com/metaneutrons/knx-rs/issues/72))
+
+### Bug Fixes
+
+* **deps:** update rustls to 0.23.45 ([#80](https://github.com/metaneutrons/knx-rs/issues/80)) ([1d379f9](https://github.com/metaneutrons/knx-rs/commit/1d379f99f982b29baf322e86656aa5a66086ccad))
+* **device:** encode group values from DPT wire size ([#75](https://github.com/metaneutrons/knx-rs/issues/75)) ([7f7a6f7](https://github.com/metaneutrons/knx-rs/commit/7f7a6f70e14c87b56a071dc3ee0163b69914c74e))
+
+
+### Code Refactoring
+
+* **ip:** remove inferred group-value methods ([#72](https://github.com/metaneutrons/knx-rs/issues/72)) ([eeb931b](https://github.com/metaneutrons/knx-rs/commit/eeb931b3e05c6159ed634541ece3356a3f7f3eb1))
+
 ## [0.9.2](https://github.com/metaneutrons/knx-rs/compare/v0.9.1...v0.9.2) (2026-09-11)
 
 
