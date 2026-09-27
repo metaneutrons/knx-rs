@@ -45,6 +45,30 @@ use core::future::Future;
 use core::pin::Pin;
 
 use knx_rs_core::cemi::CemiFrame;
+use std::net::SocketAddr;
+
+/// A KNXnet/IP router report that routing frames were lost.
+///
+/// The count comes from the sending router. It is not a count of every lost
+/// KNX bus telegram or of events dropped by a local application subscriber.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoutingLostMessage {
+    /// UDP sender of the diagnostic.
+    pub source: SocketAddr,
+    /// Router device-state byte, retained without interpreting reserved bits.
+    pub device_state: u8,
+    /// Number of routing messages reported lost by this router.
+    pub lost_messages: u16,
+}
+
+/// A received cEMI frame or KNXnet/IP routing diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KnxReceiveEvent {
+    /// A cEMI telegram from a tunnel or router.
+    Frame(CemiFrame),
+    /// A router-reported lost-message diagnostic (service `0x0531`).
+    RoutingLostMessage(RoutingLostMessage),
+}
 
 /// Boxed `Send` future returned by KNX connection traits.
 pub type KnxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -64,6 +88,15 @@ pub trait KnxConnection: Send {
     ///
     /// Returns `None` if the connection is closed.
     fn recv(&mut self) -> KnxFuture<'_, Option<CemiFrame>>;
+
+    /// Receive the next frame or routing diagnostic.
+    ///
+    /// Non-routing implementations return only [`KnxReceiveEvent::Frame`].
+    /// The existing [`Self::recv`] method remains frame-only for callers that
+    /// do not consume diagnostics.
+    fn recv_event(&mut self) -> KnxFuture<'_, Option<KnxReceiveEvent>> {
+        Box::pin(async move { self.recv().await.map(KnxReceiveEvent::Frame) })
+    }
 
     /// Close the connection gracefully.
     fn close(&mut self) -> KnxFuture<'_, ()>;
@@ -91,6 +124,13 @@ impl KnxConnection for AnyConnection {
         match self {
             Self::Tunnel(c) => c.recv(),
             Self::Router(c) => c.recv(),
+        }
+    }
+
+    fn recv_event(&mut self) -> KnxFuture<'_, Option<KnxReceiveEvent>> {
+        match self {
+            Self::Tunnel(c) => c.recv_event(),
+            Self::Router(c) => c.recv_event(),
         }
     }
 

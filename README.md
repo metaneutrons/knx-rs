@@ -90,7 +90,10 @@ version requirement deliberately and apply the changes below.
 ### knx-rs-ip
 
 - **Tunnel connection** — connect handshake, 3× retry, heartbeat, auto-reconnect
-- **Router connection** — multicast routing with rate limiting (50 pkt/s per KNX spec)
+- **Router connection** — multicast routing with rate limiting (50 pkt/s per
+  KNX spec). `recv_event()` also exposes router-reported `RoutingLostMessage`
+  diagnostics with source, device state, and lost-routing-frame count;
+  `recv()` remains frame-only.
 - **Device server** — accept incoming tunnel connections from ETS on port 3671, simultaneous multicast routing and unicast tunneling
 - **Discovery** — search request/response for finding gateways on the local network
 - **Multiplexer** — fan out one connection into multiple independent handles

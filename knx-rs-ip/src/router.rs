@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 
 use crate::error::KnxIpError;
-use crate::{KnxConnection, KnxFuture};
+use crate::{KnxConnection, KnxFuture, KnxReceiveEvent, RoutingLostMessage};
 
 /// Default KNX multicast address.
 pub const KNX_MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 23, 12);
@@ -46,7 +46,7 @@ fn bind_reuse(addr: SocketAddr) -> std::io::Result<UdpSocket> {
 
 /// A KNXnet/IP router connection over multicast UDP.
 pub struct RouterConnection {
-    rx: mpsc::Receiver<CemiFrame>,
+    rx: mpsc::Receiver<KnxReceiveEvent>,
     tx_cmd: mpsc::Sender<RouterCmd>,
 }
 
@@ -170,13 +170,13 @@ impl RouterConnection {
     fn spawn(socket: UdpSocket, target: SocketAddr) -> Self {
         tracing::info!(%target, "KNXnet/IP router joined multicast");
 
-        let (cemi_tx, cemi_rx) = mpsc::channel(64);
+        let (event_tx, event_rx) = mpsc::channel(64);
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
 
-        tokio::spawn(router_task(socket, target, cemi_tx, cmd_rx));
+        tokio::spawn(router_task(socket, target, event_tx, cmd_rx));
 
         Self {
-            rx: cemi_rx,
+            rx: event_rx,
             tx_cmd: cmd_tx,
         }
     }
@@ -196,6 +196,18 @@ impl KnxConnection for RouterConnection {
     }
 
     fn recv(&mut self) -> KnxFuture<'_, Option<CemiFrame>> {
+        Box::pin(async move {
+            loop {
+                match self.rx.recv().await {
+                    Some(KnxReceiveEvent::Frame(frame)) => return Some(frame),
+                    Some(KnxReceiveEvent::RoutingLostMessage(_)) => {}
+                    None => return None,
+                }
+            }
+        })
+    }
+
+    fn recv_event(&mut self) -> KnxFuture<'_, Option<KnxReceiveEvent>> {
         Box::pin(async move { self.rx.recv().await })
     }
 
@@ -267,7 +279,7 @@ impl RateLimiter {
 async fn router_task(
     socket: UdpSocket,
     target: SocketAddr,
-    cemi_tx: mpsc::Sender<CemiFrame>,
+    event_tx: mpsc::Sender<KnxReceiveEvent>,
     mut cmd_rx: mpsc::Receiver<RouterCmd>,
 ) {
     let mut buf = [0u8; 1024];
@@ -276,14 +288,14 @@ async fn router_task(
     loop {
         tokio::select! {
             result = socket.recv_from(&mut buf) => {
-                let (n, _src) = match result {
+                let (n, source) = match result {
                     Ok(r) => r,
                     Err(e) => {
                         tracing::warn!(error = %e, "router recv error");
                         break;
                     }
                 };
-                handle_routing_indication(&buf[..n], &cemi_tx, &mut rate_limiter).await;
+                handle_routing_packet(&buf[..n], source, &event_tx, &mut rate_limiter).await;
             }
 
             cmd = cmd_rx.recv() => {
@@ -321,9 +333,10 @@ async fn rate_limited_send(
     Ok(())
 }
 
-async fn handle_routing_indication(
+async fn handle_routing_packet(
     data: &[u8],
-    cemi_tx: &mpsc::Sender<CemiFrame>,
+    source: SocketAddr,
+    event_tx: &mpsc::Sender<KnxReceiveEvent>,
     rate_limiter: &mut RateLimiter,
 ) {
     let frame = match KnxIpFrame::parse(data) {
@@ -337,7 +350,23 @@ async fn handle_routing_indication(
     match frame.service_type {
         ServiceType::RoutingIndication => {
             if let Ok(cemi) = CemiFrame::parse(&frame.body) {
-                let _ = cemi_tx.send(cemi).await;
+                let _ = event_tx.send(KnxReceiveEvent::Frame(cemi)).await;
+            }
+        }
+        ServiceType::RoutingLostMessage => {
+            // KNXnet/IP Routing 5.3: structure length (4), device state (1),
+            // and a big-endian two-byte lost-message count.
+            if frame.body.len() == 4 && frame.body[0] == 4 {
+                let report = RoutingLostMessage {
+                    source,
+                    device_state: frame.body[1],
+                    lost_messages: u16::from_be_bytes([frame.body[2], frame.body[3]]),
+                };
+                let _ = event_tx
+                    .send(KnxReceiveEvent::RoutingLostMessage(report))
+                    .await;
+            } else {
+                tracing::trace!("ignoring malformed RoutingLostMessage");
             }
         }
         ServiceType::RoutingBusy => {
@@ -361,6 +390,105 @@ async fn handle_routing_indication(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
+    use knx_rs_core::message::MessageCode;
+    use knx_rs_core::types::Priority;
+
+    const SOURCE: SocketAddr =
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 10), 3671));
+
+    #[tokio::test]
+    async fn reports_routing_loss_with_source_state_and_count() {
+        // KNXnet/IP Routing 6.2 reference packet: device state 0, five lost.
+        let packet = [0x06, 0x10, 0x05, 0x31, 0x00, 0x0a, 0x04, 0x00, 0x00, 0x05];
+        let (tx, mut rx) = mpsc::channel(2);
+        let mut limiter = RateLimiter::new(MAX_PACKETS_PER_SEC);
+
+        handle_routing_packet(&packet, SOURCE, &tx, &mut limiter).await;
+
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            KnxReceiveEvent::RoutingLostMessage(RoutingLostMessage {
+                source: SOURCE,
+                device_state: 0,
+                lost_messages: 5,
+            })
+        );
+
+        let wider_count = [0x06, 0x10, 0x05, 0x31, 0x00, 0x0a, 0x04, 0x03, 0x01, 0x02];
+        handle_routing_packet(&wider_count, SOURCE, &tx, &mut limiter).await;
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            KnxReceiveEvent::RoutingLostMessage(RoutingLostMessage {
+                source: SOURCE,
+                device_state: 3,
+                lost_messages: 258,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_malformed_routing_loss_without_emitting_an_event() {
+        let malformed = [
+            vec![0x06, 0x10, 0x05, 0x31, 0x00, 0x09, 0x04, 0x00, 0x05],
+            vec![0x06, 0x10, 0x05, 0x31, 0x00, 0x0a, 0x03, 0x00, 0x00, 0x05],
+            vec![0x06, 0x10, 0x05, 0x31, 0x00, 0x0b, 0x04, 0x00, 0x00, 0x05],
+        ];
+        let (tx, mut rx) = mpsc::channel(2);
+        let mut limiter = RateLimiter::new(MAX_PACKETS_PER_SEC);
+
+        for packet in malformed {
+            handle_routing_packet(&packet, SOURCE, &tx, &mut limiter).await;
+        }
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn frame_only_receive_skips_diagnostics_without_losing_the_next_frame() {
+        let (tx, rx) = mpsc::channel(2);
+        let (tx_cmd, _rx_cmd) = mpsc::channel(1);
+        let mut connection = RouterConnection { rx, tx_cmd };
+        let frame = CemiFrame::new_l_data(
+            MessageCode::LDataInd,
+            IndividualAddress::from_raw(0x1101),
+            DestinationAddress::Group(GroupAddress::from_raw(0x0801)),
+            Priority::Low,
+            &[0x00, 0x80],
+        );
+        tx.send(KnxReceiveEvent::RoutingLostMessage(RoutingLostMessage {
+            source: SOURCE,
+            device_state: 1,
+            lost_messages: 2,
+        }))
+        .await
+        .unwrap();
+        tx.send(KnxReceiveEvent::Frame(frame.clone()))
+            .await
+            .unwrap();
+
+        assert_eq!(connection.recv().await, Some(frame));
+    }
+
+    #[tokio::test]
+    async fn type_erased_receive_preserves_routing_diagnostics() {
+        let (tx, rx) = mpsc::channel(1);
+        let (tx_cmd, _rx_cmd) = mpsc::channel(1);
+        let mut connection = crate::AnyConnection::Router(RouterConnection { rx, tx_cmd });
+        let report = RoutingLostMessage {
+            source: SOURCE,
+            device_state: 2,
+            lost_messages: 7,
+        };
+        tx.send(KnxReceiveEvent::RoutingLostMessage(report))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            connection.recv_event().await,
+            Some(KnxReceiveEvent::RoutingLostMessage(report))
+        );
+    }
 
     #[test]
     fn rate_limiter_allows_within_limit() {
