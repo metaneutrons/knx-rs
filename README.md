@@ -324,7 +324,8 @@ All 34 main groups from the C++ reference are supported:
 | 13 | Signed 32-bit | 232 | RGB |
 | 14 | IEEE 754 float | 234 | Language code |
 | 15 | Access data | 235 | Active energy |
-| 16 | String (ASCII/Latin-1) | 238/239/251 | Scene config / Flagged scaling / RGBW |
+| 16 | String (ASCII/Latin-1) | 238 | Scene config |
+| 239 | Flagged scaling | 251 | RGBW |
 
 ## Testing
 
