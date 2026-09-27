@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/metaneutrons/knx-rs/compare/v0.10.0...v0.10.1) (2026-09-27)
+
+
+### Bug Fixes
+
+* expose router-reported routing losses ([c2b7525](https://github.com/metaneutrons/knx-rs/commit/c2b7525f37e13904b7e54b81ca9c818226ba2287))
+
 ## [0.10.0](https://github.com/metaneutrons/knx-rs/compare/v0.9.2...v0.10.0) (2026-09-21)
 
 
