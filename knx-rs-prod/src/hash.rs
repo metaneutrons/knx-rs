@@ -672,7 +672,7 @@ fn scan_for_inner_text(
 ) -> Result<i32, KnxprodError> {
     let mut depth: i32 = 0;
     loop {
-        match reader.read_event()? {
+        match reader.read_event().map_err(KnxprodError::xml)? {
             Event::Start(_) => depth += 1,
             Event::End(_) => depth -= 1,
             Event::Text(ref t) => {
@@ -725,7 +725,7 @@ fn collect_remaining_text(
     stream: &mut Vec<u8>,
 ) -> Result<i32, KnxprodError> {
     loop {
-        match reader.read_event()? {
+        match reader.read_event().map_err(KnxprodError::xml)? {
             Event::Text(ref t) => {
                 let raw = t.as_ref();
                 let u = quick_xml::escape::unescape(raw).unwrap_or_default();
@@ -805,7 +805,7 @@ fn read_children(
     // Track nesting depth so we only stop at our own EndElement, not at
     // deeply nested ones exposed by InnerText overshoot.
     loop {
-        let (e_ref, is_empty) = match reader.read_event()? {
+        let (e_ref, is_empty) = match reader.read_event().map_err(KnxprodError::xml)? {
             Event::Start(ref e) => (e.to_owned(), false),
             Event::Empty(ref e) => (e.to_owned(), true),
             Event::End(_) | Event::Eof => break,
@@ -964,7 +964,7 @@ fn serialize_app_program(
                 }
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(KnxprodError::Xml(e)),
+            Err(e) => return Err(KnxprodError::xml(e)),
             _ => {}
         }
     }

@@ -24,57 +24,32 @@ in the changelog. CI verifies every workspace crate against the MSRV.
 | [knx-rs-tp](knx-rs-tp/) | [![crates.io](https://img.shields.io/crates/v/knx-rs-tp.svg)](https://crates.io/crates/knx-rs-tp) | [![docs.rs](https://img.shields.io/docsrs/knx-rs-tp)](https://docs.rs/knx-rs-tp) | ✅ | TP-UART data link layer for embedded targets *(WIP)* |
 | [knx-rs-prod](knx-rs-prod/) | [![crates.io](https://img.shields.io/crates/v/knx-rs-prod.svg)](https://crates.io/crates/knx-rs-prod) | [![docs.rs](https://img.shields.io/docsrs/knx-rs-prod)](https://docs.rs/knx-rs-prod) | ❌ | `.knxprod` builder — registration hash, split, RSA signing (bring your own ETS key), and package |
 
-## ⚠️ Migrating from 0.2 to 0.3
+## ⚠️ Migrating from 0.10 to 0.11
 
-**0.3.0 contains breaking API changes.** Cargo treats each `0.x` minor as a breaking
-boundary, so a `"0.2"` dependency will *not* pick up `0.3` automatically — bump your
-version requirement deliberately and apply the changes below.
-
-### knx-rs-core
-
-- **`KnxIpError` → `KnxIpParseError`.** The frame-parse error was renamed to free the
-  name `KnxIpError` for the (unrelated) connection error in `knx-rs-ip`. A
-  `#[deprecated]` alias keeps the old name compiling, so existing code still builds
-  (with a warning) — migrate references, including variant paths, at your leisure.
-- **`Apdu::to_bytes` wire change (correctness):** a single group-value byte `> 0x3F`
-  (e.g. a DPT 5 value such as 200) now uses the long form instead of being masked to
-  6 bits and losing data. Golden byte-vector expectations for such values change;
-  decoding still round-trips both forms.
-
-### knx-rs-ip
-
-- **New `KnxIpError` variants** — `Frame`, `Cemi`, `Dpt`, `Multicast`, `InvalidConfig`.
-  Exhaustive `match`es must add arms (or a `_ =>`). Failures that previously surfaced
-  as `Protocol(String)` (multicast-join, non-multicast target, frame/DPT errors) now
-  use these typed variants, so string-matching on `Protocol` no longer catches them.
-- A `pub type Result<T> = core::result::Result<T, KnxIpError>` alias is now exported
-  from the crate root; existing `Result<_, KnxIpError>` signatures keep compiling.
-
-### knx-rs-tp *(WIP)*
-
-- **`TpFrame::from_cemi` now returns `Option<Self>`** (`None` when the APDU exceeds the
-  frame buffer). Handle the `None` case instead of binding the value directly.
-- **`TpIndication` gained an `Overrun` variant** — add a match arm; treat it as a
-  recoverable resync event.
-
-### knx-rs-device
-
-- **`DataProperty::access() -> u8` deprecated** (still available) — prefer
-  `access_level()` (typed `AccessLevel`), or `access_level() as u8` for the raw byte.
-- `SystemNetworkParameterRead.test_info` is now sliced from the correct offset (was
-  off by one), so consumers receive the corrected payload.
+**0.11.0 contains breaking API changes in `knx-rs-prod`.** Cargo treats each `0.x` minor
+as a breaking boundary, so a `"0.10"` dependency will *not* pick up `0.11` automatically —
+bump your version requirement deliberately and apply the changes below. The other crates
+have no API changes in this release. Upgrade all knx-rs crates together anyway:
+`knx-rs-ip`, `knx-rs-device` and `knx-rs-tp` use `knx-rs-core` types in their APIs, and
+mixing versions ends in type mismatches.
 
 ### knx-rs-prod
 
-- The pipeline modules (`archive`, `parse`, `sign`, `split`, `hash`, `error`) remain
-  public; `KnxprodError` and `KnxMetadata` are *additionally* re-exported at the crate
-  root, so both `knx_rs_prod::KnxprodError` and `knx_rs_prod::error::KnxprodError` work.
-- Two unused helpers were removed: `sign::signed_filename` and `parse::extract_metadata`
-  (the `&Path` wrapper). Use `parse::extract_metadata_from_str` or `generate_knxprod`
-  (which returns the `KnxMetadata`) instead.
-- **Malformed input now errors** instead of producing a wrong-but-valid hash:
-  unparseable numeric attributes and invalid base64 program images return
-  `KnxprodError::InvalidStructure`. Well-formed product XML is unaffected.
+- **zip 9.** Archives are written with zip 9; zip 8 carries RUSTSEC-2026-0367 to 0369.
+- **No third-party types in the API.** Errors from the XML parser and the ZIP library, and
+  keys from the RSA library, are wrapped in this crate's own types. A new major release of
+  one of those libraries is therefore no longer a breaking change here.
+  - `KnxprodError::Xml` holds an `XmlError`, `KnxprodError::Zip` an `ArchiveError`, both
+    re-exported at the crate root. Messages and source chains read as before; the
+    `quick_xml` and `zip` error types themselves are no longer reachable.
+  - `KnxprodError` no longer implements `From<quick_xml::Error>` or
+    `From<zip::result::ZipError>`. Code that used `?` on those errors in a function
+    returning `KnxprodError` has to convert them into its own error type.
+  - `SigningKey::public_key()` returns a `VerifyingKey`, and `verify_directory_signature`
+    takes a `&VerifyingKey` instead of an `&rsa::RsaPublicKey`.
+- **`KnxprodError` is `#[non_exhaustive]`.** Exhaustive `match`es need a `_ =>` arm.
+
+Changes for earlier versions are listed in the [changelog](CHANGELOG.md).
 
 ## Features
 
