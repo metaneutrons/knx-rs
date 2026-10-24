@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.11.0](https://github.com/metaneutrons/knx-rs/compare/v0.10.1...v0.11.0) (2026-10-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove the items deprecated since 0.3.1 ([#96](https://github.com/metaneutrons/knx-rs/issues/96))
+* **prod:** keep zip, quick-xml and rsa types out of the public API ([#95](https://github.com/metaneutrons/knx-rs/issues/95))
+* **prod:** move to zip 9 for RUSTSEC-2026-0367 to 0369; KnxprodError::Zip now wraps zip 9's ZipError
+
+### Bug Fixes
+
+* **deps:** update rustls, rustls-webpki, webpki-roots and tokio for RUSTSEC-2026-0346 to 0349, 0381, 0382 and 0386 ([c4be7ae](https://github.com/metaneutrons/knx-rs/commit/c4be7aefca57acdcd95bf940e7a30b38f799ef02))
+* **prod:** move to zip 9 for RUSTSEC-2026-0367 to 0369; KnxprodError::Zip now wraps zip 9's ZipError ([c4be7ae](https://github.com/metaneutrons/knx-rs/commit/c4be7aefca57acdcd95bf940e7a30b38f799ef02))
+
+
+### Code Refactoring
+
+* **prod:** keep zip, quick-xml and rsa types out of the public API ([#95](https://github.com/metaneutrons/knx-rs/issues/95)) ([b1a1ad8](https://github.com/metaneutrons/knx-rs/commit/b1a1ad896a190adf0dcdcdd99a9a6b7050cae7f1))
+* remove the items deprecated since 0.3.1 ([#96](https://github.com/metaneutrons/knx-rs/issues/96)) ([489de5e](https://github.com/metaneutrons/knx-rs/commit/489de5e4a77d9a3318c8e4d67b0bfc3fa1f53744))
+
 ## [0.10.1](https://github.com/metaneutrons/knx-rs/compare/v0.10.0...v0.10.1) (2026-09-27)
 
 
