@@ -26,12 +26,22 @@ in the changelog. CI verifies every workspace crate against the MSRV.
 
 ## ⚠️ Migrating from 0.10 to 0.11
 
-**0.11.0 contains breaking API changes in `knx-rs-prod`.** Cargo treats each `0.x` minor
-as a breaking boundary, so a `"0.10"` dependency will *not* pick up `0.11` automatically —
-bump your version requirement deliberately and apply the changes below. The other crates
-have no API changes in this release. Upgrade all knx-rs crates together anyway:
+**0.11.0 contains breaking API changes in `knx-rs-core`, `knx-rs-device` and
+`knx-rs-prod`.** Cargo treats each `0.x` minor as a breaking boundary, so a `"0.10"`
+dependency will *not* pick up `0.11` automatically — bump your version requirement
+deliberately and apply the changes below. Upgrade all knx-rs crates together:
 `knx-rs-ip`, `knx-rs-device` and `knx-rs-tp` use `knx-rs-core` types in their APIs, and
 mixing versions ends in type mismatches.
+
+### knx-rs-core
+
+- **`knxip::KnxIpError` is gone.** The alias was deprecated since 0.3.1; use
+  `KnxIpParseError`. The connection error `knx_rs_ip::KnxIpError` is not affected.
+
+### knx-rs-device
+
+- **`DataProperty::access()` is gone.** It was deprecated since 0.3.1; use
+  `access_level()` for the typed `AccessLevel`, or `access_level() as u8` for the raw byte.
 
 ### knx-rs-prod
 
