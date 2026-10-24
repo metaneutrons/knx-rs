@@ -26,7 +26,7 @@ pub fn create_knxprod(source_dir: &Path, output: &Path) -> Result<(), KnxprodErr
 
     add_directory_recursive(&mut zip, source_dir, source_dir, options)?;
 
-    zip.finish().map_err(KnxprodError::Zip)?;
+    zip.finish().map_err(KnxprodError::zip)?;
     Ok(())
 }
 
@@ -49,7 +49,7 @@ fn add_directory_recursive<W: Write + std::io::Seek>(
             add_directory_recursive(zip, base, &path, options)?;
         } else {
             let name = archive_entry_name(relative)?;
-            zip.start_file(name, options).map_err(KnxprodError::Zip)?;
+            zip.start_file(name, options).map_err(KnxprodError::zip)?;
             let content = fs::read(&path).map_err(|e| KnxprodError::io(&path, e))?;
             zip.write_all(&content)
                 .map_err(|e| KnxprodError::io(&path, e))?;

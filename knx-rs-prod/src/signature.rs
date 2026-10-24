@@ -26,11 +26,11 @@
 use std::path::{Path, PathBuf};
 
 use base64::prelude::{BASE64_STANDARD, Engine as _};
-use rsa::RsaPrivateKey;
 use rsa::pkcs1::DecodeRsaPrivateKey;
-use rsa::pkcs1v15::{Signature, SigningKey as RsaSigningKey, VerifyingKey};
+use rsa::pkcs1v15::{Signature, SigningKey as RsaSigningKey, VerifyingKey as RsaVerifyingKey};
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::signature::{SignatureEncoding, Signer, Verifier};
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use sha1::{Digest, Sha1};
 
 use crate::error::KnxprodError;
@@ -98,10 +98,17 @@ impl SigningKey {
 
     /// The corresponding public key (for [`verify_directory_signature`]).
     #[must_use]
-    pub fn public_key(&self) -> rsa::RsaPublicKey {
-        self.inner.to_public_key()
+    pub fn public_key(&self) -> VerifyingKey {
+        VerifyingKey(self.inner.to_public_key())
     }
 }
+
+/// The public half of a [`SigningKey`], for [`verify_directory_signature`].
+///
+/// The RSA library's key type stays out of this crate's API, so a new RSA release is
+/// not a breaking change here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyingKey(RsaPublicKey);
 
 /// Parse a .NET `<RSAKeyValue>` XML blob into an [`RsaPrivateKey`].
 #[allow(clippy::expect_used, clippy::many_single_char_names)]
@@ -235,7 +242,7 @@ pub fn write_signature_file(path: &Path, signature: &[u8]) -> Result<(), Knxprod
 pub fn verify_directory_signature(
     manu_dir: &Path,
     sig_file: &Path,
-    public_key: &rsa::RsaPublicKey,
+    public_key: &VerifyingKey,
 ) -> Result<bool, KnxprodError> {
     let raw = std::fs::read(sig_file).map_err(|e| KnxprodError::io(sig_file, e))?;
     // ETS `.signature` files are `BOM || base64(sig)`; require the BOM so a
@@ -250,7 +257,7 @@ pub fn verify_directory_signature(
         .map_err(|e| KnxprodError::Signing(format!("bad signature bytes: {e}")))?;
 
     let msg = canonical_message(manu_dir)?;
-    Ok(VerifyingKey::<Sha1>::new(public_key.clone())
+    Ok(RsaVerifyingKey::<Sha1>::new(public_key.0.clone())
         .verify(&msg, &sig)
         .is_ok())
 }
@@ -303,9 +310,8 @@ mod tests {
     #[test]
     fn sign_then_verify_roundtrips_and_writes_bom_base64() {
         let mut rng = rand::thread_rng();
-        let priv_key = RsaPrivateKey::new(&mut rng, 1024).unwrap();
         let key = SigningKey {
-            inner: priv_key.clone(),
+            inner: RsaPrivateKey::new(&mut rng, 1024).unwrap(),
         };
 
         let dir = tempfile::tempdir().unwrap();
@@ -325,7 +331,7 @@ mod tests {
         );
 
         // A pre-existing .signature must not perturb the signed message.
-        let ok = verify_directory_signature(&manu, &sig_path, &priv_key.to_public_key()).unwrap();
+        let ok = verify_directory_signature(&manu, &sig_path, &key.public_key()).unwrap();
         assert!(ok, "signature should verify against its own public key");
     }
 

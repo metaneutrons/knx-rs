@@ -71,7 +71,7 @@ pub mod signature;
 pub mod split;
 mod xml_scan;
 
-pub use error::KnxprodError;
+pub use error::{ArchiveError, KnxprodError, XmlError};
 pub use parse::KnxMetadata;
 
 use std::path::Path;

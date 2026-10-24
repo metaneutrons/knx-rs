@@ -84,7 +84,7 @@ fn extract_xml_attribute(
                 }
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(KnxprodError::Xml(e)),
+            Err(e) => return Err(KnxprodError::xml(e)),
             _ => {}
         }
         buf.clear();
