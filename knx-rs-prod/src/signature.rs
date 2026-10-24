@@ -366,7 +366,7 @@ mod tests {
         let mut real_sig = Vec::new();
         for i in 0..zip.len() {
             let mut e = zip.by_index(i).unwrap();
-            let name = e.name().to_string();
+            let name = e.name().unwrap().into_owned();
             if name == "M-0083.signature" {
                 e.read_to_end(&mut real_sig).unwrap();
             } else if let Some(rest) = name.strip_prefix("M-0083/") {
