@@ -3258,6 +3258,56 @@ mod tests {
         assert!(!bau.take_restart_pending());
     }
 
+    /// Open a management connection from 1.1.2 and drain the connect ACK.
+    fn open_connection(bau: &mut Bau) {
+        let connect = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x00, 0x80, 0x00,
+        ])
+        .unwrap();
+        bau.process_frame(&connect, 0);
+        while bau.next_outgoing_frame().is_some() {}
+    }
+
+    #[test]
+    fn master_reset_in_wire_form_is_executed_and_answered() {
+        // A_Restart, master reset: `03 81 <erase code> <channel>` as numbered
+        // data (sequence 0) on an open connection, exactly as ETS sends it. The
+        // second form repeats the low APCI octet in front of the erase code, as
+        // callers did to get past the old parser; it must keep working.
+        for repeated_apci in [false, true] {
+            for (erase_code, expect_ok) in
+                [(0x01_u8, true), (0x02, true), (0x07, true), (0x08, false)]
+            {
+                let mut bau = test_bau();
+                open_connection(&mut bau);
+                let mut frame = vec![0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x03, 0x43];
+                frame.push(0x81);
+                if repeated_apci {
+                    frame[8] = 0x04;
+                    frame.push(0x81);
+                }
+                frame.extend([erase_code, 0x00]);
+                bau.process_frame(&CemiFrame::parse(&frame).unwrap(), 0);
+
+                // The response carries the response bit in the low APCI octet
+                // (0xA1), so it does not decode to a known `ApduType`; look at
+                // the bytes.
+                let mut response = None;
+                while let Some(f) = bau.next_outgoing_frame() {
+                    let p = f.payload();
+                    if p.len() >= 5 && p[0] & 0x03 == 0x03 && p[1] == 0xA1 {
+                        response = Some(p.to_vec());
+                    }
+                }
+                let p = response.unwrap_or_else(|| {
+                    panic!("erase code {erase_code:#04x}: no A_Restart response was queued")
+                });
+                assert_eq!(p[2], if expect_ok { 0x00 } else { 0x02 });
+                assert_eq!(bau.take_restart_pending(), expect_ok);
+            }
+        }
+    }
+
     #[test]
     fn system_b_object_layout_ot9_at_index_3_app_program_at_index_4() {
         // System B interface-object order: 0=Device,1=Addr,2=Assoc,3=OT9,4=App.
