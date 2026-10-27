@@ -8,6 +8,7 @@
 //! (multicast) and tunneling (unicast) on the same port.
 
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use knx_rs_core::cemi::CemiFrame;
@@ -33,6 +34,10 @@ const TUNNEL_TIMEOUT_SECS: u64 = 120;
 /// heartbeats; must be well below [`TUNNEL_TIMEOUT_SECS`].
 const CLEANUP_INTERVAL_SECS: u64 = 30;
 
+/// How many events for the application the server holds back, beyond the
+/// channel's own capacity, when the application does not keep up.
+const MAX_EVENT_BACKLOG: usize = 1024;
+
 /// A tunnel client connection.
 struct TunnelClient {
     channel_id: u8,
@@ -50,6 +55,68 @@ pub enum ServerEvent {
     TunnelFrame(CemiFrame),
     /// A CEMI frame received from multicast routing.
     RoutingFrame(CemiFrame),
+}
+
+/// Events on their way to the application.
+///
+/// The server task must never wait for the application. If it did, an
+/// application that sends from the task that receives (a bus access unit that
+/// answers each event with frames) could deadlock with it: the server blocked
+/// on the full event channel, the application blocked on the full command
+/// channel. An event that does not fit into the channel is held back here, in
+/// order, and handed over as the application makes room.
+struct EventQueue {
+    tx: mpsc::Sender<ServerEvent>,
+    backlog: VecDeque<ServerEvent>,
+}
+
+impl EventQueue {
+    const fn new(tx: mpsc::Sender<ServerEvent>) -> Self {
+        Self {
+            tx,
+            backlog: VecDeque::new(),
+        }
+    }
+
+    /// Hand `event` to the application without waiting.
+    fn push(&mut self, event: ServerEvent) {
+        if self.backlog.is_empty() {
+            match self.tx.try_send(event) {
+                Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {}
+                Err(mpsc::error::TrySendError::Full(event)) => self.backlog.push_back(event),
+            }
+        } else if self.backlog.len() < MAX_EVENT_BACKLOG {
+            self.backlog.push_back(event);
+        } else {
+            tracing::warn!("application is too far behind, event dropped");
+        }
+    }
+
+    /// Whether the server may read another datagram. Beyond the backlog limit
+    /// datagrams stay in the socket: a client's request is then not
+    /// acknowledged and the client repeats it, instead of the event being lost.
+    fn has_room(&self) -> bool {
+        self.backlog.len() < MAX_EVENT_BACKLOG
+    }
+
+    fn has_backlog(&self) -> bool {
+        !self.backlog.is_empty()
+    }
+
+    /// Move the oldest held-back event into the channel once it has room.
+    ///
+    /// Cancel-safe: the event leaves the backlog only after a slot is reserved.
+    async fn deliver(&mut self) {
+        match self.tx.reserve().await {
+            Ok(permit) => {
+                if let Some(event) = self.backlog.pop_front() {
+                    permit.send(event);
+                }
+            }
+            // The application is gone; nobody is waiting for these.
+            Err(_) => self.backlog.clear(),
+        }
+    }
 }
 
 /// KNXnet/IP device server — handles both routing and tunneling.
@@ -145,6 +212,12 @@ impl DeviceServer {
     }
 
     /// Receive the next event (incoming frame from tunnel or multicast).
+    ///
+    /// The server never waits for the application: events are queued, in order,
+    /// and the application may send frames from the task that receives. If it
+    /// falls more than about a thousand events behind, the server stops reading
+    /// datagrams (clients then repeat their requests) and, for frames that were
+    /// already read, drops the excess and logs a warning.
     pub async fn recv(&mut self) -> Option<ServerEvent> {
         self.rx.recv().await
     }
@@ -197,6 +270,7 @@ async fn server_task(
     event_tx: mpsc::Sender<ServerEvent>,
     mut cmd_rx: mpsc::Receiver<ServerCmd>,
 ) {
+    let mut events = EventQueue::new(event_tx);
     let mut tunnels: Vec<TunnelClient> = Vec::new();
     let mut next_channel_id: u8 = 1;
     let mut buf = [0u8; RECV_BUF_SIZE];
@@ -205,7 +279,7 @@ async fn server_task(
 
     loop {
         tokio::select! {
-            result = socket.recv_from(&mut buf) => {
+            result = socket.recv_from(&mut buf), if events.has_room() => {
                 let (n, src) = match result {
                     Ok(r) => r,
                     Err(e) => {
@@ -214,7 +288,7 @@ async fn server_task(
                     }
                 };
                 handle_packet(
-                    &buf[..n], src, &socket, &event_tx,
+                    &buf[..n], src, &socket, &mut events,
                     &mut tunnels, &mut next_channel_id,
                 ).await;
             }
@@ -230,7 +304,7 @@ async fn server_task(
                         ).await;
                         for (data, src) in stashed {
                             handle_packet(
-                                &data, src, &socket, &event_tx,
+                                &data, src, &socket, &mut events,
                                 &mut tunnels, &mut next_channel_id,
                             ).await;
                         }
@@ -239,7 +313,7 @@ async fn server_task(
                         let stashed = send_to_tunnel_client(&socket, &mut tunnels, ch, &cemi).await;
                         for (data, src) in stashed {
                             handle_packet(
-                                &data, src, &socket, &event_tx,
+                                &data, src, &socket, &mut events,
                                 &mut tunnels, &mut next_channel_id,
                             ).await;
                         }
@@ -247,6 +321,8 @@ async fn server_task(
                     Some(ServerCmd::Stop) | None => break,
                 }
             }
+
+            () = events.deliver(), if events.has_backlog() => {}
 
             _ = cleanup.tick() => {
                 cleanup_stale_tunnels(&mut tunnels);
@@ -261,7 +337,7 @@ async fn handle_packet(
     data: &[u8],
     src: SocketAddr,
     socket: &UdpSocket,
-    event_tx: &mpsc::Sender<ServerEvent>,
+    events: &mut EventQueue,
     tunnels: &mut Vec<TunnelClient>,
     next_channel_id: &mut u8,
 ) {
@@ -272,7 +348,7 @@ async fn handle_packet(
     match frame.service_type {
         ServiceType::RoutingIndication => {
             if let Ok(cemi) = CemiFrame::parse(&frame.body) {
-                let _ = event_tx.send(ServerEvent::RoutingFrame(cemi)).await;
+                events.push(ServerEvent::RoutingFrame(cemi));
             }
         }
         ServiceType::ConnectRequest => {
@@ -285,7 +361,7 @@ async fn handle_packet(
             handle_disconnect(socket, src, &frame, tunnels).await;
         }
         ServiceType::TunnelingRequest => {
-            handle_tunneling_request(socket, src, &frame, tunnels, event_tx).await;
+            handle_tunneling_request(socket, src, &frame, tunnels, events).await;
         }
         ServiceType::TunnelingAck => {} // client ack, nothing to do
         ServiceType::SearchRequest => {
@@ -496,7 +572,7 @@ async fn handle_tunneling_request(
     src: SocketAddr,
     frame: &KnxIpFrame,
     tunnels: &mut [TunnelClient],
-    event_tx: &mpsc::Sender<ServerEvent>,
+    events: &mut EventQueue,
 ) {
     let Some(ch) = ConnectionHeader::parse(&frame.body) else {
         return;
@@ -546,7 +622,7 @@ async fn handle_tunneling_request(
     // Parse CEMI
     let cemi_data = &frame.body[ConnectionHeader::LEN as usize..];
     if let Ok(cemi) = CemiFrame::parse(cemi_data) {
-        let _ = event_tx.send(ServerEvent::TunnelFrame(cemi)).await;
+        events.push(ServerEvent::TunnelFrame(cemi));
     }
 }
 
@@ -768,4 +844,82 @@ fn cleanup_stale_tunnels(tunnels: &mut Vec<TunnelClient>) {
         }
         alive
     });
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
+    use knx_rs_core::types::Priority;
+
+    fn event(ga: u16) -> ServerEvent {
+        ServerEvent::TunnelFrame(CemiFrame::new_l_data(
+            MessageCode::LDataReq,
+            IndividualAddress::from_raw(0x1102),
+            DestinationAddress::Group(GroupAddress::from_raw(ga)),
+            Priority::Low,
+            &[0x00, 0x81],
+        ))
+    }
+
+    fn ga(event: &ServerEvent) -> u16 {
+        match event {
+            ServerEvent::TunnelFrame(f) | ServerEvent::RoutingFrame(f) => {
+                f.destination_address_raw()
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn event_queue_holds_back_what_does_not_fit_and_keeps_the_order() {
+        let (tx, mut rx) = mpsc::channel(2);
+        let mut queue = EventQueue::new(tx);
+        for i in 0..5 {
+            queue.push(event(i)); // two fit, three are held back
+        }
+        assert_eq!(queue.backlog.len(), 3);
+
+        let mut seen = Vec::new();
+        while seen.len() < 5 {
+            seen.push(ga(&rx.recv().await.unwrap()));
+            if queue.has_backlog() {
+                queue.deliver().await;
+            }
+        }
+        assert_eq!(seen, [0, 1, 2, 3, 4]);
+        assert!(!queue.has_backlog());
+    }
+
+    #[tokio::test]
+    async fn event_queue_stops_reading_and_then_drops_beyond_its_limit() {
+        let (tx, _rx) = mpsc::channel(1);
+        let mut queue = EventQueue::new(tx);
+        for i in 0..=u16::try_from(MAX_EVENT_BACKLOG).unwrap() {
+            queue.push(event(i));
+        }
+        // One event is in the channel, the backlog is at its limit.
+        assert_eq!(queue.backlog.len(), MAX_EVENT_BACKLOG);
+        assert!(!queue.has_room(), "the server must stop reading datagrams");
+        queue.push(event(9999));
+        assert_eq!(
+            queue.backlog.len(),
+            MAX_EVENT_BACKLOG,
+            "the excess is dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_queue_discards_its_backlog_when_the_application_is_gone() {
+        let (tx, rx) = mpsc::channel(1);
+        let mut queue = EventQueue::new(tx);
+        queue.push(event(1));
+        queue.push(event(2));
+        assert!(queue.has_backlog());
+        drop(rx);
+        queue.deliver().await;
+        assert!(!queue.has_backlog());
+        queue.push(event(3)); // must not panic or grow
+        assert!(!queue.has_backlog());
+    }
 }
