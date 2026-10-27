@@ -152,6 +152,14 @@ pub struct Bau {
     /// Set when an `A_Restart` requests a device restart; the host consumes it via
     /// [`take_restart_pending`](Self::take_restart_pending) to persist and re-init.
     restart_pending: bool,
+    /// The last time handed to [`process_frame`](Self::process_frame) or
+    /// [`poll`](Self::poll), for the transport layer's timers.
+    now_ms: u64,
+    /// The peer of the transport connection whose request is being served. Its
+    /// answers go out on the connection, as numbered data (the C++ reference:
+    /// `ApplicationLayer::individualSend` sends through `dataConnectedRequest`
+    /// when the destination is the connected address).
+    answering_connection: Option<IndividualAddress>,
 }
 
 /// The destination address type a connectionless application service must be
@@ -224,6 +232,8 @@ impl Bau {
             memory_area: Vec::new(),
             outbox: VecDeque::new(),
             restart_pending: false,
+            now_ms: 0,
+            answering_connection: None,
         };
         bau.install_io_list();
         bau
@@ -396,6 +406,7 @@ impl Bau {
     /// `now_ms` is the current monotonic time in milliseconds, used for
     /// transport layer timeouts and retry logic.
     pub fn process_frame(&mut self, frame: &CemiFrame, now_ms: u64) {
+        self.now_ms = now_ms;
         // An L_Data.con is the local confirmation of a frame WE sent, not an
         // incoming service. Route it to the transmit-confirmation path and never
         // fall through to indication dispatch — otherwise the device would parse
@@ -810,6 +821,7 @@ impl Bau {
     ///
     /// `now_ms` is the current monotonic time in milliseconds.
     pub fn poll(&mut self, now_ms: u64) {
+        self.now_ms = now_ms;
         // Transport layer timeouts and buffered request retry
         self.transport.poll(now_ms);
         self.drain_transport_actions();
@@ -995,7 +1007,9 @@ impl Bau {
         let dst = DestinationAddress::Individual(self.individual_address());
         let dummy_frame =
             CemiFrame::new_l_data(MessageCode::LDataInd, source, dst, Priority::System, &[]);
+        self.answering_connection = Some(source);
         self.dispatch_indication(&dummy_frame, source, indication);
+        self.answering_connection = None;
     }
 
     /// Set the memory area (for `MemoryRead`/`MemoryWrite` from ETS).
@@ -1798,6 +1812,14 @@ impl Bau {
         priority: Priority,
         payload: &[u8],
     ) {
+        if self.answering_connection == Some(destination) {
+            // The request came over a connection: answer on it. The transport
+            // layer numbers the frame, waits for the acknowledgement and repeats
+            // it; `drain_transport_actions` turns its action into the frame.
+            self.transport
+                .data_connected_request(priority, payload.to_vec(), self.now_ms);
+            return;
+        }
         let src = self.individual_address();
         let dst = DestinationAddress::Individual(destination);
         self.outbox.push_back(CemiFrame::new_l_data(
@@ -2348,6 +2370,48 @@ mod tests {
         let p = response.expect("a connected A_Memory_Response");
         assert_eq!(p[1] & 0x0F, 4, "number of octets");
         assert_eq!(&p[2..], &[0x00, 0x10, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_connected_request_is_answered_on_the_connection() {
+        // ETS asks over a transport connection; the answer has to come back as
+        // numbered data on that connection (and be repeated until acknowledged),
+        // not as a connectionless frame the connection never delivers.
+        let mut bau = test_bau();
+        open_connection(&mut bau);
+
+        // Numbered A_DeviceDescriptor_Read (type 0), sequence 0, at t = 100 ms.
+        let request = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x01, 0x43, 0x00,
+        ])
+        .unwrap();
+        bau.process_frame(&request, 100);
+
+        let mut answers = Vec::new();
+        while let Some(f) = bau.next_outgoing_frame() {
+            answers.push(f.payload().to_vec());
+        }
+        // The transport layer acknowledges the request (T_ACK, sequence 0) ...
+        assert!(
+            answers.contains(&vec![0xC0, 0x00]),
+            "T_ACK in {answers:02x?}"
+        );
+        // ... and the descriptor goes out as numbered data, sequence 0.
+        let numbered = |p: &&Vec<u8>| p[0] & 0xC0 == 0x40;
+        let data: Vec<_> = answers.iter().filter(numbered).collect();
+        assert_eq!(data.len(), 1, "numbered answers in {answers:02x?}");
+        assert_eq!(*data[0], vec![0x43, 0x40, 0x57, 0xB0]);
+
+        // Nobody acknowledges it: the transport layer repeats it.
+        bau.poll(100 + 4_000);
+        let mut again = Vec::new();
+        while let Some(f) = bau.next_outgoing_frame() {
+            again.push(f.payload().to_vec());
+        }
+        assert!(
+            again.contains(&vec![0x43, 0x40, 0x57, 0xB0]),
+            "repetition in {again:02x?}"
+        );
     }
 
     #[test]
