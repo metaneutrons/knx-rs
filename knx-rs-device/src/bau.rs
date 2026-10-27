@@ -1227,10 +1227,17 @@ impl Bau {
     }
 
     fn handle_memory_read(&mut self, source: IndividualAddress, count: u8, address: u16) {
-        // Always send response — empty data on out-of-bounds (C++ ref behavior)
-        let data = self
-            .mem_slice(address as usize, count as usize)
-            .map_or_else(Vec::new, <[u8]>::to_vec);
+        // Always send response — empty data on out-of-bounds (C++ ref behavior).
+        // The request's count has 6 bits but a response can report at most 15
+        // octets, so a longer read is peer-supplied nonsense and is answered
+        // like an unreadable range instead of with a response whose count no
+        // longer matches its data.
+        let data = if usize::from(count) > application_layer::MEMORY_RESPONSE_MAX_LEN {
+            Vec::new()
+        } else {
+            self.mem_slice(address as usize, count as usize)
+                .map_or_else(Vec::new, <[u8]>::to_vec)
+        };
         self.queue_memory_response(source, address, &data);
     }
 
@@ -2268,6 +2275,38 @@ mod tests {
         let payload = resp.payload();
         assert_eq!(payload[1] & 0x0F, 0); // count nibble = 0
         assert_eq!(payload.len(), 4); // no data bytes appended
+    }
+
+    #[test]
+    fn memory_read_count_beyond_the_response_field_is_answered_not_panicked() {
+        const ETS: u16 = 0xFFB1;
+        const DEV: u16 = 0x1101;
+        // The A_Memory_Read count is 6 bits wide (up to 63), but the response
+        // carries the number of octets in a 4-bit field (at most 15). The count
+        // is peer-controlled, so a longer read must not trip an assertion; it is
+        // answered like an unreadable range (number 0, no data).
+        for count in [15_u8, 16, 17, 63] {
+            let mut bau = test_bau();
+            bau.handle_memory_write(0x0000, &[0xA5; 80]);
+
+            // A_Memory_Read (APCI 0x200 | count) at address 0, connectionless.
+            let apdu = [0x02, count, 0x00, 0x00];
+            let frame = CemiFrame::parse(&ind_frame(ETS, DEV, &apdu)).unwrap();
+            bau.process_frame(&frame, 0);
+
+            let p = bau
+                .next_outgoing_frame()
+                .unwrap_or_else(|| panic!("count {count}: no memory response"))
+                .payload()
+                .to_vec();
+            if count <= 15 {
+                assert_eq!(usize::from(p[1] & 0x0F), usize::from(count));
+                assert_eq!(p.len(), 4 + usize::from(count));
+            } else {
+                assert_eq!(p[1] & 0x0F, 0, "count {count}: number field");
+                assert_eq!(p.len(), 4, "count {count}: no data octets");
+            }
+        }
     }
 
     #[test]

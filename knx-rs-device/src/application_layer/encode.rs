@@ -10,7 +10,8 @@ use knx_rs_core::dpt::Dpt;
 use knx_rs_core::message::ApduType;
 
 use super::{
-    DESCRIPTOR_TYPE_UNSUPPORTED, MASK_4BIT, MASK_6BIT, MASK_12BIT, WRITE_ENABLE_FLAG, apci_bytes,
+    DESCRIPTOR_TYPE_UNSUPPORTED, MASK_4BIT, MASK_6BIT, MASK_12BIT, MEMORY_RESPONSE_MAX_LEN,
+    WRITE_ENABLE_FLAG, apci_bytes,
 };
 use crate::property::PropertyDescription;
 
@@ -100,8 +101,12 @@ pub fn encode_property_response(
 }
 
 /// Encode a `MemoryResponse` APDU payload.
+///
+/// The number of octets is a 4-bit field, so at most 15 octets of `data` are
+/// carried; anything beyond is left out rather than described by a truncated
+/// count.
 pub fn encode_memory_response(address: u16, data: &[u8]) -> Vec<u8> {
-    debug_assert!(data.len() <= 15, "MemoryResponse data must be <= 15 bytes");
+    let data = &data[..data.len().min(MEMORY_RESPONSE_MAX_LEN)];
     let [hi, lo] = apci_bytes(ApduType::MemoryResponse);
     let len_nibble = u8::try_from(data.len()).unwrap_or(MASK_4BIT) & MASK_4BIT;
     let mut payload = Vec::with_capacity(5 + data.len());
@@ -432,6 +437,17 @@ pub fn encode_raw_apdu(apdu: &knx_rs_core::apdu::Apdu) -> Vec<u8> {
 mod tests {
     use super::*;
     use knx_rs_core::dpt::{DPT_SCALING, DPT_SWITCH, DPT_VALUE_1_UCOUNT};
+
+    #[test]
+    fn memory_response_carries_at_most_fifteen_octets() {
+        let data = [0xA5; 40];
+        for len in [0usize, 1, 15, 16, 40] {
+            let payload = encode_memory_response(0x0010, &data[..len]);
+            let carried = len.min(15);
+            assert_eq!(usize::from(payload[1] & 0x0F), carried, "len {len}: count");
+            assert_eq!(payload.len(), 4 + carried, "len {len}: octets");
+        }
+    }
 
     #[test]
     fn raw_group_value_encoders_retain_legacy_inference() {
