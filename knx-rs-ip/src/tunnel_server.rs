@@ -155,6 +155,10 @@ impl DeviceServer {
     /// (0x11), which is what a bus access unit queues, is sent with message
     /// code 0x29. Other message codes are sent as they are.
     ///
+    /// Each tunnel client has to acknowledge the frame: it is sent up to three
+    /// times, one second apart, and a client that never acknowledges is
+    /// disconnected (and sent a `DISCONNECT_REQUEST` on a best-effort basis).
+    ///
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the server is closed.
@@ -562,7 +566,7 @@ async fn send_tunneling_ack(
 async fn send_to_all(
     socket: &UdpSocket,
     multicast: Option<&SocketAddr>,
-    tunnels: &mut [TunnelClient],
+    tunnels: &mut Vec<TunnelClient>,
     cemi: &CemiFrame,
 ) -> Vec<(Vec<u8>, SocketAddr)> {
     let cemi = as_indication(cemi);
@@ -577,8 +581,16 @@ async fn send_to_all(
 
     // Send as tunneling indication to all tunnel clients
     let mut stashed = Vec::new();
+    let mut lost = Vec::new();
     for tunnel in tunnels.iter_mut() {
-        stashed.extend(send_tunneling_to(socket, tunnel, &cemi).await);
+        let delivery = send_tunneling_to(socket, tunnel, &cemi).await;
+        stashed.extend(delivery.stashed);
+        if !delivery.acked {
+            lost.push(tunnel.channel_id);
+        }
+    }
+    for channel_id in lost {
+        drop_lost_tunnel(socket, tunnels, channel_id).await;
     }
     stashed
 }
@@ -606,32 +618,61 @@ fn as_indication(cemi: &CemiFrame) -> Cow<'_, [u8]> {
 
 async fn send_to_tunnel_client(
     socket: &UdpSocket,
-    tunnels: &mut [TunnelClient],
+    tunnels: &mut Vec<TunnelClient>,
     channel_id: u8,
     cemi: &CemiFrame,
 ) -> Vec<(Vec<u8>, SocketAddr)> {
-    let tunnel = tunnels.iter_mut().find(|t| t.channel_id == channel_id);
-    if let Some(tunnel) = tunnel {
-        send_tunneling_to(socket, tunnel, &as_indication(cemi)).await
-    } else {
-        Vec::new()
+    let Some(tunnel) = tunnels.iter_mut().find(|t| t.channel_id == channel_id) else {
+        return Vec::new();
+    };
+    let delivery = send_tunneling_to(socket, tunnel, &as_indication(cemi)).await;
+    if !delivery.acked {
+        drop_lost_tunnel(socket, tunnels, channel_id).await;
+    }
+    delivery.stashed
+}
+
+/// Forget a tunnel client whose acknowledgements stayed away and tell it, best
+/// effort, so that a client that is merely cut off knows to reconnect.
+async fn drop_lost_tunnel(socket: &UdpSocket, tunnels: &mut Vec<TunnelClient>, channel_id: u8) {
+    let Some(position) = tunnels.iter().position(|t| t.channel_id == channel_id) else {
+        return;
+    };
+    let tunnel = tunnels.remove(position);
+    tracing::warn!(
+        channel_id,
+        client = %tunnel.ctrl_addr,
+        "tunnel client dropped: no acknowledgement after {MAX_RETRIES} attempts"
+    );
+    let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
+    let request = KnxIpFrame::disconnect_request(channel_id, Hpai::nat_udp(port));
+    if let Some(bytes) = serialize_frame(&request) {
+        let _ = socket.send_to(&bytes, tunnel.ctrl_addr).await;
     }
 }
 
+/// Outcome of [`send_tunneling_to`].
+struct Delivery {
+    /// Non-ack packets received during the ack wait, for the caller to
+    /// re-process: the server shares a single UDP socket for all tunnels and
+    /// routing.
+    stashed: Vec<(Vec<u8>, SocketAddr)>,
+    /// Whether the client acknowledged the frame. `false` after
+    /// [`MAX_RETRIES`] attempts without an ack: the connection is lost.
+    acked: bool,
+}
+
 /// Send a tunneling request to a client and wait for ack.
-///
-/// Returns any non-ack packets received during the ack wait so the caller
-/// can re-process them. This is necessary because the server shares a single
-/// UDP socket for all tunnels and routing.
-async fn send_tunneling_to(
-    socket: &UdpSocket,
-    tunnel: &mut TunnelClient,
-    cemi: &[u8],
-) -> Vec<(Vec<u8>, SocketAddr)> {
+async fn send_tunneling_to(socket: &UdpSocket, tunnel: &mut TunnelClient, cemi: &[u8]) -> Delivery {
     let seq = tunnel.send_seq;
     let frame = KnxIpFrame::tunneling_request(tunnel.channel_id, seq, cemi);
     let Some(frame_bytes) = serialize_frame(&frame) else {
-        return Vec::new();
+        // Cannot happen for a cEMI frame that came out of a CemiFrame; the
+        // client is not at fault.
+        return Delivery {
+            stashed: Vec::new(),
+            acked: true,
+        };
     };
     let mut stashed: Vec<(Vec<u8>, SocketAddr)> = Vec::new();
 
@@ -653,7 +694,10 @@ async fn send_tunneling_to(
         {
             Ok(()) => {
                 tunnel.send_seq = seq.wrapping_add(1);
-                return stashed;
+                return Delivery {
+                    stashed,
+                    acked: true,
+                };
             }
             Err(()) => {
                 tracing::debug!(
@@ -665,11 +709,14 @@ async fn send_tunneling_to(
         }
     }
 
-    tracing::warn!(
+    tracing::debug!(
         channel = tunnel.channel_id,
-        "no ack after {MAX_RETRIES} retries"
+        "no ack after {MAX_RETRIES} attempts"
     );
-    stashed
+    Delivery {
+        stashed,
+        acked: false,
+    }
 }
 
 /// Wait for a `TunnelingAck` matching the given channel and sequence.

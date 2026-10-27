@@ -322,3 +322,45 @@ async fn knxd_forwards_what_a_bus_access_unit_answers() {
     eprintln!("--- observer wire trace\n{}", relay.trace_text());
     eprintln!("--- knxd log\n{}", knxd.logs());
 }
+
+#[tokio::test]
+async fn device_server_drops_a_frozen_knxd_and_takes_it_back() {
+    let Some(mut rig) = Rig::start(30).await else {
+        return;
+    };
+
+    // Freeze knxd: its socket collects datagrams but nothing is acknowledged,
+    // like the connection of a client that has hung or lost its network.
+    rig.knxd.pause();
+    rig.server.send_frame(probe()).await.unwrap();
+    // Three attempts, one second apart, then the server gives up on the tunnel.
+    tokio::time::sleep(Duration::from_millis(3600)).await;
+    rig.knxd.unpause();
+
+    // knxd now reads the repetitions and the server's DISCONNECT_REQUEST, and
+    // its retry filter connects again. The server must take it back: once knxd
+    // has connected a second time, a probe reaches the observer.
+    let started = Instant::now();
+    loop {
+        let reconnected = rig.knxd.logs().matches("Send(020)").count() >= 2;
+        rig.server.send_frame(probe()).await.unwrap();
+        let seen = timeout(Duration::from_millis(400), async {
+            loop {
+                let frame = rig.observer.recv().await?;
+                if frame.destination_address_raw() == PROBE_GA {
+                    return Some(frame);
+                }
+            }
+        })
+        .await;
+        if reconnected && matches!(seen, Ok(Some(_))) {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "knxd did not link to the device server again; knxd log:\n{}",
+            rig.knxd.logs()
+        );
+    }
+    eprintln!("--- knxd log\n{}", rig.knxd.logs());
+}
