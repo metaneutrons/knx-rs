@@ -18,7 +18,7 @@ use knx_rs_core::knxip::{
 };
 use knx_rs_core::message::MessageCode;
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::error::KnxIpError;
 use crate::router::{KNX_MULTICAST_ADDR, KNX_PORT};
@@ -124,15 +124,42 @@ struct ServerState {
     tunnels: Vec<TunnelClient>,
     next_channel_id: u8,
     events: EventQueue,
+    /// Turns `true` when the server is to stop. Its sender is owned by the
+    /// [`DeviceServer`], so dropping the server stops the task, too.
+    stop: watch::Receiver<bool>,
+}
+
+impl ServerState {
+    /// Whether the server was asked to stop, or its handle is gone.
+    fn stopping(&self) -> bool {
+        *self.stop.borrow() || self.stop.has_changed().is_err()
+    }
+}
+
+/// Resolves when the server is to stop. Cancel-safe.
+async fn stop_requested(stop: &mut watch::Receiver<bool>) {
+    // Err means the sender is gone, which is a stop request as well.
+    let _ = stop.wait_for(|stop| *stop).await;
 }
 
 /// KNXnet/IP device server — handles both routing and tunneling.
 ///
 /// This is what makes a device programmable by ETS.
+///
+/// # Stopping
+///
+/// [`DeviceServer::shutdown`] stops the server and returns once its socket is
+/// released, so the address can be bound again at once. [`DeviceServer::stop`]
+/// and dropping the server request the same, and take effect as soon as the
+/// server task next runs (also while it waits for a client's acknowledgement),
+/// not after the queued frames have been sent. In all cases the tunnel clients
+/// are sent a `DISCONNECT_REQUEST` on a best-effort basis.
 pub struct DeviceServer {
     rx: mpsc::Receiver<ServerEvent>,
     tx_cmd: mpsc::Sender<ServerCmd>,
     local_addr: SocketAddr,
+    stop: watch::Sender<bool>,
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 
 enum ServerCmd {
@@ -140,8 +167,6 @@ enum ServerCmd {
     SendFrame(CemiFrame),
     /// Send a CEMI frame to a specific tunnel client (response).
     SendToTunnel(u8, CemiFrame),
-    /// Stop the server.
-    Stop,
 }
 
 impl DeviceServer {
@@ -169,21 +194,12 @@ impl DeviceServer {
 
         tracing::info!("KNXnet/IP device server started on port {KNX_PORT}");
 
-        let (event_tx, event_rx) = mpsc::channel(64);
-        let (cmd_tx, cmd_rx) = mpsc::channel(16);
-
         let multicast_target = Some(SocketAddr::V4(SocketAddrV4::new(
             KNX_MULTICAST_ADDR,
             KNX_PORT,
         )));
 
-        tokio::spawn(server_task(socket, multicast_target, event_tx, cmd_rx));
-
-        Ok(Self {
-            rx: event_rx,
-            tx_cmd: cmd_tx,
-            local_addr: bound_addr,
-        })
+        Ok(Self::spawn(socket, multicast_target, bound_addr))
     }
 
     /// Start the device server on a specific unicast address.
@@ -201,16 +217,33 @@ impl DeviceServer {
 
         tracing::info!(%local_addr, "KNXnet/IP device server started");
 
+        Ok(Self::spawn(socket, None, local_addr))
+    }
+
+    fn spawn(
+        socket: UdpSocket,
+        multicast_target: Option<SocketAddr>,
+        local_addr: SocketAddr,
+    ) -> Self {
         let (event_tx, event_rx) = mpsc::channel(64);
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
+        let (stop_tx, stop_rx) = watch::channel(false);
 
-        tokio::spawn(server_task(socket, None, event_tx, cmd_rx));
+        let task = tokio::spawn(server_task(
+            socket,
+            multicast_target,
+            event_tx,
+            cmd_rx,
+            stop_rx,
+        ));
 
-        Ok(Self {
+        Self {
             rx: event_rx,
             tx_cmd: cmd_tx,
             local_addr,
-        })
+            stop: stop_tx,
+            task: Some(task),
+        }
     }
 
     /// Local UDP address the server is bound to.
@@ -263,9 +296,28 @@ impl DeviceServer {
             .map_err(|_| KnxIpError::Closed)
     }
 
-    /// Stop the server.
+    /// Ask the server to stop.
+    ///
+    /// Returns at once; the server task ends as soon as it runs next, which
+    /// is not necessarily before this returns. Use [`DeviceServer::shutdown`]
+    /// to wait until the socket is released.
+    #[expect(
+        clippy::unused_async,
+        reason = "async since 0.9; callers await it, removing that would break them"
+    )]
     pub async fn stop(&self) {
-        let _ = self.tx_cmd.send(ServerCmd::Stop).await;
+        self.stop.send_replace(true);
+    }
+
+    /// Stop the server and wait until its socket is released.
+    ///
+    /// When this returns the address can be bound again. Frames still queued
+    /// for the tunnel clients are not sent.
+    pub async fn shutdown(mut self) {
+        self.stop.send_replace(true);
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
     }
 }
 
@@ -276,18 +328,29 @@ async fn server_task(
     multicast_target: Option<SocketAddr>,
     event_tx: mpsc::Sender<ServerEvent>,
     mut cmd_rx: mpsc::Receiver<ServerCmd>,
+    stop: watch::Receiver<bool>,
 ) {
     let mut state = ServerState {
         tunnels: Vec::new(),
         next_channel_id: 1,
         events: EventQueue::new(event_tx),
+        stop,
     };
     let mut buf = [0u8; RECV_BUF_SIZE];
     let cleanup = tokio::time::interval(tokio::time::Duration::from_secs(CLEANUP_INTERVAL_SECS));
     tokio::pin!(cleanup);
 
     loop {
+        // Not `biased`: with a fixed order, a flood of datagrams (the socket arm is
+        // always ready) would starve the commands and the hand-over of events to the
+        // application. The random order serves every ready arm; the stop request is
+        // checked here as well, so it is seen after at most one more datagram.
+        if state.stopping() {
+            break;
+        }
         tokio::select! {
+            () = stop_requested(&mut state.stop) => break,
+
             result = socket.recv_from(&mut buf), if state.events.has_room() => {
                 let (n, src) = match result {
                     Ok(r) => r,
@@ -307,7 +370,7 @@ async fn server_task(
                     Some(ServerCmd::SendToTunnel(ch, cemi)) => {
                         send_to_tunnel_client(&socket, &mut state, ch, &cemi).await;
                     }
-                    Some(ServerCmd::Stop) | None => break,
+                    None => break,
                 }
             }
 
@@ -316,6 +379,15 @@ async fn server_task(
             _ = cleanup.tick() => {
                 cleanup_stale_tunnels(&mut state.tunnels);
             }
+        }
+    }
+
+    // Tell the tunnel clients, best effort: nobody waits for the answers.
+    let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
+    for tunnel in &state.tunnels {
+        let request = KnxIpFrame::disconnect_request(tunnel.channel_id, Hpai::nat_udp(port));
+        if let Some(bytes) = serialize_frame(&request) {
+            let _ = socket.send_to(&bytes, tunnel.ctrl_addr).await;
         }
     }
 
@@ -650,6 +722,9 @@ async fn send_to_all(
     // work from the channels that exist now.
     let channels: Vec<u8> = state.tunnels.iter().map(|t| t.channel_id).collect();
     for channel_id in channels {
+        if state.stopping() {
+            return;
+        }
         send_tunneling_to(socket, state, channel_id, &cemi).await;
     }
 }
@@ -754,7 +829,7 @@ async fn send_tunneling_to(
                 }
                 return;
             }
-            AckWait::Gone => return,
+            AckWait::Gone | AckWait::Stopped => return,
             AckWait::TimedOut => {
                 tracing::debug!(channel = channel_id, attempt = attempt + 1, "ack timeout");
             }
@@ -771,6 +846,8 @@ enum AckWait {
     TimedOut,
     /// The tunnel left (disconnect request) while the ack was awaited.
     Gone,
+    /// The server was asked to stop.
+    Stopped,
 }
 
 /// Wait for a `TunnelingAck` matching the given channel and sequence.
@@ -795,8 +872,12 @@ async fn wait_for_tunneling_ack(
             return AckWait::TimedOut;
         }
 
-        let Ok(Ok((n, src))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await
-        else {
+        let received = tokio::select! {
+            biased;
+            () = stop_requested(&mut state.stop) => return AckWait::Stopped,
+            received = tokio::time::timeout(remaining, socket.recv_from(&mut buf)) => received,
+        };
+        let Ok(Ok((n, src))) = received else {
             return AckWait::TimedOut;
         };
 

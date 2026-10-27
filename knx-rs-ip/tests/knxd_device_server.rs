@@ -364,3 +364,52 @@ async fn device_server_drops_a_frozen_knxd_and_takes_it_back() {
     }
     eprintln!("--- knxd log\n{}", rig.knxd.logs());
 }
+
+#[tokio::test]
+async fn knxd_reconnects_to_a_device_server_restarted_on_the_same_port() {
+    let Some(rig) = Rig::start(30).await else {
+        return;
+    };
+    let Rig {
+        server,
+        knxd,
+        relay,
+        mut observer,
+    } = rig;
+
+    // Stop the server and start a new one on the very same address, at once.
+    let addr = server.local_addr();
+    server.shutdown().await;
+    let server = DeviceServer::start_at(addr)
+        .await
+        .expect("the port must be free after shutdown");
+
+    // The server told knxd to disconnect; its retry filter connects again.
+    let started = Instant::now();
+    loop {
+        server.send_frame(probe()).await.unwrap();
+        let seen = timeout(Duration::from_millis(400), async {
+            loop {
+                let frame = observer.recv().await?;
+                if frame.destination_address_raw() == PROBE_GA {
+                    return Some(frame);
+                }
+            }
+        })
+        .await;
+        if matches!(seen, Ok(Some(_))) {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "knxd did not reconnect; knxd log:\n{}",
+            knxd.logs()
+        );
+    }
+    assert!(
+        knxd.logs().matches("Send(020)").count() >= 2,
+        "knxd should have connected twice"
+    );
+    eprintln!("--- observer wire trace\n{}", relay.trace_text());
+    server.shutdown().await;
+}
