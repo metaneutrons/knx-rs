@@ -2310,6 +2310,47 @@ mod tests {
     }
 
     #[test]
+    fn connected_memory_write_and_read_round_trip() {
+        // ETS programs a device over a transport connection. Basic memory
+        // services pack their octet count into the low APCI byte, so the
+        // connected path (encode_raw_apdu -> parse_raw_apdu) has to keep that
+        // byte where the parser expects it.
+        let mut bau = test_bau();
+        open_connection(&mut bau);
+
+        // Numbered A_Memory_Write, sequence 0: 4 octets to 0x0010.
+        let write = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x07, 0x42, 0x84, 0x00, 0x10, 1, 2, 3,
+            4,
+        ])
+        .unwrap();
+        bau.process_frame(&write, 0);
+        assert_eq!(
+            bau.memory_area().get(0x10..0x14),
+            Some(&[1, 2, 3, 4][..]),
+            "connected A_Memory_Write must land at the addressed octets"
+        );
+        while bau.next_outgoing_frame().is_some() {}
+
+        // Numbered A_Memory_Read, sequence 1: 4 octets from 0x0010.
+        let read = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x03, 0x46, 0x04, 0x00, 0x10,
+        ])
+        .unwrap();
+        bau.process_frame(&read, 0);
+        let mut response = None;
+        while let Some(f) = bau.next_outgoing_frame() {
+            let p = f.payload();
+            if p.len() >= 4 && p[0] & 0x03 == 0x02 && p[1] & 0xC0 == 0x40 {
+                response = Some(p.to_vec());
+            }
+        }
+        let p = response.expect("a connected A_Memory_Response");
+        assert_eq!(p[1] & 0x0F, 4, "number of octets");
+        assert_eq!(&p[2..], &[0x00, 0x10, 1, 2, 3, 4]);
+    }
+
+    #[test]
     fn memory_write_rejects_oversized() {
         let mut bau = handler_test_bau();
         // ext write beyond MAX_MEMORY_SIZE must be rejected
