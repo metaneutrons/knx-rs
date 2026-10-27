@@ -7,6 +7,7 @@
 //! KNXnet/IP tunneling protocol. Supports simultaneous routing
 //! (multicast) and tunneling (unicast) on the same port.
 
+use std::borrow::Cow;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use knx_rs_core::cemi::CemiFrame;
@@ -14,6 +15,7 @@ use knx_rs_core::knxip::{
     ConnectionHeader, DEVICE_MGMT_CONNECTION, E_CONNECTION_ID, E_CONNECTION_TYPE, E_NO_ERROR,
     E_NO_MORE_CONNECTIONS, Hpai, KnxIpFrame, ServiceType, TUNNEL_IA_BASE, tunnel_crd,
 };
+use knx_rs_core::message::MessageCode;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 
@@ -149,6 +151,10 @@ impl DeviceServer {
 
     /// Send a CEMI frame to all connected tunnel clients and multicast.
     ///
+    /// The frame goes out as an `L_Data.ind`: a frame built as `L_Data.req`
+    /// (0x11), which is what a bus access unit queues, is sent with message
+    /// code 0x29. Other message codes are sent as they are.
+    ///
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the server is closed.
@@ -160,6 +166,8 @@ impl DeviceServer {
     }
 
     /// Send a response frame to a specific tunnel client.
+    ///
+    /// An `L_Data.req` is sent as `L_Data.ind`, as for [`Self::send_frame`].
     ///
     /// # Errors
     ///
@@ -557,9 +565,11 @@ async fn send_to_all(
     tunnels: &mut [TunnelClient],
     cemi: &CemiFrame,
 ) -> Vec<(Vec<u8>, SocketAddr)> {
+    let cemi = as_indication(cemi);
+
     // Send as routing indication to multicast
     if let Some(multicast) = multicast {
-        let routing = KnxIpFrame::routing_indication(cemi.as_bytes());
+        let routing = KnxIpFrame::routing_indication(&cemi);
         if let Some(bytes) = serialize_frame(&routing) {
             let _ = socket.send_to(&bytes, multicast).await;
         }
@@ -568,9 +578,30 @@ async fn send_to_all(
     // Send as tunneling indication to all tunnel clients
     let mut stashed = Vec::new();
     for tunnel in tunnels.iter_mut() {
-        stashed.extend(send_tunneling_to(socket, tunnel, cemi).await);
+        stashed.extend(send_tunneling_to(socket, tunnel, &cemi).await);
     }
     stashed
+}
+
+/// The cEMI bytes a server puts on the wire for `cemi`.
+///
+/// A server delivers what happened on the bus to its clients, as an
+/// `L_Data.ind` in a tunnelling request or a routing indication. `L_Data.req`
+/// (0x11) is the client-to-server direction, but it is what a bus access unit
+/// queues when it sends, and what a caller of [`DeviceServer::send_frame`]
+/// naturally holds. knxd's tunnelling client and routing driver discard
+/// anything but 0x29 ("Unexpected CEMI Type"); the C++ reference sets
+/// `L_data_ind` in `DataLinkLayer::sendTelegram`. Every other message code,
+/// `L_Data.con` for instance, is passed through.
+fn as_indication(cemi: &CemiFrame) -> Cow<'_, [u8]> {
+    let bytes = cemi.as_bytes();
+    if bytes.first() == Some(&(MessageCode::LDataReq as u8)) {
+        let mut indication = bytes.to_vec();
+        indication[0] = MessageCode::LDataInd as u8;
+        Cow::Owned(indication)
+    } else {
+        Cow::Borrowed(bytes)
+    }
 }
 
 async fn send_to_tunnel_client(
@@ -581,7 +612,7 @@ async fn send_to_tunnel_client(
 ) -> Vec<(Vec<u8>, SocketAddr)> {
     let tunnel = tunnels.iter_mut().find(|t| t.channel_id == channel_id);
     if let Some(tunnel) = tunnel {
-        send_tunneling_to(socket, tunnel, cemi).await
+        send_tunneling_to(socket, tunnel, &as_indication(cemi)).await
     } else {
         Vec::new()
     }
@@ -595,10 +626,10 @@ async fn send_to_tunnel_client(
 async fn send_tunneling_to(
     socket: &UdpSocket,
     tunnel: &mut TunnelClient,
-    cemi: &CemiFrame,
+    cemi: &[u8],
 ) -> Vec<(Vec<u8>, SocketAddr)> {
     let seq = tunnel.send_seq;
-    let frame = KnxIpFrame::tunneling_request(tunnel.channel_id, seq, cemi.as_bytes());
+    let frame = KnxIpFrame::tunneling_request(tunnel.channel_id, seq, cemi);
     let Some(frame_bytes) = serialize_frame(&frame) else {
         return Vec::new();
     };

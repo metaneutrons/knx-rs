@@ -247,3 +247,78 @@ async fn knxd_gives_up_on_a_server_that_never_acknowledges() {
     let logs = knxd.logs();
     assert!(logs.contains("Too many retransmits"), "knxd log:\n{logs}");
 }
+
+#[tokio::test]
+async fn knxd_forwards_what_a_bus_access_unit_answers() {
+    use knx_rs_core::dpt::{DPT_VALUE_TEMP, DptValue};
+    use knx_rs_device::bau::Bau;
+    use knx_rs_device::device_object;
+    use knx_rs_device::group_object::ComFlag;
+
+    // A device with one temperature object at 1/0/1, as in the loopback test.
+    let device = device_object::new_device_object([0x00, 0xFA, 0xDE, 0xD0, 0x00, 0x01], [0x00; 6]);
+    let mut bau = Bau::new(device, 2, 2);
+    device_object::set_individual_address(bau.device_mut(), DEVICE);
+    bau.group_objects_mut()
+        .get_mut(1)
+        .unwrap()
+        .set_dpt(DPT_VALUE_TEMP);
+    bau.address_table_mut()
+        .load(&[0x00, 0x02, 0x08, 0x01, 0x08, 0x02]);
+    bau.association_table_mut()
+        .load(&[0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x02]);
+    let go = bau.group_objects_mut().get_mut(1).unwrap();
+    go.set_value(&DptValue::Float(21.5)).unwrap();
+    go.set_comm_flag(ComFlag::Ok);
+
+    let Some(rig) = Rig::start(30).await else {
+        return;
+    };
+    let Rig {
+        mut server,
+        knxd,
+        relay,
+        mut observer,
+    } = rig;
+
+    // A visualisation reads 1/0/1 through knxd; knxd hands the read to the
+    // device server, which feeds the bus access unit.
+    let read = CemiFrame::new_l_data(
+        MessageCode::LDataReq,
+        IndividualAddress::from_raw(0),
+        DestinationAddress::Group(GroupAddress::from_raw(0x0801)),
+        Priority::Low,
+        &[0x00, 0x00],
+    );
+    observer.send(read).await.unwrap();
+    let event = timeout(WAIT, server.recv()).await.expect("read event");
+    let Some(ServerEvent::TunnelFrame(frame)) = event else {
+        panic!("expected a tunnel frame, got {event:?}");
+    };
+    bau.process_frame(&frame, 0);
+    bau.poll(0);
+    let response = bau.next_outgoing_frame().expect("a group value response");
+    server.send_frame(response).await.unwrap();
+
+    // The response must come back out of knxd.
+    let answer = timeout(WAIT, async {
+        loop {
+            let frame = observer.recv().await.expect("connection closed");
+            if frame.destination_address_raw() == 0x0801 && frame.payload().len() >= 3 {
+                return frame;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "the response never came out of knxd; wire trace:\n{}\nknxd log:\n{}",
+            relay.trace_text(),
+            knxd.logs()
+        )
+    });
+    assert_eq!(answer.message_code_raw(), MessageCode::LDataInd as u8);
+    assert_eq!(answer.source_address(), IndividualAddress::from_raw(DEVICE));
+    eprintln!("--- observer wire trace\n{}", relay.trace_text());
+    eprintln!("--- knxd log\n{}", knxd.logs());
+}
