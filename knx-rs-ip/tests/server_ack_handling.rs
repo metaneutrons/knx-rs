@@ -8,7 +8,7 @@ mod common;
 use std::time::Duration;
 
 use common::{RawClient, WAIT, group_write};
-use knx_rs_core::knxip::E_CONNECTION_ID;
+use knx_rs_core::knxip::{E_CONNECTION_ID, E_NO_ERROR};
 use knx_rs_core::message::MessageCode;
 use knx_rs_ip::DeviceServer;
 use tokio::time::Instant;
@@ -74,4 +74,63 @@ async fn silent_client_costs_the_other_clients_at_most_one_frame() {
              a client that never acknowledged still holds up the server"
         );
     }
+}
+
+#[tokio::test]
+async fn server_keeps_serving_other_clients_while_waiting_for_a_silent_one() {
+    let server = start().await;
+    let silent = RawClient::connect(server.local_addr()).await;
+    let live = RawClient::connect(server.local_addr()).await;
+
+    server
+        .send_frame(group_write(MessageCode::LDataInd, 1))
+        .await
+        .unwrap();
+    // The server is now waiting for the silent client's acknowledgement.
+    assert!(
+        silent
+            .recv_request(Duration::from_millis(500))
+            .await
+            .is_some()
+    );
+
+    let started = Instant::now();
+    let status = live.heartbeat_within(Duration::from_secs(2)).await;
+    assert_eq!(status, Some(E_NO_ERROR), "heartbeat of the live client");
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "the heartbeat took {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn server_acknowledges_a_request_while_it_waits_for_the_clients_ack() {
+    let mut server = start().await;
+    let client = RawClient::connect(server.local_addr()).await;
+
+    server
+        .send_frame(group_write(MessageCode::LDataInd, 1))
+        .await
+        .unwrap();
+    // The server's frame is in flight and unacknowledged. The client sends its
+    // own request first, as any client with a frame of its own to send may.
+    let (seq, _) = client.recv_request(WAIT).await.expect("server frame");
+    client
+        .send_request(0, &group_write(MessageCode::LDataReq, 0))
+        .await;
+
+    assert!(
+        client.recv_ack(0, Duration::from_millis(500)).await,
+        "the server must acknowledge the request without waiting for our ack"
+    );
+    client.ack(seq).await;
+
+    let event = tokio::time::timeout(WAIT, server.recv())
+        .await
+        .expect("event timeout");
+    assert!(matches!(
+        event,
+        Some(knx_rs_ip::ServerEvent::TunnelFrame(_))
+    ));
 }

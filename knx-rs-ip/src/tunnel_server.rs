@@ -119,6 +119,13 @@ impl EventQueue {
     }
 }
 
+/// What the server task keeps between datagrams.
+struct ServerState {
+    tunnels: Vec<TunnelClient>,
+    next_channel_id: u8,
+    events: EventQueue,
+}
+
 /// KNXnet/IP device server — handles both routing and tunneling.
 ///
 /// This is what makes a device programmable by ETS.
@@ -270,16 +277,18 @@ async fn server_task(
     event_tx: mpsc::Sender<ServerEvent>,
     mut cmd_rx: mpsc::Receiver<ServerCmd>,
 ) {
-    let mut events = EventQueue::new(event_tx);
-    let mut tunnels: Vec<TunnelClient> = Vec::new();
-    let mut next_channel_id: u8 = 1;
+    let mut state = ServerState {
+        tunnels: Vec::new(),
+        next_channel_id: 1,
+        events: EventQueue::new(event_tx),
+    };
     let mut buf = [0u8; RECV_BUF_SIZE];
     let cleanup = tokio::time::interval(tokio::time::Duration::from_secs(CLEANUP_INTERVAL_SECS));
     tokio::pin!(cleanup);
 
     loop {
         tokio::select! {
-            result = socket.recv_from(&mut buf), if events.has_room() => {
+            result = socket.recv_from(&mut buf), if state.events.has_room() => {
                 let (n, src) = match result {
                     Ok(r) => r,
                     Err(e) => {
@@ -287,45 +296,25 @@ async fn server_task(
                         break;
                     }
                 };
-                handle_packet(
-                    &buf[..n], src, &socket, &mut events,
-                    &mut tunnels, &mut next_channel_id,
-                ).await;
+                handle_packet(&buf[..n], src, &socket, &mut state).await;
             }
 
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(ServerCmd::SendFrame(cemi)) => {
-                        let stashed = send_to_all(
-                            &socket,
-                            multicast_target.as_ref(),
-                            &mut tunnels,
-                            &cemi,
-                        ).await;
-                        for (data, src) in stashed {
-                            handle_packet(
-                                &data, src, &socket, &mut events,
-                                &mut tunnels, &mut next_channel_id,
-                            ).await;
-                        }
+                        send_to_all(&socket, multicast_target.as_ref(), &mut state, &cemi).await;
                     }
                     Some(ServerCmd::SendToTunnel(ch, cemi)) => {
-                        let stashed = send_to_tunnel_client(&socket, &mut tunnels, ch, &cemi).await;
-                        for (data, src) in stashed {
-                            handle_packet(
-                                &data, src, &socket, &mut events,
-                                &mut tunnels, &mut next_channel_id,
-                            ).await;
-                        }
+                        send_to_tunnel_client(&socket, &mut state, ch, &cemi).await;
                     }
                     Some(ServerCmd::Stop) | None => break,
                 }
             }
 
-            () = events.deliver(), if events.has_backlog() => {}
+            () = state.events.deliver(), if state.events.has_backlog() => {}
 
             _ = cleanup.tick() => {
-                cleanup_stale_tunnels(&mut tunnels);
+                cleanup_stale_tunnels(&mut state.tunnels);
             }
         }
     }
@@ -333,14 +322,7 @@ async fn server_task(
     tracing::debug!("device server task ended");
 }
 
-async fn handle_packet(
-    data: &[u8],
-    src: SocketAddr,
-    socket: &UdpSocket,
-    events: &mut EventQueue,
-    tunnels: &mut Vec<TunnelClient>,
-    next_channel_id: &mut u8,
-) {
+async fn handle_packet(data: &[u8], src: SocketAddr, socket: &UdpSocket, state: &mut ServerState) {
     let Ok(frame) = KnxIpFrame::parse(data) else {
         return;
     };
@@ -348,20 +330,28 @@ async fn handle_packet(
     match frame.service_type {
         ServiceType::RoutingIndication => {
             if let Ok(cemi) = CemiFrame::parse(&frame.body) {
-                events.push(ServerEvent::RoutingFrame(cemi));
+                state.events.push(ServerEvent::RoutingFrame(cemi));
             }
         }
         ServiceType::ConnectRequest => {
-            handle_connect(socket, src, &frame, tunnels, next_channel_id).await;
+            handle_connect(
+                socket,
+                src,
+                &frame,
+                &mut state.tunnels,
+                &mut state.next_channel_id,
+            )
+            .await;
         }
         ServiceType::ConnectionStateRequest => {
-            handle_heartbeat(socket, src, &frame, tunnels).await;
+            handle_heartbeat(socket, src, &frame, &mut state.tunnels).await;
         }
         ServiceType::DisconnectRequest => {
-            handle_disconnect(socket, src, &frame, tunnels).await;
+            handle_disconnect(socket, src, &frame, &mut state.tunnels).await;
         }
         ServiceType::TunnelingRequest => {
-            handle_tunneling_request(socket, src, &frame, tunnels, events).await;
+            handle_tunneling_request(socket, src, &frame, &mut state.tunnels, &mut state.events)
+                .await;
         }
         ServiceType::TunnelingAck => {} // client ack, nothing to do
         ServiceType::SearchRequest => {
@@ -642,9 +632,9 @@ async fn send_tunneling_ack(
 async fn send_to_all(
     socket: &UdpSocket,
     multicast: Option<&SocketAddr>,
-    tunnels: &mut Vec<TunnelClient>,
+    state: &mut ServerState,
     cemi: &CemiFrame,
-) -> Vec<(Vec<u8>, SocketAddr)> {
+) {
     let cemi = as_indication(cemi);
 
     // Send as routing indication to multicast
@@ -655,20 +645,13 @@ async fn send_to_all(
         }
     }
 
-    // Send as tunneling indication to all tunnel clients
-    let mut stashed = Vec::new();
-    let mut lost = Vec::new();
-    for tunnel in tunnels.iter_mut() {
-        let delivery = send_tunneling_to(socket, tunnel, &cemi).await;
-        stashed.extend(delivery.stashed);
-        if !delivery.acked {
-            lost.push(tunnel.channel_id);
-        }
+    // Send as tunneling indication to all tunnel clients. The table changes
+    // while the acknowledgements are awaited (clients connect and leave), so
+    // work from the channels that exist now.
+    let channels: Vec<u8> = state.tunnels.iter().map(|t| t.channel_id).collect();
+    for channel_id in channels {
+        send_tunneling_to(socket, state, channel_id, &cemi).await;
     }
-    for channel_id in lost {
-        drop_lost_tunnel(socket, tunnels, channel_id).await;
-    }
-    stashed
 }
 
 /// The cEMI bytes a server puts on the wire for `cemi`.
@@ -694,24 +677,25 @@ fn as_indication(cemi: &CemiFrame) -> Cow<'_, [u8]> {
 
 async fn send_to_tunnel_client(
     socket: &UdpSocket,
-    tunnels: &mut Vec<TunnelClient>,
+    state: &mut ServerState,
     channel_id: u8,
     cemi: &CemiFrame,
-) -> Vec<(Vec<u8>, SocketAddr)> {
-    let Some(tunnel) = tunnels.iter_mut().find(|t| t.channel_id == channel_id) else {
-        return Vec::new();
-    };
-    let delivery = send_tunneling_to(socket, tunnel, &as_indication(cemi)).await;
-    if !delivery.acked {
-        drop_lost_tunnel(socket, tunnels, channel_id).await;
-    }
-    delivery.stashed
+) {
+    send_tunneling_to(socket, state, channel_id, &as_indication(cemi)).await;
 }
 
 /// Forget a tunnel client whose acknowledgements stayed away and tell it, best
 /// effort, so that a client that is merely cut off knows to reconnect.
-async fn drop_lost_tunnel(socket: &UdpSocket, tunnels: &mut Vec<TunnelClient>, channel_id: u8) {
-    let Some(position) = tunnels.iter().position(|t| t.channel_id == channel_id) else {
+async fn drop_lost_tunnel(
+    socket: &UdpSocket,
+    tunnels: &mut Vec<TunnelClient>,
+    channel_id: u8,
+    data_addr: SocketAddr,
+) {
+    let Some(position) = tunnels
+        .iter()
+        .position(|t| t.channel_id == channel_id && t.data_addr == data_addr)
+    else {
         return;
     };
     let tunnel = tunnels.remove(position);
@@ -727,95 +711,93 @@ async fn drop_lost_tunnel(socket: &UdpSocket, tunnels: &mut Vec<TunnelClient>, c
     }
 }
 
-/// Outcome of [`send_tunneling_to`].
-struct Delivery {
-    /// Non-ack packets received during the ack wait, for the caller to
-    /// re-process: the server shares a single UDP socket for all tunnels and
-    /// routing.
-    stashed: Vec<(Vec<u8>, SocketAddr)>,
-    /// Whether the client acknowledged the frame. `false` after
-    /// [`MAX_RETRIES`] attempts without an ack: the connection is lost.
-    acked: bool,
-}
-
-/// Send a tunneling request to a client and wait for ack.
-async fn send_tunneling_to(socket: &UdpSocket, tunnel: &mut TunnelClient, cemi: &[u8]) -> Delivery {
-    let seq = tunnel.send_seq;
-    let frame = KnxIpFrame::tunneling_request(tunnel.channel_id, seq, cemi);
+/// Send a tunneling request to a client and wait for its ack, up to
+/// [`MAX_RETRIES`] times. A client that never acknowledges is dropped.
+///
+/// The tunnel is looked up again by channel id wherever the table may have
+/// changed: packets are served while the ack is awaited.
+async fn send_tunneling_to(
+    socket: &UdpSocket,
+    state: &mut ServerState,
+    channel_id: u8,
+    cemi: &[u8],
+) {
+    let Some((seq, data_addr)) = state
+        .tunnels
+        .iter()
+        .find(|t| t.channel_id == channel_id)
+        .map(|t| (t.send_seq, t.data_addr))
+    else {
+        return;
+    };
+    let frame = KnxIpFrame::tunneling_request(channel_id, seq, cemi);
     let Some(frame_bytes) = serialize_frame(&frame) else {
         // Cannot happen for a cEMI frame that came out of a CemiFrame; the
         // client is not at fault.
-        return Delivery {
-            stashed: Vec::new(),
-            acked: true,
-        };
+        return;
     };
-    let mut stashed: Vec<(Vec<u8>, SocketAddr)> = Vec::new();
 
     for attempt in 0..MAX_RETRIES {
-        if let Err(e) = socket.send_to(&frame_bytes, tunnel.data_addr).await {
-            tracing::debug!(channel = tunnel.channel_id, attempt = attempt + 1, error = %e, "send failed");
+        if let Err(e) = socket.send_to(&frame_bytes, data_addr).await {
+            tracing::debug!(channel = channel_id, attempt = attempt + 1, error = %e, "send failed");
             continue;
         }
 
-        // Wait for ack from this specific client
-        match wait_for_tunneling_ack(
-            socket,
-            tunnel.data_addr,
-            tunnel.channel_id,
-            seq,
-            &mut stashed,
-        )
-        .await
-        {
-            Ok(()) => {
-                tunnel.send_seq = seq.wrapping_add(1);
-                return Delivery {
-                    stashed,
-                    acked: true,
-                };
+        match wait_for_tunneling_ack(socket, state, channel_id, data_addr, seq).await {
+            AckWait::Received => {
+                if let Some(tunnel) = state
+                    .tunnels
+                    .iter_mut()
+                    .find(|t| t.channel_id == channel_id && t.data_addr == data_addr)
+                {
+                    tunnel.send_seq = seq.wrapping_add(1);
+                }
+                return;
             }
-            Err(()) => {
-                tracing::debug!(
-                    channel = tunnel.channel_id,
-                    attempt = attempt + 1,
-                    "ack timeout"
-                );
+            AckWait::Gone => return,
+            AckWait::TimedOut => {
+                tracing::debug!(channel = channel_id, attempt = attempt + 1, "ack timeout");
             }
         }
     }
 
-    tracing::debug!(
-        channel = tunnel.channel_id,
-        "no ack after {MAX_RETRIES} attempts"
-    );
-    Delivery {
-        stashed,
-        acked: false,
-    }
+    tracing::debug!(channel = channel_id, "no ack after {MAX_RETRIES} attempts");
+    drop_lost_tunnel(socket, &mut state.tunnels, channel_id, data_addr).await;
+}
+
+/// How waiting for a tunnelling ack ended.
+enum AckWait {
+    Received,
+    TimedOut,
+    /// The tunnel left (disconnect request) while the ack was awaited.
+    Gone,
 }
 
 /// Wait for a `TunnelingAck` matching the given channel and sequence.
-/// Any other packets received are stashed for later re-processing.
+///
+/// Every other packet is served at once rather than set aside: a tunnelling
+/// request of this very client is acknowledged now (the client may wait for
+/// that before it reads our frame, and both would wait for each other),
+/// heartbeats are answered, other clients can connect.
 async fn wait_for_tunneling_ack(
     socket: &UdpSocket,
-    expected_src: SocketAddr,
+    state: &mut ServerState,
     channel_id: u8,
+    expected_src: SocketAddr,
     seq: u8,
-    stashed: &mut Vec<(Vec<u8>, SocketAddr)>,
-) -> Result<(), ()> {
+) -> AckWait {
     let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
     let mut buf = [0u8; RECV_BUF_SIZE];
 
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            return Err(());
+            return AckWait::TimedOut;
         }
 
         let Ok(Ok((n, src))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await
         else {
-            return Err(());
+            return AckWait::TimedOut;
         };
 
         // Check if this is our ack
@@ -826,11 +808,17 @@ async fn wait_for_tunneling_ack(
             && ack_ch.channel_id == channel_id
             && ack_ch.sequence_counter == seq
         {
-            return Ok(());
+            return AckWait::Received;
         }
 
-        // Not our ack — stash for re-processing
-        stashed.push((buf[..n].to_vec(), src));
+        handle_packet(&buf[..n], src, socket, state).await;
+        if !state
+            .tunnels
+            .iter()
+            .any(|t| t.channel_id == channel_id && t.data_addr == expected_src)
+        {
+            return AckWait::Gone;
+        }
     }
 }
 
