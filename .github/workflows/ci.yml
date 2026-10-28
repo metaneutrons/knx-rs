@@ -65,7 +65,8 @@ jobs:
       - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
         with:
           tool: cargo-nextest,cargo-llvm-cov
-      - run: cargo nextest run --workspace --all-features --locked
+      # The knxd interoperability tests need Docker and run in their own job.
+      - run: cargo nextest run --workspace --all-features --locked -E 'not (binary(knxd_client) | binary(knxd_device_server))'
       - name: Enforce line coverage floor
         if: matrix.name == 'linux-x86_64'
         run: >-
@@ -82,7 +83,27 @@ jobs:
       - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
         with:
           tool: cargo-nextest
-      - run: cargo +beta nextest run --workspace --all-features --locked
+      - run: cargo +beta nextest run --workspace --all-features --locked -E 'not (binary(knxd_client) | binary(knxd_device_server))'
+
+  knxd-interop:
+    name: Interoperability (knxd)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # Without Docker these tests skip; here a missing daemon is a failure.
+      KNX_RS_REQUIRE_DOCKER: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: cargo-nextest
+      - run: docker version
+      - name: knx-rs-ip against knxd, in both directions
+        run: >-
+          cargo nextest run -p knx-rs-ip --all-features --locked --no-fail-fast
+          --test knxd_client --test knxd_device_server
 
   feature-combinations:
     name: Feature combinations
@@ -203,6 +224,7 @@ jobs:
       - quality
       - test
       - forward-compatibility
+      - knxd-interop
       - feature-combinations
       - no-std
       - msrv
