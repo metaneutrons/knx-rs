@@ -10,7 +10,8 @@ use knx_rs_core::dpt::Dpt;
 use knx_rs_core::message::ApduType;
 
 use super::{
-    DESCRIPTOR_TYPE_UNSUPPORTED, MASK_4BIT, MASK_6BIT, MASK_12BIT, WRITE_ENABLE_FLAG, apci_bytes,
+    DESCRIPTOR_TYPE_UNSUPPORTED, MASK_4BIT, MASK_6BIT, MASK_12BIT, MEMORY_RESPONSE_MAX_LEN,
+    WRITE_ENABLE_FLAG, apci_bytes,
 };
 use crate::property::PropertyDescription;
 
@@ -100,8 +101,12 @@ pub fn encode_property_response(
 }
 
 /// Encode a `MemoryResponse` APDU payload.
+///
+/// The number of octets is a 4-bit field, so at most 15 octets of `data` are
+/// carried; anything beyond is left out rather than described by a truncated
+/// count.
 pub fn encode_memory_response(address: u16, data: &[u8]) -> Vec<u8> {
-    debug_assert!(data.len() <= 15, "MemoryResponse data must be <= 15 bytes");
+    let data = &data[..data.len().min(MEMORY_RESPONSE_MAX_LEN)];
     let [hi, lo] = apci_bytes(ApduType::MemoryResponse);
     let len_nibble = u8::try_from(data.len()).unwrap_or(MASK_4BIT) & MASK_4BIT;
     let mut payload = Vec::with_capacity(5 + data.len());
@@ -418,11 +423,30 @@ fn encode_property_description_fields(buf: &mut Vec<u8>, desc: PropertyDescripti
 }
 
 /// Encode an APDU into raw bytes (for transport layer connected-mode).
+///
+/// The result is the APDU as it is on the wire, so [`parse_raw_apdu`] reads
+/// back what [`knx_rs_core::apdu::Apdu::parse`] decoded.
+///
+/// [`parse_raw_apdu`]: super::parse_raw_apdu
 pub fn encode_raw_apdu(apdu: &knx_rs_core::apdu::Apdu) -> Vec<u8> {
     let [hi, lo] = apci_bytes(apdu.apdu_type);
     let mut buf = Vec::with_capacity(2 + apdu.data.len());
     buf.push(hi);
-    buf.push(lo);
+    // Basic memory and ADC services carry a 6-bit field (octet count, channel)
+    // in the low bits of the second APCI octet and are decoded with that octet
+    // kept as `data[0]` (`knx_rs_core::apdu::decode_apci`). It already is the
+    // second wire octet, so it must not be written a second time.
+    let low_octet_in_data = matches!(
+        apdu.apdu_type,
+        ApduType::MemoryRead
+            | ApduType::MemoryWrite
+            | ApduType::MemoryResponse
+            | ApduType::AdcRead
+            | ApduType::AdcResponse
+    ) && !apdu.data.is_empty();
+    if !low_octet_in_data {
+        buf.push(lo);
+    }
     buf.extend_from_slice(&apdu.data);
     buf
 }
@@ -432,6 +456,35 @@ pub fn encode_raw_apdu(apdu: &knx_rs_core::apdu::Apdu) -> Vec<u8> {
 mod tests {
     use super::*;
     use knx_rs_core::dpt::{DPT_SCALING, DPT_SWITCH, DPT_VALUE_1_UCOUNT};
+
+    #[test]
+    fn memory_response_carries_at_most_fifteen_octets() {
+        let data = [0xA5; 40];
+        for len in [0usize, 1, 15, 16, 40] {
+            let payload = encode_memory_response(0x0010, &data[..len]);
+            let carried = len.min(15);
+            assert_eq!(usize::from(payload[1] & 0x0F), carried, "len {len}: count");
+            assert_eq!(payload.len(), 4 + carried, "len {len}: octets");
+        }
+    }
+
+    #[test]
+    fn raw_apdu_round_trips_through_the_core_decoder() {
+        // Wire APDUs (TPCI octet masked off) of services with a six-bit field in
+        // the second APCI octet, and of long-form services.
+        let wires: [&[u8]; 5] = [
+            &[0x02, 0x04, 0x00, 0x10],             // A_Memory_Read, 4 octets at 0x0010
+            &[0x02, 0x84, 0x00, 0x10, 1, 2, 3, 4], // A_Memory_Write
+            &[0x02, 0x44, 0x00, 0x10, 1, 2, 3, 4], // A_Memory_Response
+            &[0x03, 0xD5, 0x00, 0x09, 0x34, 0x10, 0], // A_PropertyValue_Read
+            &[0x03, 0x81, 0x02, 0x00],             // A_Restart, master reset
+        ];
+        for wire in wires {
+            let len = u8::try_from(wire.len() - 1).unwrap();
+            let apdu = knx_rs_core::apdu::Apdu::parse(wire, len).unwrap();
+            assert_eq!(encode_raw_apdu(&apdu), wire, "{:?}", apdu.apdu_type);
+        }
+    }
 
     #[test]
     fn raw_group_value_encoders_retain_legacy_inference() {
