@@ -163,11 +163,28 @@ fn parse_authorize_request(data: &[u8]) -> Result<AppIndication, AppLayerError> 
     })
 }
 
-fn parse_restart_master_reset(data: &[u8]) -> Result<AppIndication, AppLayerError> {
-    check_len(data, 3)?;
+/// `data` is the payload after the two APCI octets, as `Apdu::parse` delivers
+/// it: the erase code, then the channel.
+///
+/// The C++ reference reads the same fields at `data[1]` and `data[2]` because
+/// its pointer still includes the low APCI octet, and that is the layout this
+/// function used to require. Input with a leading octet (three or more octets)
+/// is still read that way, so that a caller which repeats the low APCI octet to
+/// get its master resets through keeps working.
+const fn parse_restart_master_reset(data: &[u8]) -> Result<AppIndication, AppLayerError> {
+    let (erase_code, channel) = match data {
+        // The layout of the decoder, or behind a leading low APCI octet.
+        [erase_code, channel] | [_, erase_code, channel, ..] => (*erase_code, *channel),
+        _ => {
+            return Err(AppLayerError::TruncatedPayload {
+                expected: 2,
+                got: data.len(),
+            });
+        }
+    };
     Ok(AppIndication::RestartMasterReset {
-        erase_code: data[1],
-        channel: data[2],
+        erase_code,
+        channel,
     })
 }
 
@@ -777,7 +794,7 @@ mod tests {
 
     #[test]
     fn parse_restart_master_reset() {
-        let ind = parse_indication(ApduType::RestartMasterReset, &[0x00, 0x01, 0x02]).unwrap();
+        let ind = parse_indication(ApduType::RestartMasterReset, &[0x01, 0x02]).unwrap();
         assert!(matches!(
             ind,
             AppIndication::RestartMasterReset {
@@ -788,13 +805,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_restart_master_reset_accepts_a_leading_apci_octet() {
+        // The layout of the C++ stack (low APCI octet in front), which callers
+        // built to work around the old parser.
+        let ind = parse_indication(ApduType::RestartMasterReset, &[0x81, 0x02, 0x00]).unwrap();
+        assert!(matches!(
+            ind,
+            AppIndication::RestartMasterReset {
+                erase_code: 0x02,
+                channel: 0x00,
+            }
+        ));
+    }
+
+    #[test]
     fn parse_restart_master_reset_truncated() {
-        let err = parse_indication(ApduType::RestartMasterReset, &[0x00, 0x01]).unwrap_err();
+        let err = parse_indication(ApduType::RestartMasterReset, &[0x01]).unwrap_err();
         assert!(matches!(
             err,
             AppLayerError::TruncatedPayload {
-                expected: 3,
-                got: 2
+                expected: 2,
+                got: 1
             }
         ));
     }

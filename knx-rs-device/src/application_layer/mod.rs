@@ -58,6 +58,9 @@ pub(crate) const fn apci_bytes(t: ApduType) -> [u8; 2] {
 pub(crate) const MASK_6BIT: u8 = 0x3F;
 /// 4-bit mask for count fields and nibble extraction.
 pub(crate) const MASK_4BIT: u8 = 0x0F;
+/// Most octets an `A_Memory_Response` can carry: its count is a 4-bit field,
+/// while the count of an `A_Memory_Read` request has 6 bits.
+pub(crate) const MEMORY_RESPONSE_MAX_LEN: usize = MASK_4BIT as usize;
 /// 12-bit mask for `start_index` fields.
 pub(crate) const MASK_12BIT: u16 = 0x0FFF;
 /// Write-enable flag in property description type byte.

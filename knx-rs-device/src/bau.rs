@@ -152,6 +152,14 @@ pub struct Bau {
     /// Set when an `A_Restart` requests a device restart; the host consumes it via
     /// [`take_restart_pending`](Self::take_restart_pending) to persist and re-init.
     restart_pending: bool,
+    /// The last time handed to [`process_frame`](Self::process_frame) or
+    /// [`poll`](Self::poll), for the transport layer's timers.
+    now_ms: u64,
+    /// The peer of the transport connection whose request is being served. Its
+    /// answers go out on the connection, as numbered data (the C++ reference:
+    /// `ApplicationLayer::individualSend` sends through `dataConnectedRequest`
+    /// when the destination is the connected address).
+    answering_connection: Option<IndividualAddress>,
 }
 
 /// The destination address type a connectionless application service must be
@@ -224,6 +232,8 @@ impl Bau {
             memory_area: Vec::new(),
             outbox: VecDeque::new(),
             restart_pending: false,
+            now_ms: 0,
+            answering_connection: None,
         };
         bau.install_io_list();
         bau
@@ -396,6 +406,7 @@ impl Bau {
     /// `now_ms` is the current monotonic time in milliseconds, used for
     /// transport layer timeouts and retry logic.
     pub fn process_frame(&mut self, frame: &CemiFrame, now_ms: u64) {
+        self.now_ms = now_ms;
         // An L_Data.con is the local confirmation of a frame WE sent, not an
         // incoming service. Route it to the transmit-confirmation path and never
         // fall through to indication dispatch — otherwise the device would parse
@@ -810,6 +821,7 @@ impl Bau {
     ///
     /// `now_ms` is the current monotonic time in milliseconds.
     pub fn poll(&mut self, now_ms: u64) {
+        self.now_ms = now_ms;
         // Transport layer timeouts and buffered request retry
         self.transport.poll(now_ms);
         self.drain_transport_actions();
@@ -995,7 +1007,9 @@ impl Bau {
         let dst = DestinationAddress::Individual(self.individual_address());
         let dummy_frame =
             CemiFrame::new_l_data(MessageCode::LDataInd, source, dst, Priority::System, &[]);
+        self.answering_connection = Some(source);
         self.dispatch_indication(&dummy_frame, source, indication);
+        self.answering_connection = None;
     }
 
     /// Set the memory area (for `MemoryRead`/`MemoryWrite` from ETS).
@@ -1227,10 +1241,17 @@ impl Bau {
     }
 
     fn handle_memory_read(&mut self, source: IndividualAddress, count: u8, address: u16) {
-        // Always send response — empty data on out-of-bounds (C++ ref behavior)
-        let data = self
-            .mem_slice(address as usize, count as usize)
-            .map_or_else(Vec::new, <[u8]>::to_vec);
+        // Always send response — empty data on out-of-bounds (C++ ref behavior).
+        // The request's count has 6 bits but a response can report at most 15
+        // octets, so a longer read is peer-supplied nonsense and is answered
+        // like an unreadable range instead of with a response whose count no
+        // longer matches its data.
+        let data = if usize::from(count) > application_layer::MEMORY_RESPONSE_MAX_LEN {
+            Vec::new()
+        } else {
+            self.mem_slice(address as usize, count as usize)
+                .map_or_else(Vec::new, <[u8]>::to_vec)
+        };
         self.queue_memory_response(source, address, &data);
     }
 
@@ -1791,6 +1812,14 @@ impl Bau {
         priority: Priority,
         payload: &[u8],
     ) {
+        if self.answering_connection == Some(destination) {
+            // The request came over a connection: answer on it. The transport
+            // layer numbers the frame, waits for the acknowledgement and repeats
+            // it; `drain_transport_actions` turns its action into the frame.
+            self.transport
+                .data_connected_request(priority, payload.to_vec(), self.now_ms);
+            return;
+        }
         let src = self.individual_address();
         let dst = DestinationAddress::Individual(destination);
         self.outbox.push_back(CemiFrame::new_l_data(
@@ -2268,6 +2297,121 @@ mod tests {
         let payload = resp.payload();
         assert_eq!(payload[1] & 0x0F, 0); // count nibble = 0
         assert_eq!(payload.len(), 4); // no data bytes appended
+    }
+
+    #[test]
+    fn memory_read_count_beyond_the_response_field_is_answered_not_panicked() {
+        const ETS: u16 = 0xFFB1;
+        const DEV: u16 = 0x1101;
+        // The A_Memory_Read count is 6 bits wide (up to 63), but the response
+        // carries the number of octets in a 4-bit field (at most 15). The count
+        // is peer-controlled, so a longer read must not trip an assertion; it is
+        // answered like an unreadable range (number 0, no data).
+        for count in [15_u8, 16, 17, 63] {
+            let mut bau = test_bau();
+            bau.handle_memory_write(0x0000, &[0xA5; 80]);
+
+            // A_Memory_Read (APCI 0x200 | count) at address 0, connectionless.
+            let apdu = [0x02, count, 0x00, 0x00];
+            let frame = CemiFrame::parse(&ind_frame(ETS, DEV, &apdu)).unwrap();
+            bau.process_frame(&frame, 0);
+
+            let p = bau
+                .next_outgoing_frame()
+                .unwrap_or_else(|| panic!("count {count}: no memory response"))
+                .payload()
+                .to_vec();
+            if count <= 15 {
+                assert_eq!(usize::from(p[1] & 0x0F), usize::from(count));
+                assert_eq!(p.len(), 4 + usize::from(count));
+            } else {
+                assert_eq!(p[1] & 0x0F, 0, "count {count}: number field");
+                assert_eq!(p.len(), 4, "count {count}: no data octets");
+            }
+        }
+    }
+
+    #[test]
+    fn connected_memory_write_and_read_round_trip() {
+        // ETS programs a device over a transport connection. Basic memory
+        // services pack their octet count into the low APCI byte, so the
+        // connected path (encode_raw_apdu -> parse_raw_apdu) has to keep that
+        // byte where the parser expects it.
+        let mut bau = test_bau();
+        open_connection(&mut bau);
+
+        // Numbered A_Memory_Write, sequence 0: 4 octets to 0x0010.
+        let write = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x07, 0x42, 0x84, 0x00, 0x10, 1, 2, 3,
+            4,
+        ])
+        .unwrap();
+        bau.process_frame(&write, 0);
+        assert_eq!(
+            bau.memory_area().get(0x10..0x14),
+            Some(&[1, 2, 3, 4][..]),
+            "connected A_Memory_Write must land at the addressed octets"
+        );
+        while bau.next_outgoing_frame().is_some() {}
+
+        // Numbered A_Memory_Read, sequence 1: 4 octets from 0x0010.
+        let read = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x03, 0x46, 0x04, 0x00, 0x10,
+        ])
+        .unwrap();
+        bau.process_frame(&read, 0);
+        let mut response = None;
+        while let Some(f) = bau.next_outgoing_frame() {
+            let p = f.payload();
+            if p.len() >= 4 && p[0] & 0x03 == 0x02 && p[1] & 0xC0 == 0x40 {
+                response = Some(p.to_vec());
+            }
+        }
+        let p = response.expect("a connected A_Memory_Response");
+        assert_eq!(p[1] & 0x0F, 4, "number of octets");
+        assert_eq!(&p[2..], &[0x00, 0x10, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_connected_request_is_answered_on_the_connection() {
+        // ETS asks over a transport connection; the answer has to come back as
+        // numbered data on that connection (and be repeated until acknowledged),
+        // not as a connectionless frame the connection never delivers.
+        let mut bau = test_bau();
+        open_connection(&mut bau);
+
+        // Numbered A_DeviceDescriptor_Read (type 0), sequence 0, at t = 100 ms.
+        let request = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x01, 0x43, 0x00,
+        ])
+        .unwrap();
+        bau.process_frame(&request, 100);
+
+        let mut answers = Vec::new();
+        while let Some(f) = bau.next_outgoing_frame() {
+            answers.push(f.payload().to_vec());
+        }
+        // The transport layer acknowledges the request (T_ACK, sequence 0) ...
+        assert!(
+            answers.contains(&vec![0xC0, 0x00]),
+            "T_ACK in {answers:02x?}"
+        );
+        // ... and the descriptor goes out as numbered data, sequence 0.
+        let numbered = |p: &&Vec<u8>| p[0] & 0xC0 == 0x40;
+        let data: Vec<_> = answers.iter().filter(numbered).collect();
+        assert_eq!(data.len(), 1, "numbered answers in {answers:02x?}");
+        assert_eq!(*data[0], vec![0x43, 0x40, 0x57, 0xB0]);
+
+        // Nobody acknowledges it: the transport layer repeats it.
+        bau.poll(100 + 4_000);
+        let mut again = Vec::new();
+        while let Some(f) = bau.next_outgoing_frame() {
+            again.push(f.payload().to_vec());
+        }
+        assert!(
+            again.contains(&vec![0x43, 0x40, 0x57, 0xB0]),
+            "repetition in {again:02x?}"
+        );
     }
 
     #[test]
@@ -3256,6 +3400,56 @@ mod tests {
         // The host learns a restart was requested exactly once, then it clears.
         assert!(bau.take_restart_pending());
         assert!(!bau.take_restart_pending());
+    }
+
+    /// Open a management connection from 1.1.2 and drain the connect ACK.
+    fn open_connection(bau: &mut Bau) {
+        let connect = CemiFrame::parse(&[
+            0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x00, 0x80, 0x00,
+        ])
+        .unwrap();
+        bau.process_frame(&connect, 0);
+        while bau.next_outgoing_frame().is_some() {}
+    }
+
+    #[test]
+    fn master_reset_in_wire_form_is_executed_and_answered() {
+        // A_Restart, master reset: `03 81 <erase code> <channel>` as numbered
+        // data (sequence 0) on an open connection, exactly as ETS sends it. The
+        // second form repeats the low APCI octet in front of the erase code, as
+        // callers did to get past the old parser; it must keep working.
+        for repeated_apci in [false, true] {
+            for (erase_code, expect_ok) in
+                [(0x01_u8, true), (0x02, true), (0x07, true), (0x08, false)]
+            {
+                let mut bau = test_bau();
+                open_connection(&mut bau);
+                let mut frame = vec![0x29, 0x00, 0xB0, 0x60, 0x11, 0x02, 0x11, 0x01, 0x03, 0x43];
+                frame.push(0x81);
+                if repeated_apci {
+                    frame[8] = 0x04;
+                    frame.push(0x81);
+                }
+                frame.extend([erase_code, 0x00]);
+                bau.process_frame(&CemiFrame::parse(&frame).unwrap(), 0);
+
+                // The response carries the response bit in the low APCI octet
+                // (0xA1), so it does not decode to a known `ApduType`; look at
+                // the bytes.
+                let mut response = None;
+                while let Some(f) = bau.next_outgoing_frame() {
+                    let p = f.payload();
+                    if p.len() >= 5 && p[0] & 0x03 == 0x03 && p[1] == 0xA1 {
+                        response = Some(p.to_vec());
+                    }
+                }
+                let p = response.unwrap_or_else(|| {
+                    panic!("erase code {erase_code:#04x}: no A_Restart response was queued")
+                });
+                assert_eq!(p[2], if expect_ok { 0x00 } else { 0x02 });
+                assert_eq!(bau.take_restart_pending(), expect_ok);
+            }
+        }
     }
 
     #[test]
