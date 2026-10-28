@@ -7,6 +7,8 @@
 //! KNXnet/IP tunneling protocol. Supports simultaneous routing
 //! (multicast) and tunneling (unicast) on the same port.
 
+use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 use knx_rs_core::cemi::CemiFrame;
@@ -14,8 +16,9 @@ use knx_rs_core::knxip::{
     ConnectionHeader, DEVICE_MGMT_CONNECTION, E_CONNECTION_ID, E_CONNECTION_TYPE, E_NO_ERROR,
     E_NO_MORE_CONNECTIONS, Hpai, KnxIpFrame, ServiceType, TUNNEL_IA_BASE, tunnel_crd,
 };
+use knx_rs_core::message::MessageCode;
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::error::KnxIpError;
 use crate::router::{KNX_MULTICAST_ADDR, KNX_PORT};
@@ -30,6 +33,10 @@ const TUNNEL_TIMEOUT_SECS: u64 = 120;
 /// How often the server sweeps for tunnels that have stopped sending
 /// heartbeats; must be well below [`TUNNEL_TIMEOUT_SECS`].
 const CLEANUP_INTERVAL_SECS: u64 = 30;
+
+/// How many events for the application the server holds back, beyond the
+/// channel's own capacity, when the application does not keep up.
+const MAX_EVENT_BACKLOG: usize = 1024;
 
 /// A tunnel client connection.
 struct TunnelClient {
@@ -50,13 +57,109 @@ pub enum ServerEvent {
     RoutingFrame(CemiFrame),
 }
 
+/// Events on their way to the application.
+///
+/// The server task must never wait for the application. If it did, an
+/// application that sends from the task that receives (a bus access unit that
+/// answers each event with frames) could deadlock with it: the server blocked
+/// on the full event channel, the application blocked on the full command
+/// channel. An event that does not fit into the channel is held back here, in
+/// order, and handed over as the application makes room.
+struct EventQueue {
+    tx: mpsc::Sender<ServerEvent>,
+    backlog: VecDeque<ServerEvent>,
+}
+
+impl EventQueue {
+    const fn new(tx: mpsc::Sender<ServerEvent>) -> Self {
+        Self {
+            tx,
+            backlog: VecDeque::new(),
+        }
+    }
+
+    /// Hand `event` to the application without waiting.
+    fn push(&mut self, event: ServerEvent) {
+        if self.backlog.is_empty() {
+            match self.tx.try_send(event) {
+                Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {}
+                Err(mpsc::error::TrySendError::Full(event)) => self.backlog.push_back(event),
+            }
+        } else if self.backlog.len() < MAX_EVENT_BACKLOG {
+            self.backlog.push_back(event);
+        } else {
+            tracing::warn!("application is too far behind, event dropped");
+        }
+    }
+
+    /// Whether the server may read another datagram. Beyond the backlog limit
+    /// datagrams stay in the socket: a client's request is then not
+    /// acknowledged and the client repeats it, instead of the event being lost.
+    fn has_room(&self) -> bool {
+        self.backlog.len() < MAX_EVENT_BACKLOG
+    }
+
+    fn has_backlog(&self) -> bool {
+        !self.backlog.is_empty()
+    }
+
+    /// Move the oldest held-back event into the channel once it has room.
+    ///
+    /// Cancel-safe: the event leaves the backlog only after a slot is reserved.
+    async fn deliver(&mut self) {
+        match self.tx.reserve().await {
+            Ok(permit) => {
+                if let Some(event) = self.backlog.pop_front() {
+                    permit.send(event);
+                }
+            }
+            // The application is gone; nobody is waiting for these.
+            Err(_) => self.backlog.clear(),
+        }
+    }
+}
+
+/// What the server task keeps between datagrams.
+struct ServerState {
+    tunnels: Vec<TunnelClient>,
+    next_channel_id: u8,
+    events: EventQueue,
+    /// Turns `true` when the server is to stop. Its sender is owned by the
+    /// [`DeviceServer`], so dropping the server stops the task, too.
+    stop: watch::Receiver<bool>,
+}
+
+impl ServerState {
+    /// Whether the server was asked to stop, or its handle is gone.
+    fn stopping(&self) -> bool {
+        *self.stop.borrow() || self.stop.has_changed().is_err()
+    }
+}
+
+/// Resolves when the server is to stop. Cancel-safe.
+async fn stop_requested(stop: &mut watch::Receiver<bool>) {
+    // Err means the sender is gone, which is a stop request as well.
+    let _ = stop.wait_for(|stop| *stop).await;
+}
+
 /// KNXnet/IP device server — handles both routing and tunneling.
 ///
 /// This is what makes a device programmable by ETS.
+///
+/// # Stopping
+///
+/// [`DeviceServer::shutdown`] stops the server and returns once its socket is
+/// released, so the address can be bound again at once. [`DeviceServer::stop`]
+/// and dropping the server request the same, and take effect as soon as the
+/// server task next runs (also while it waits for a client's acknowledgement),
+/// not after the queued frames have been sent. In all cases the tunnel clients
+/// are sent a `DISCONNECT_REQUEST` on a best-effort basis.
 pub struct DeviceServer {
     rx: mpsc::Receiver<ServerEvent>,
     tx_cmd: mpsc::Sender<ServerCmd>,
     local_addr: SocketAddr,
+    stop: watch::Sender<bool>,
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 
 enum ServerCmd {
@@ -64,8 +167,6 @@ enum ServerCmd {
     SendFrame(CemiFrame),
     /// Send a CEMI frame to a specific tunnel client (response).
     SendToTunnel(u8, CemiFrame),
-    /// Stop the server.
-    Stop,
 }
 
 impl DeviceServer {
@@ -93,21 +194,12 @@ impl DeviceServer {
 
         tracing::info!("KNXnet/IP device server started on port {KNX_PORT}");
 
-        let (event_tx, event_rx) = mpsc::channel(64);
-        let (cmd_tx, cmd_rx) = mpsc::channel(16);
-
         let multicast_target = Some(SocketAddr::V4(SocketAddrV4::new(
             KNX_MULTICAST_ADDR,
             KNX_PORT,
         )));
 
-        tokio::spawn(server_task(socket, multicast_target, event_tx, cmd_rx));
-
-        Ok(Self {
-            rx: event_rx,
-            tx_cmd: cmd_tx,
-            local_addr: bound_addr,
-        })
+        Ok(Self::spawn(socket, multicast_target, bound_addr))
     }
 
     /// Start the device server on a specific unicast address.
@@ -125,16 +217,33 @@ impl DeviceServer {
 
         tracing::info!(%local_addr, "KNXnet/IP device server started");
 
+        Ok(Self::spawn(socket, None, local_addr))
+    }
+
+    fn spawn(
+        socket: UdpSocket,
+        multicast_target: Option<SocketAddr>,
+        local_addr: SocketAddr,
+    ) -> Self {
         let (event_tx, event_rx) = mpsc::channel(64);
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
+        let (stop_tx, stop_rx) = watch::channel(false);
 
-        tokio::spawn(server_task(socket, None, event_tx, cmd_rx));
+        let task = tokio::spawn(server_task(
+            socket,
+            multicast_target,
+            event_tx,
+            cmd_rx,
+            stop_rx,
+        ));
 
-        Ok(Self {
+        Self {
             rx: event_rx,
             tx_cmd: cmd_tx,
             local_addr,
-        })
+            stop: stop_tx,
+            task: Some(task),
+        }
     }
 
     /// Local UDP address the server is bound to.
@@ -143,11 +252,25 @@ impl DeviceServer {
     }
 
     /// Receive the next event (incoming frame from tunnel or multicast).
+    ///
+    /// The server never waits for the application: events are queued, in order,
+    /// and the application may send frames from the task that receives. If it
+    /// falls more than about a thousand events behind, the server stops reading
+    /// datagrams (clients then repeat their requests) and, for frames that were
+    /// already read, drops the excess and logs a warning.
     pub async fn recv(&mut self) -> Option<ServerEvent> {
         self.rx.recv().await
     }
 
     /// Send a CEMI frame to all connected tunnel clients and multicast.
+    ///
+    /// The frame goes out as an `L_Data.ind`: a frame built as `L_Data.req`
+    /// (0x11), which is what a bus access unit queues, is sent with message
+    /// code 0x29. Other message codes are sent as they are.
+    ///
+    /// Each tunnel client has to acknowledge the frame: it is sent up to three
+    /// times, one second apart, and a client that never acknowledges is
+    /// disconnected (and sent a `DISCONNECT_REQUEST` on a best-effort basis).
     ///
     /// # Errors
     ///
@@ -161,6 +284,8 @@ impl DeviceServer {
 
     /// Send a response frame to a specific tunnel client.
     ///
+    /// An `L_Data.req` is sent as `L_Data.ind`, as for [`Self::send_frame`].
+    ///
     /// # Errors
     ///
     /// Returns [`KnxIpError`] if the server is closed.
@@ -171,9 +296,28 @@ impl DeviceServer {
             .map_err(|_| KnxIpError::Closed)
     }
 
-    /// Stop the server.
+    /// Ask the server to stop.
+    ///
+    /// Returns at once; the server task ends as soon as it runs next, which
+    /// is not necessarily before this returns. Use [`DeviceServer::shutdown`]
+    /// to wait until the socket is released.
+    #[expect(
+        clippy::unused_async,
+        reason = "async since 0.9; callers await it, removing that would break them"
+    )]
     pub async fn stop(&self) {
-        let _ = self.tx_cmd.send(ServerCmd::Stop).await;
+        self.stop.send_replace(true);
+    }
+
+    /// Stop the server and wait until its socket is released.
+    ///
+    /// When this returns the address can be bound again. Frames still queued
+    /// for the tunnel clients are not sent.
+    pub async fn shutdown(mut self) {
+        self.stop.send_replace(true);
+        if let Some(task) = self.task.take() {
+            let _ = task.await;
+        }
     }
 }
 
@@ -184,16 +328,30 @@ async fn server_task(
     multicast_target: Option<SocketAddr>,
     event_tx: mpsc::Sender<ServerEvent>,
     mut cmd_rx: mpsc::Receiver<ServerCmd>,
+    stop: watch::Receiver<bool>,
 ) {
-    let mut tunnels: Vec<TunnelClient> = Vec::new();
-    let mut next_channel_id: u8 = 1;
+    let mut state = ServerState {
+        tunnels: Vec::new(),
+        next_channel_id: 1,
+        events: EventQueue::new(event_tx),
+        stop,
+    };
     let mut buf = [0u8; RECV_BUF_SIZE];
     let cleanup = tokio::time::interval(tokio::time::Duration::from_secs(CLEANUP_INTERVAL_SECS));
     tokio::pin!(cleanup);
 
     loop {
+        // Not `biased`: with a fixed order, a flood of datagrams (the socket arm is
+        // always ready) would starve the commands and the hand-over of events to the
+        // application. The random order serves every ready arm; the stop request is
+        // checked here as well, so it is seen after at most one more datagram.
+        if state.stopping() {
+            break;
+        }
         tokio::select! {
-            result = socket.recv_from(&mut buf) => {
+            () = stop_requested(&mut state.stop) => break,
+
+            result = socket.recv_from(&mut buf), if state.events.has_room() => {
                 let (n, src) = match result {
                     Ok(r) => r,
                     Err(e) => {
@@ -201,58 +359,42 @@ async fn server_task(
                         break;
                     }
                 };
-                handle_packet(
-                    &buf[..n], src, &socket, &event_tx,
-                    &mut tunnels, &mut next_channel_id,
-                ).await;
+                handle_packet(&buf[..n], src, &socket, &mut state).await;
             }
 
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(ServerCmd::SendFrame(cemi)) => {
-                        let stashed = send_to_all(
-                            &socket,
-                            multicast_target.as_ref(),
-                            &mut tunnels,
-                            &cemi,
-                        ).await;
-                        for (data, src) in stashed {
-                            handle_packet(
-                                &data, src, &socket, &event_tx,
-                                &mut tunnels, &mut next_channel_id,
-                            ).await;
-                        }
+                        send_to_all(&socket, multicast_target.as_ref(), &mut state, &cemi).await;
                     }
                     Some(ServerCmd::SendToTunnel(ch, cemi)) => {
-                        let stashed = send_to_tunnel_client(&socket, &mut tunnels, ch, &cemi).await;
-                        for (data, src) in stashed {
-                            handle_packet(
-                                &data, src, &socket, &event_tx,
-                                &mut tunnels, &mut next_channel_id,
-                            ).await;
-                        }
+                        send_to_tunnel_client(&socket, &mut state, ch, &cemi).await;
                     }
-                    Some(ServerCmd::Stop) | None => break,
+                    None => break,
                 }
             }
 
+            () = state.events.deliver(), if state.events.has_backlog() => {}
+
             _ = cleanup.tick() => {
-                cleanup_stale_tunnels(&mut tunnels);
+                cleanup_stale_tunnels(&mut state.tunnels);
             }
+        }
+    }
+
+    // Tell the tunnel clients, best effort: nobody waits for the answers.
+    let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
+    for tunnel in &state.tunnels {
+        let request = KnxIpFrame::disconnect_request(tunnel.channel_id, Hpai::nat_udp(port));
+        if let Some(bytes) = serialize_frame(&request) {
+            let _ = socket.send_to(&bytes, tunnel.ctrl_addr).await;
         }
     }
 
     tracing::debug!("device server task ended");
 }
 
-async fn handle_packet(
-    data: &[u8],
-    src: SocketAddr,
-    socket: &UdpSocket,
-    event_tx: &mpsc::Sender<ServerEvent>,
-    tunnels: &mut Vec<TunnelClient>,
-    next_channel_id: &mut u8,
-) {
+async fn handle_packet(data: &[u8], src: SocketAddr, socket: &UdpSocket, state: &mut ServerState) {
     let Ok(frame) = KnxIpFrame::parse(data) else {
         return;
     };
@@ -260,20 +402,28 @@ async fn handle_packet(
     match frame.service_type {
         ServiceType::RoutingIndication => {
             if let Ok(cemi) = CemiFrame::parse(&frame.body) {
-                let _ = event_tx.send(ServerEvent::RoutingFrame(cemi)).await;
+                state.events.push(ServerEvent::RoutingFrame(cemi));
             }
         }
         ServiceType::ConnectRequest => {
-            handle_connect(socket, src, &frame, tunnels, next_channel_id).await;
+            handle_connect(
+                socket,
+                src,
+                &frame,
+                &mut state.tunnels,
+                &mut state.next_channel_id,
+            )
+            .await;
         }
         ServiceType::ConnectionStateRequest => {
-            handle_heartbeat(socket, src, &frame, tunnels).await;
+            handle_heartbeat(socket, src, &frame, &mut state.tunnels).await;
         }
         ServiceType::DisconnectRequest => {
-            handle_disconnect(socket, src, &frame, tunnels).await;
+            handle_disconnect(socket, src, &frame, &mut state.tunnels).await;
         }
         ServiceType::TunnelingRequest => {
-            handle_tunneling_request(socket, src, &frame, tunnels, event_tx).await;
+            handle_tunneling_request(socket, src, &frame, &mut state.tunnels, &mut state.events)
+                .await;
         }
         ServiceType::TunnelingAck => {} // client ack, nothing to do
         ServiceType::SearchRequest => {
@@ -484,7 +634,7 @@ async fn handle_tunneling_request(
     src: SocketAddr,
     frame: &KnxIpFrame,
     tunnels: &mut [TunnelClient],
-    event_tx: &mpsc::Sender<ServerEvent>,
+    events: &mut EventQueue,
 ) {
     let Some(ch) = ConnectionHeader::parse(&frame.body) else {
         return;
@@ -534,7 +684,7 @@ async fn handle_tunneling_request(
     // Parse CEMI
     let cemi_data = &frame.body[ConnectionHeader::LEN as usize..];
     if let Ok(cemi) = CemiFrame::parse(cemi_data) {
-        let _ = event_tx.send(ServerEvent::TunnelFrame(cemi)).await;
+        events.push(ServerEvent::TunnelFrame(cemi));
     }
 }
 
@@ -554,114 +704,181 @@ async fn send_tunneling_ack(
 async fn send_to_all(
     socket: &UdpSocket,
     multicast: Option<&SocketAddr>,
-    tunnels: &mut [TunnelClient],
+    state: &mut ServerState,
     cemi: &CemiFrame,
-) -> Vec<(Vec<u8>, SocketAddr)> {
+) {
+    let cemi = as_indication(cemi);
+
     // Send as routing indication to multicast
     if let Some(multicast) = multicast {
-        let routing = KnxIpFrame::routing_indication(cemi.as_bytes());
+        let routing = KnxIpFrame::routing_indication(&cemi);
         if let Some(bytes) = serialize_frame(&routing) {
             let _ = socket.send_to(&bytes, multicast).await;
         }
     }
 
-    // Send as tunneling indication to all tunnel clients
-    let mut stashed = Vec::new();
-    for tunnel in tunnels.iter_mut() {
-        stashed.extend(send_tunneling_to(socket, tunnel, cemi).await);
+    // Send as tunneling indication to all tunnel clients. The table changes
+    // while the acknowledgements are awaited (clients connect and leave), so
+    // work from the channels that exist now.
+    let channels: Vec<u8> = state.tunnels.iter().map(|t| t.channel_id).collect();
+    for channel_id in channels {
+        if state.stopping() {
+            return;
+        }
+        send_tunneling_to(socket, state, channel_id, &cemi).await;
     }
-    stashed
+}
+
+/// The cEMI bytes a server puts on the wire for `cemi`.
+///
+/// A server delivers what happened on the bus to its clients, as an
+/// `L_Data.ind` in a tunnelling request or a routing indication. `L_Data.req`
+/// (0x11) is the client-to-server direction, but it is what a bus access unit
+/// queues when it sends, and what a caller of [`DeviceServer::send_frame`]
+/// naturally holds. knxd's tunnelling client and routing driver discard
+/// anything but 0x29 ("Unexpected CEMI Type"); the C++ reference sets
+/// `L_data_ind` in `DataLinkLayer::sendTelegram`. Every other message code,
+/// `L_Data.con` for instance, is passed through.
+fn as_indication(cemi: &CemiFrame) -> Cow<'_, [u8]> {
+    let bytes = cemi.as_bytes();
+    if bytes.first() == Some(&(MessageCode::LDataReq as u8)) {
+        let mut indication = bytes.to_vec();
+        indication[0] = MessageCode::LDataInd as u8;
+        Cow::Owned(indication)
+    } else {
+        Cow::Borrowed(bytes)
+    }
 }
 
 async fn send_to_tunnel_client(
     socket: &UdpSocket,
-    tunnels: &mut [TunnelClient],
+    state: &mut ServerState,
     channel_id: u8,
     cemi: &CemiFrame,
-) -> Vec<(Vec<u8>, SocketAddr)> {
-    let tunnel = tunnels.iter_mut().find(|t| t.channel_id == channel_id);
-    if let Some(tunnel) = tunnel {
-        send_tunneling_to(socket, tunnel, cemi).await
-    } else {
-        Vec::new()
+) {
+    send_tunneling_to(socket, state, channel_id, &as_indication(cemi)).await;
+}
+
+/// Forget a tunnel client whose acknowledgements stayed away and tell it, best
+/// effort, so that a client that is merely cut off knows to reconnect.
+async fn drop_lost_tunnel(
+    socket: &UdpSocket,
+    tunnels: &mut Vec<TunnelClient>,
+    channel_id: u8,
+    data_addr: SocketAddr,
+) {
+    let Some(position) = tunnels
+        .iter()
+        .position(|t| t.channel_id == channel_id && t.data_addr == data_addr)
+    else {
+        return;
+    };
+    let tunnel = tunnels.remove(position);
+    tracing::warn!(
+        channel_id,
+        client = %tunnel.ctrl_addr,
+        "tunnel client dropped: no acknowledgement after {MAX_RETRIES} attempts"
+    );
+    let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
+    let request = KnxIpFrame::disconnect_request(channel_id, Hpai::nat_udp(port));
+    if let Some(bytes) = serialize_frame(&request) {
+        let _ = socket.send_to(&bytes, tunnel.ctrl_addr).await;
     }
 }
 
-/// Send a tunneling request to a client and wait for ack.
+/// Send a tunneling request to a client and wait for its ack, up to
+/// [`MAX_RETRIES`] times. A client that never acknowledges is dropped.
 ///
-/// Returns any non-ack packets received during the ack wait so the caller
-/// can re-process them. This is necessary because the server shares a single
-/// UDP socket for all tunnels and routing.
+/// The tunnel is looked up again by channel id wherever the table may have
+/// changed: packets are served while the ack is awaited.
 async fn send_tunneling_to(
     socket: &UdpSocket,
-    tunnel: &mut TunnelClient,
-    cemi: &CemiFrame,
-) -> Vec<(Vec<u8>, SocketAddr)> {
-    let seq = tunnel.send_seq;
-    let frame = KnxIpFrame::tunneling_request(tunnel.channel_id, seq, cemi.as_bytes());
-    let Some(frame_bytes) = serialize_frame(&frame) else {
-        return Vec::new();
+    state: &mut ServerState,
+    channel_id: u8,
+    cemi: &[u8],
+) {
+    let Some((seq, data_addr)) = state
+        .tunnels
+        .iter()
+        .find(|t| t.channel_id == channel_id)
+        .map(|t| (t.send_seq, t.data_addr))
+    else {
+        return;
     };
-    let mut stashed: Vec<(Vec<u8>, SocketAddr)> = Vec::new();
+    let frame = KnxIpFrame::tunneling_request(channel_id, seq, cemi);
+    let Some(frame_bytes) = serialize_frame(&frame) else {
+        // Cannot happen for a cEMI frame that came out of a CemiFrame; the
+        // client is not at fault.
+        return;
+    };
 
     for attempt in 0..MAX_RETRIES {
-        if let Err(e) = socket.send_to(&frame_bytes, tunnel.data_addr).await {
-            tracing::debug!(channel = tunnel.channel_id, attempt = attempt + 1, error = %e, "send failed");
+        if let Err(e) = socket.send_to(&frame_bytes, data_addr).await {
+            tracing::debug!(channel = channel_id, attempt = attempt + 1, error = %e, "send failed");
             continue;
         }
 
-        // Wait for ack from this specific client
-        match wait_for_tunneling_ack(
-            socket,
-            tunnel.data_addr,
-            tunnel.channel_id,
-            seq,
-            &mut stashed,
-        )
-        .await
-        {
-            Ok(()) => {
-                tunnel.send_seq = seq.wrapping_add(1);
-                return stashed;
+        match wait_for_tunneling_ack(socket, state, channel_id, data_addr, seq).await {
+            AckWait::Received => {
+                if let Some(tunnel) = state
+                    .tunnels
+                    .iter_mut()
+                    .find(|t| t.channel_id == channel_id && t.data_addr == data_addr)
+                {
+                    tunnel.send_seq = seq.wrapping_add(1);
+                }
+                return;
             }
-            Err(()) => {
-                tracing::debug!(
-                    channel = tunnel.channel_id,
-                    attempt = attempt + 1,
-                    "ack timeout"
-                );
+            AckWait::Gone | AckWait::Stopped => return,
+            AckWait::TimedOut => {
+                tracing::debug!(channel = channel_id, attempt = attempt + 1, "ack timeout");
             }
         }
     }
 
-    tracing::warn!(
-        channel = tunnel.channel_id,
-        "no ack after {MAX_RETRIES} retries"
-    );
-    stashed
+    tracing::debug!(channel = channel_id, "no ack after {MAX_RETRIES} attempts");
+    drop_lost_tunnel(socket, &mut state.tunnels, channel_id, data_addr).await;
+}
+
+/// How waiting for a tunnelling ack ended.
+enum AckWait {
+    Received,
+    TimedOut,
+    /// The tunnel left (disconnect request) while the ack was awaited.
+    Gone,
+    /// The server was asked to stop.
+    Stopped,
 }
 
 /// Wait for a `TunnelingAck` matching the given channel and sequence.
-/// Any other packets received are stashed for later re-processing.
+///
+/// Every other packet is served at once rather than set aside: a tunnelling
+/// request of this very client is acknowledged now (the client may wait for
+/// that before it reads our frame, and both would wait for each other),
+/// heartbeats are answered, other clients can connect.
 async fn wait_for_tunneling_ack(
     socket: &UdpSocket,
-    expected_src: SocketAddr,
+    state: &mut ServerState,
     channel_id: u8,
+    expected_src: SocketAddr,
     seq: u8,
-    stashed: &mut Vec<(Vec<u8>, SocketAddr)>,
-) -> Result<(), ()> {
+) -> AckWait {
     let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
     let mut buf = [0u8; RECV_BUF_SIZE];
 
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            return Err(());
+            return AckWait::TimedOut;
         }
 
-        let Ok(Ok((n, src))) = tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await
-        else {
-            return Err(());
+        let received = tokio::select! {
+            biased;
+            () = stop_requested(&mut state.stop) => return AckWait::Stopped,
+            received = tokio::time::timeout(remaining, socket.recv_from(&mut buf)) => received,
+        };
+        let Ok(Ok((n, src))) = received else {
+            return AckWait::TimedOut;
         };
 
         // Check if this is our ack
@@ -672,11 +889,17 @@ async fn wait_for_tunneling_ack(
             && ack_ch.channel_id == channel_id
             && ack_ch.sequence_counter == seq
         {
-            return Ok(());
+            return AckWait::Received;
         }
 
-        // Not our ack — stash for re-processing
-        stashed.push((buf[..n].to_vec(), src));
+        handle_packet(&buf[..n], src, socket, state).await;
+        if !state
+            .tunnels
+            .iter()
+            .any(|t| t.channel_id == channel_id && t.data_addr == expected_src)
+        {
+            return AckWait::Gone;
+        }
     }
 }
 
@@ -690,4 +913,82 @@ fn cleanup_stale_tunnels(tunnels: &mut Vec<TunnelClient>) {
         }
         alive
     });
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
+    use knx_rs_core::types::Priority;
+
+    fn event(ga: u16) -> ServerEvent {
+        ServerEvent::TunnelFrame(CemiFrame::new_l_data(
+            MessageCode::LDataReq,
+            IndividualAddress::from_raw(0x1102),
+            DestinationAddress::Group(GroupAddress::from_raw(ga)),
+            Priority::Low,
+            &[0x00, 0x81],
+        ))
+    }
+
+    fn ga(event: &ServerEvent) -> u16 {
+        match event {
+            ServerEvent::TunnelFrame(f) | ServerEvent::RoutingFrame(f) => {
+                f.destination_address_raw()
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn event_queue_holds_back_what_does_not_fit_and_keeps_the_order() {
+        let (tx, mut rx) = mpsc::channel(2);
+        let mut queue = EventQueue::new(tx);
+        for i in 0..5 {
+            queue.push(event(i)); // two fit, three are held back
+        }
+        assert_eq!(queue.backlog.len(), 3);
+
+        let mut seen = Vec::new();
+        while seen.len() < 5 {
+            seen.push(ga(&rx.recv().await.unwrap()));
+            if queue.has_backlog() {
+                queue.deliver().await;
+            }
+        }
+        assert_eq!(seen, [0, 1, 2, 3, 4]);
+        assert!(!queue.has_backlog());
+    }
+
+    #[tokio::test]
+    async fn event_queue_stops_reading_and_then_drops_beyond_its_limit() {
+        let (tx, _rx) = mpsc::channel(1);
+        let mut queue = EventQueue::new(tx);
+        for i in 0..=u16::try_from(MAX_EVENT_BACKLOG).unwrap() {
+            queue.push(event(i));
+        }
+        // One event is in the channel, the backlog is at its limit.
+        assert_eq!(queue.backlog.len(), MAX_EVENT_BACKLOG);
+        assert!(!queue.has_room(), "the server must stop reading datagrams");
+        queue.push(event(9999));
+        assert_eq!(
+            queue.backlog.len(),
+            MAX_EVENT_BACKLOG,
+            "the excess is dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_queue_discards_its_backlog_when_the_application_is_gone() {
+        let (tx, rx) = mpsc::channel(1);
+        let mut queue = EventQueue::new(tx);
+        queue.push(event(1));
+        queue.push(event(2));
+        assert!(queue.has_backlog());
+        drop(rx);
+        queue.deliver().await;
+        assert!(!queue.has_backlog());
+        queue.push(event(3)); // must not panic or grow
+        assert!(!queue.has_backlog());
+    }
 }

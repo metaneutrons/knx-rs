@@ -443,7 +443,7 @@ impl TunnelState {
         for attempt in 0..MAX_RETRIES {
             self.socket.send(&frame_bytes).await?;
 
-            match self.wait_for_ack().await {
+            match self.wait_for_ack(cemi_tx).await {
                 Ok(buffered) => {
                     self.send_seq = self.send_seq.wrapping_add(1);
                     // TUN-1: Re-process any frames received while waiting for ack
@@ -483,8 +483,16 @@ impl TunnelState {
     }
 
     /// Wait for a tunneling ack matching our channel and sequence.
-    /// Returns any non-ack frames received while waiting (TUN-1: no frame loss).
-    async fn wait_for_ack(&self) -> Result<Vec<Vec<u8>>, KnxIpError> {
+    ///
+    /// A tunnelling request from the server is acknowledged and delivered at
+    /// once, not after our own ack: the server may be waiting for that ack
+    /// before it reads our request, and both would wait for each other until
+    /// the retries run out. Returns any other frames received while waiting
+    /// (TUN-1: no frame loss).
+    async fn wait_for_ack(
+        &mut self,
+        cemi_tx: &mpsc::Sender<CemiFrame>,
+    ) -> Result<Vec<Vec<u8>>, KnxIpError> {
         let mut buf = [0u8; RECV_BUF_SIZE];
         let mut buffered_frames = Vec::new();
         let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
@@ -507,6 +515,10 @@ impl TunnelState {
                         }
                         return Ok(buffered_frames);
                     }
+                }
+                if resp.service_type == ServiceType::TunnelingRequest {
+                    self.handle_tunneling_request(&resp, cemi_tx).await;
+                    continue;
                 }
                 // Not our ack — buffer for later processing
                 buffered_frames.push(buf[..n].to_vec());

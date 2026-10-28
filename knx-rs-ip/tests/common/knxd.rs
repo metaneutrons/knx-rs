@@ -231,6 +231,19 @@ impl Knxd {
         eprintln!("knxtool groupswrite {group} {value}: {}", out.trim());
     }
 
+    /// Freeze the container: knxd stops answering, but its socket still
+    /// collects datagrams, like a client that has hung.
+    pub fn pause(&self) {
+        let out = docker(&["pause", &self.name]).expect("docker pause");
+        assert!(out.status.success(), "docker pause: {}", text(&out));
+    }
+
+    /// Resume a frozen container.
+    pub fn unpause(&self) {
+        let out = docker(&["unpause", &self.name]).expect("docker unpause");
+        assert!(out.status.success(), "docker unpause: {}", text(&out));
+    }
+
     /// knxd's log so far.
     pub fn logs(&self) -> String {
         text(&docker(&["logs", &self.name]).expect("docker logs"))
