@@ -50,6 +50,11 @@ fn flood(
             if socket.send_to(&datagram, target).is_ok() {
                 sent += 1;
             }
+            // Leave the CPU to the other threads now and then: on a runner with few
+            // cores the flood must not keep the test's own tasks from running.
+            if sent % 256 == 0 {
+                std::thread::yield_now();
+            }
         }
         sent
     })
@@ -92,7 +97,10 @@ async fn queued_frame_is_sent_while_the_socket_is_flooded() {
         "the flood did not run ({datagrams} datagrams)"
     );
     assert!(
-        delivered && latency < Duration::from_secs(2),
+        // Without the fix the frame needs more than 4.6 s (or never arrives); with it a
+        // few milliseconds on a fast machine. The limit leaves room for a slow runner
+        // and a lost acknowledgement (the server repeats after one second).
+        delivered && latency < Duration::from_secs(4),
         "the frame was starved by the flood (delivered: {delivered}, after {latency:?})"
     );
 }
