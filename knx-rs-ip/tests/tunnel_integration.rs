@@ -397,6 +397,27 @@ async fn full_device_stack_group_read_response() {
     let ack = KnxIpFrame::parse(&ack_bytes).unwrap();
     assert_eq!(ack.service_type, ServiceType::TunnelingAck);
 
+    // ── The server confirms the request (L_Data.con); acknowledge it ──
+    let mut con_buf = [0u8; 512];
+    let (n, _) = timeout(TEST_TIMEOUT, client.recv_from(&mut con_buf))
+        .await
+        .expect("timeout waiting for the confirmation")
+        .unwrap();
+    let con = KnxIpFrame::parse(&con_buf[..n]).unwrap();
+    assert_eq!(con.service_type, ServiceType::TunnelingRequest);
+    assert_eq!(
+        con.body[ConnectionHeader::LEN as usize],
+        MessageCode::LDataCon as u8
+    );
+    let con_seq = ConnectionHeader::parse(&con.body).unwrap().sequence_counter;
+    client
+        .send_to(
+            &KnxIpFrame::tunneling_ack(channel_id, con_seq, 0).to_bytes(),
+            server_addr,
+        )
+        .await
+        .unwrap();
+
     // ── BAU processes the frame ──
     let event = timeout(TEST_TIMEOUT, server.recv())
         .await
