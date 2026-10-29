@@ -79,7 +79,11 @@ Changes for earlier versions are listed in the [changelog](CHANGELOG.md).
   KNX spec). `recv_event()` also exposes router-reported `RoutingLostMessage`
   diagnostics with source, device state, and lost-routing-frame count;
   `recv()` remains frame-only.
-- **Device server** — accept incoming tunnel connections from ETS on port 3671, simultaneous multicast routing and unicast tunneling
+- **Device server** — accept incoming tunnel connections from ETS on port 3671, simultaneous multicast routing and unicast tunneling.
+  Frames are delivered to tunnel clients as `L_Data.ind`, a client's `L_Data.req` is confirmed with an `L_Data.con`, a client that
+  does not acknowledge a frame is dropped, and the server task never waits for its consumer. `stop()` and `shutdown()` (and
+  dropping the server) release the UDP socket. It does not yet answer `SEARCH_REQUEST` and `DESCRIPTION_REQUEST`, so ETS
+  discovery does not find it ([#105](https://github.com/metaneutrons/knx-rs/issues/105)); add it by IP address instead
 - **Discovery** — search request/response for finding gateways on the local network
 - **Multiplexer** — fan out one connection into multiple independent handles
 - **URL parsing** — `udp://`, `tunnel://`, `router://` with multicast auto-detection
@@ -320,7 +324,8 @@ All 34 main groups from the C++ reference are supported:
 Validated against the [OpenKNX/knx](https://github.com/OpenKNX/knx) C++ reference stack:
 
 - **Golden test vectors** — C++ harness (`test-vectors/generate.cpp`) generates JSON fixtures for CEMI frames, CEMI setters, and DPT conversions, verified byte-for-byte in Rust
-- **Integration tests** — tunnel server ↔ client on real UDP loopback (connect, heartbeat, frame exchange, disconnect)
+- **Integration tests** — tunnel server ↔ client on real UDP loopback (connect, heartbeat, frame exchange, disconnect), plus the device server's acknowledgement, confirmation, backpressure, fairness and lifecycle behaviour
+- **Interoperability with knxd** — the tunnel client and the device server are tested against a real [knxd](https://github.com/knxd/knxd) in Docker, in their own CI job
 - **Unit tests** — extensive coverage across all crates: protocol types, DPT conversions, parsers, the load state machine, and the BAU service handlers
 - **knxprod hash verification** — 28 test files from 5 manufacturers, byte-exact match with ETS DLL output
 
