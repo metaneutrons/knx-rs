@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.12.0](https://github.com/metaneutrons/knx-rs/compare/v0.11.0...v0.12.0) (2026-10-29)
+
+
+### Features
+
+* **ip:** confirm the L_Data.req of a tunnel client with an L_Data.con ([06df1ee](https://github.com/metaneutrons/knx-rs/commit/06df1ee8cd8f3e96688d8e84f3afe2cc70187bc0))
+* **ip:** make DeviceServer stoppable and release its socket on stop and drop ([1a6113a](https://github.com/metaneutrons/knx-rs/commit/1a6113adcaf8d48d5b586000f7c10900144995cc))
+
+
+### Bug Fixes
+
+* **device:** answer a memory read longer than 15 octets instead of asserting ([f5aedac](https://github.com/metaneutrons/knx-rs/commit/f5aedac8dee430744966ed32b26123a4b5746cb0))
+* **device:** answer a request that came over a connection on that connection ([f5aedac](https://github.com/metaneutrons/knx-rs/commit/f5aedac8dee430744966ed32b26123a4b5746cb0))
+* **device:** keep the count and address of connected A_Memory services ([f5aedac](https://github.com/metaneutrons/knx-rs/commit/f5aedac8dee430744966ed32b26123a4b5746cb0))
+* **device:** read A_Restart master reset fields as the APDU decoder delivers them ([f5aedac](https://github.com/metaneutrons/knx-rs/commit/f5aedac8dee430744966ed32b26123a4b5746cb0))
+* **ip:** acknowledge tunnelling requests while waiting for an ack ([1a6113a](https://github.com/metaneutrons/knx-rs/commit/1a6113adcaf8d48d5b586000f7c10900144995cc))
+* **ip:** deliver frames from DeviceServer as L_Data.ind ([1a6113a](https://github.com/metaneutrons/knx-rs/commit/1a6113adcaf8d48d5b586000f7c10900144995cc))
+* **ip:** drop a tunnel client that does not acknowledge a frame ([1a6113a](https://github.com/metaneutrons/knx-rs/commit/1a6113adcaf8d48d5b586000f7c10900144995cc))
+* **ip:** never let the device server task wait for its consumer ([1a6113a](https://github.com/metaneutrons/knx-rs/commit/1a6113adcaf8d48d5b586000f7c10900144995cc))
+
 ## [0.11.0](https://github.com/metaneutrons/knx-rs/compare/v0.10.1...v0.11.0) (2026-10-24)
 
 
