@@ -30,6 +30,28 @@ async fn send_recv(socket: &UdpSocket, target: SocketAddr, data: &[u8]) -> Vec<u
     buf[..n].to_vec()
 }
 
+/// The server confirms every `L_Data.req` of a client with an `L_Data.con` in a
+/// tunnelling request of its own, which the client has to acknowledge. Read it,
+/// check it, and acknowledge it.
+async fn expect_confirmation(socket: &UdpSocket, target: SocketAddr, ch_id: u8) {
+    let mut buf = [0u8; 512];
+    let (n, _) = timeout(TIMEOUT, socket.recv_from(&mut buf))
+        .await
+        .expect("timeout waiting for the confirmation")
+        .unwrap();
+    let frame = KnxIpFrame::parse(&buf[..n]).unwrap();
+    assert_eq!(frame.service_type, ServiceType::TunnelingRequest);
+    let header = ConnectionHeader::parse(&frame.body).unwrap();
+    assert_eq!(header.channel_id, ch_id);
+    assert_eq!(
+        frame.body[ConnectionHeader::LEN as usize],
+        MessageCode::LDataCon as u8,
+        "the server confirms the request"
+    );
+    let ack = KnxIpFrame::tunneling_ack(ch_id, header.sequence_counter, 0).to_bytes();
+    socket.send_to(&ack, target).await.unwrap();
+}
+
 fn connect_request(port: u16) -> Vec<u8> {
     let h = Hpai {
         protocol: HostProtocol::Ipv4Udp,
@@ -114,6 +136,8 @@ async fn demo_device_full_flow() {
         ServiceType::TunnelingAck
     );
 
+    expect_confirmation(&client, target, ch_id).await;
+
     // Server should deliver the frame as an event
     let event = timeout(TIMEOUT, server.recv()).await.unwrap().unwrap();
     if let ServerEvent::TunnelFrame(f) = event {
@@ -138,6 +162,8 @@ async fn demo_device_full_flow() {
         KnxIpFrame::parse(&ack2).unwrap().service_type,
         ServiceType::TunnelingAck
     );
+
+    expect_confirmation(&client, target, ch_id).await;
 
     // Process the read request in the BAU
     let event2 = timeout(TIMEOUT, server.recv()).await.unwrap().unwrap();

@@ -38,6 +38,11 @@ const CLEANUP_INTERVAL_SECS: u64 = 30;
 /// channel's own capacity, when the application does not keep up.
 const MAX_EVENT_BACKLOG: usize = 1024;
 
+/// How many confirmations a tunnel client may be owed at once. A client that
+/// sends faster than the server can confirm does not make the server hold an
+/// unbounded queue; the excess is not confirmed.
+const MAX_PENDING_CONFIRMATIONS: usize = 64;
+
 /// A tunnel client connection.
 struct TunnelClient {
     channel_id: u8,
@@ -46,6 +51,8 @@ struct TunnelClient {
     send_seq: u8,
     recv_seq: u8,
     last_heartbeat: tokio::time::Instant,
+    /// `L_Data.con` frames owed to this client for the `L_Data.req` it sent, in order.
+    pending_confirmations: VecDeque<Vec<u8>>,
 }
 
 /// Incoming frame from a tunnel client or multicast.
@@ -145,6 +152,14 @@ async fn stop_requested(stop: &mut watch::Receiver<bool>) {
 /// KNXnet/IP device server — handles both routing and tunneling.
 ///
 /// This is what makes a device programmable by ETS.
+///
+/// # Confirmations
+///
+/// A tunnel client's `L_Data.req` is confirmed, as a KNXnet/IP server does:
+/// the server sends that client an `L_Data.con` (the same frame, confirm flag
+/// clear) once it has taken the request over. The request still arrives as a
+/// [`ServerEvent::TunnelFrame`]. Other message codes from a client are not
+/// confirmed.
 ///
 /// # Stopping
 ///
@@ -380,6 +395,10 @@ async fn server_task(
                 cleanup_stale_tunnels(&mut state.tunnels);
             }
         }
+
+        // Requests may have arrived during any of the above, also while it waited
+        // for an acknowledgement.
+        send_confirmations(&socket, &mut state).await;
     }
 
     // Tell the tunnel clients, best effort: nobody waits for the answers.
@@ -510,6 +529,7 @@ async fn handle_connect(
         send_seq: 0,
         recv_seq: 0,
         last_heartbeat: tokio::time::Instant::now(),
+        pending_confirmations: VecDeque::new(),
     });
 
     tracing::info!(channel_id, %ctrl_addr, "tunnel client connected");
@@ -684,7 +704,61 @@ async fn handle_tunneling_request(
     // Parse CEMI
     let cemi_data = &frame.body[ConnectionHeader::LEN as usize..];
     if let Ok(cemi) = CemiFrame::parse(cemi_data) {
+        // The server owes the client a confirmation for each L_Data.req. It is
+        // sent by the server task once this packet is dealt with: sending needs
+        // the client's acknowledgement, and this function does not wait.
+        if let Some(confirmation) = confirmation_of(&cemi) {
+            if tunnel.pending_confirmations.len() < MAX_PENDING_CONFIRMATIONS {
+                tunnel.pending_confirmations.push_back(confirmation);
+            } else {
+                tracing::warn!(
+                    channel_id = ch.channel_id,
+                    "too many unconfirmed requests, confirmation skipped"
+                );
+            }
+        }
         events.push(ServerEvent::TunnelFrame(cemi));
+    }
+}
+
+/// The `L_Data.con` for an `L_Data.req` a tunnel client sent: the same frame
+/// with message code 0x2E and the confirm flag cleared (no error). `None` for
+/// any other message code, which the server does not confirm.
+///
+/// A server confirms what it took over from a client; knxd does it in its
+/// tunnelling server (`eibnetserver.cpp`, right before it forwards the frame)
+/// and the C++ reference in `DataLinkLayer::dataRequestFromTunnel`.
+fn confirmation_of(cemi: &CemiFrame) -> Option<Vec<u8>> {
+    const CONFIRM_FLAG: u8 = 0x01;
+    let bytes = cemi.as_bytes();
+    if bytes.first() != Some(&(MessageCode::LDataReq as u8)) {
+        return None;
+    }
+    // Message code, additional information length, additional information, then
+    // control field 1, whose lowest bit is the confirm flag.
+    let control_1 = 2 + usize::from(*bytes.get(1)?);
+    let mut confirmation = bytes.to_vec();
+    confirmation[0] = MessageCode::LDataCon as u8;
+    *confirmation.get_mut(control_1)? &= !CONFIRM_FLAG;
+    Some(confirmation)
+}
+
+/// Send the confirmations the tunnel clients are owed, oldest first. Every send
+/// waits for the client's acknowledgement and serves other packets meanwhile,
+/// which may owe more confirmations; those are sent in the same pass.
+async fn send_confirmations(socket: &UdpSocket, state: &mut ServerState) {
+    loop {
+        if state.stopping() {
+            return;
+        }
+        let Some((channel_id, confirmation)) = state.tunnels.iter_mut().find_map(|t| {
+            t.pending_confirmations
+                .pop_front()
+                .map(|confirmation| (t.channel_id, confirmation))
+        }) else {
+            return;
+        };
+        send_tunneling_to(socket, state, channel_id, &confirmation).await;
     }
 }
 
@@ -938,6 +1012,51 @@ mod tests {
                 f.destination_address_raw()
             }
         }
+    }
+
+    #[test]
+    fn a_request_is_confirmed_with_the_confirm_flag_cleared() {
+        let request = CemiFrame::new_l_data(
+            MessageCode::LDataReq,
+            IndividualAddress::from_raw(0x1102),
+            DestinationAddress::Group(GroupAddress::from_raw(0x0901)),
+            Priority::Low,
+            &[0x00, 0x81],
+        );
+        let mut raw = request.as_bytes().to_vec();
+        raw[2] |= 0x01; // a client that set the confirm flag in its request
+        let request = CemiFrame::parse(&raw).unwrap();
+
+        let confirmation = confirmation_of(&request).unwrap();
+        assert_eq!(confirmation[0], MessageCode::LDataCon as u8);
+        assert_eq!(confirmation[2] & 0x01, 0, "confirm flag clear: no error");
+        assert_eq!(
+            confirmation[3..],
+            raw[3..],
+            "the rest is the client's frame"
+        );
+        assert_eq!(
+            confirmation[2] | 0x01,
+            raw[2],
+            "no other control bit changed"
+        );
+    }
+
+    #[test]
+    fn only_a_request_is_confirmed() {
+        assert!(confirmation_of(&event_frame(MessageCode::LDataInd)).is_none());
+        assert!(confirmation_of(&event_frame(MessageCode::LDataCon)).is_none());
+        assert!(confirmation_of(&event_frame(MessageCode::LDataReq)).is_some());
+    }
+
+    fn event_frame(code: MessageCode) -> CemiFrame {
+        CemiFrame::new_l_data(
+            code,
+            IndividualAddress::from_raw(0x1102),
+            DestinationAddress::Group(GroupAddress::from_raw(1)),
+            Priority::Low,
+            &[0x00, 0x81],
+        )
     }
 
     #[tokio::test]
