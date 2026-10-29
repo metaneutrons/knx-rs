@@ -52,7 +52,7 @@ fn flood(
             }
             // Leave the CPU to the other threads now and then: on a runner with few
             // cores the flood must not keep the test's own tasks from running.
-            if sent % 256 == 0 {
+            if sent.is_multiple_of(256) {
                 std::thread::yield_now();
             }
         }
