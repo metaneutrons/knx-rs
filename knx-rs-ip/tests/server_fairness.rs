@@ -93,7 +93,8 @@ async fn queued_frame_is_sent_while_the_socket_is_flooded() {
     stop.store(true, Ordering::Relaxed);
     let datagrams = flooder.join().unwrap();
     assert!(
-        datagrams > 10_000,
+        // A floor, not a rate: a slow runner (macos-x86_64) sent only 6400 in this time.
+        datagrams > 1_000,
         "the flood did not run ({datagrams} datagrams)"
     );
     assert!(
