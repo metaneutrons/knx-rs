@@ -10,7 +10,12 @@ use std::time::Duration;
 
 use common::{RawClient, WAIT};
 use knx_rs_core::address::IndividualAddress;
-use knx_rs_core::knxip::dib::{DeviceInformationDib, DibSequence, DibType, KnxMedium};
+use knx_rs_core::knxip::dib::{
+    DeviceInformationDib, DibSequence, DibType, KnxMedium, ServiceFamily,
+};
+use knx_rs_core::knxip::srp::{
+    mac_address_srp, programming_mode_srp, request_dibs_srp, service_srp,
+};
 use knx_rs_core::knxip::{E_NO_ERROR, HostProtocol, Hpai, KnxIpFrame, ServiceType};
 use knx_rs_ip::{DeviceDescription, DeviceServer};
 use tokio::net::UdpSocket;
@@ -291,11 +296,8 @@ async fn requests_that_cannot_be_answered_are_ignored_and_the_server_goes_on() {
         service(ServiceType::DescriptionRequest, vec![0xFF; 8]),
         // A TCP endpoint is not one a UDP answer can go to.
         service(ServiceType::SearchRequest, tcp_endpoint.to_bytes().to_vec()),
-        // The extended search needs an extended answer, which the server does not give.
-        service(
-            ServiceType::SearchRequestExtended,
-            Hpai::nat_udp(0).to_bytes().to_vec(),
-        ),
+        // The extended search with a body that holds no HPAI.
+        service(ServiceType::SearchRequestExtended, vec![8, 1, 127]),
     ] {
         socket
             .send_to(&datagram, server.local_addr())
@@ -323,4 +325,242 @@ async fn a_server_that_joined_the_multicast_group_advertises_routing() {
     let device = DeviceInformationDib::find_in(dibs).unwrap().unwrap();
     assert_eq!(device.routing_multicast_address(), [224, 0, 23, 12]);
     assert_eq!(families(dibs), [(0x02, 1), (0x04, 1), (0x05, 1)]);
+}
+
+// ── The extended search ─────────────────────────────────────────
+
+fn extended_from(socket: &UdpSocket, srps: &[u8]) -> KnxIpFrame {
+    KnxIpFrame::search_request_extended(
+        Hpai {
+            protocol: HostProtocol::Ipv4Udp,
+            ip: [127, 0, 0, 1],
+            port: socket.local_addr().unwrap().port(),
+        },
+        srps,
+    )
+}
+
+/// Send `request`, and return the answer if there is one within a moment.
+async fn answered(
+    socket: &UdpSocket,
+    server: SocketAddr,
+    request: &KnxIpFrame,
+) -> Option<KnxIpFrame> {
+    socket.send_to(&request.to_bytes(), server).await.unwrap();
+    receive(socket, SILENCE).await.map(|(frame, _)| frame)
+}
+
+#[tokio::test]
+async fn an_extended_search_is_answered_with_the_blocks_of_a_plain_search() {
+    let server = start_with(description()).await;
+    let socket = client().await;
+    let (plain, _) = ask(&socket, server.local_addr(), &search_from(&socket)).await;
+    let (extended, from) = ask(&socket, server.local_addr(), &extended_from(&socket, &[])).await;
+    assert_eq!(from, server.local_addr());
+    assert_eq!(extended.service_type, ServiceType::SearchResponseExtended);
+    assert_eq!(
+        extended.body, plain.body,
+        "the same control endpoint and the same blocks, another service type"
+    );
+}
+
+/// What XKNX's gateway scanner sends: an extended search asking for four blocks, and a
+/// plain one for devices of the first version. Both are answered, naming the same
+/// control endpoint, so that the scanner (which keys what it finds by that endpoint)
+/// sees one gateway.
+#[tokio::test]
+async fn the_requests_of_xknxs_scanner_are_both_answered_with_one_gateway() {
+    let server = start_with(description()).await;
+    let socket = client().await;
+    let wanted = request_dibs_srp(&[
+        DibType::DeviceInformation,
+        DibType::SupportedServiceFamilies,
+        DibType::SecuredServiceFamilies,
+        DibType::TunnelingInformation,
+    ])
+    .unwrap();
+    socket
+        .send_to(
+            &extended_from(&socket, &wanted).to_bytes(),
+            server.local_addr(),
+        )
+        .await
+        .unwrap();
+    socket
+        .send_to(&search_from(&socket).to_bytes(), server.local_addr())
+        .await
+        .unwrap();
+
+    let mut answers = Vec::new();
+    while let Some((frame, _)) = receive(&socket, SILENCE).await {
+        answers.push(frame);
+    }
+    assert_eq!(answers.len(), 2, "one answer to each request");
+    let extended = answers
+        .iter()
+        .find(|f| f.service_type == ServiceType::SearchResponseExtended)
+        .expect("the extended answer");
+    let plain = answers
+        .iter()
+        .find(|f| f.service_type == ServiceType::SearchResponse)
+        .expect("the plain answer");
+    assert_eq!(Hpai::parse(&extended.body), Hpai::parse(&plain.body));
+
+    // The blocks the server does not have are left out, and the two it has are there.
+    let dibs = &extended.body[usize::from(Hpai::LEN)..];
+    let sequence = DibSequence::parse(dibs).unwrap();
+    assert!(sequence.get(DibType::DeviceInformation).is_some());
+    assert!(sequence.get(DibType::SupportedServiceFamilies).is_some());
+    assert!(sequence.get(DibType::SecuredServiceFamilies).is_none());
+    assert!(sequence.get(DibType::TunnelingInformation).is_none());
+    // Core in version 1: a client that sees version 2 would expect more than the server has.
+    assert_eq!(families(dibs), [(0x02, 1), (0x04, 1)]);
+}
+
+#[tokio::test]
+async fn the_programming_mode_selector_makes_only_a_server_in_programming_mode_answer() {
+    let server = start_with(description()).await;
+    let socket = client().await;
+    let request = extended_from(&socket, &programming_mode_srp());
+    assert!(
+        answered(&socket, server.local_addr(), &request)
+            .await
+            .is_none(),
+        "a server that is not in programming mode stays silent"
+    );
+
+    let mut programming = description();
+    programming.programming_mode = true;
+    server.set_description(programming);
+    let response = answered(&socket, server.local_addr(), &request)
+        .await
+        .expect("in programming mode, the server answers");
+    let dibs = &response.body[usize::from(Hpai::LEN)..];
+    assert!(
+        DeviceInformationDib::find_in(dibs)
+            .unwrap()
+            .unwrap()
+            .is_programming_mode()
+    );
+}
+
+#[tokio::test]
+async fn the_mac_selector_makes_only_the_server_with_that_address_answer() {
+    let server = start_with(description()).await;
+    let socket = client().await;
+    let own = [0x02, 0x42, 0xAC, 0x11, 0x00, 0x10];
+    let ask_for = |mac| extended_from(&socket, &mac_address_srp(mac));
+    assert!(
+        answered(&socket, server.local_addr(), &ask_for(own))
+            .await
+            .is_some()
+    );
+    assert!(
+        answered(&socket, server.local_addr(), &ask_for([1; 6]))
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn the_service_selector_makes_only_a_server_with_the_family_in_the_version_answer() {
+    let server = start_with(description()).await;
+    let socket = client().await;
+    let ask_for = |family, version| extended_from(&socket, &service_srp(family, version));
+    assert!(
+        answered(
+            &socket,
+            server.local_addr(),
+            &ask_for(ServiceFamily::Tunneling, 1)
+        )
+        .await
+        .is_some()
+    );
+    // Version 2 of tunnelling is the TCP form; routing needs the multicast group.
+    for (family, version) in [
+        (ServiceFamily::Tunneling, 2),
+        (ServiceFamily::Core, 2),
+        (ServiceFamily::Routing, 1),
+    ] {
+        assert!(
+            answered(&socket, server.local_addr(), &ask_for(family, version))
+                .await
+                .is_none(),
+            "{family:?} {version}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_parameter_silences_the_server_only_when_it_is_mandatory() {
+    let server = start_with(description()).await;
+    let socket = client().await;
+    // The reference "invalid" SRP type, with and without the mandatory flag.
+    assert!(
+        answered(
+            &socket,
+            server.local_addr(),
+            &extended_from(&socket, &[0x02, 0x80])
+        )
+        .await
+        .is_none()
+    );
+    assert!(
+        answered(
+            &socket,
+            server.local_addr(),
+            &extended_from(&socket, &[0x02, 0x00])
+        )
+        .await
+        .is_some()
+    );
+}
+
+#[tokio::test]
+async fn a_malformed_parameter_block_is_not_answered_and_the_server_goes_on() {
+    let server = start_with(description()).await;
+    let socket = client().await;
+    for srps in [&[0x08u8, 0x82, 1, 2][..], &[0x01, 0x81], &[0x02]] {
+        assert!(
+            answered(&socket, server.local_addr(), &extended_from(&socket, srps))
+                .await
+                .is_none(),
+            "{srps:02X?}"
+        );
+    }
+    assert!(
+        answered(&socket, server.local_addr(), &extended_from(&socket, &[]))
+            .await
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn the_extended_answer_goes_to_the_endpoint_the_request_names_and_never_without_a_description()
+ {
+    let server = start_with(description()).await;
+    let asking = client().await;
+    let listening = client().await;
+    asking
+        .send_to(
+            &extended_from(&listening, &[]).to_bytes(),
+            server.local_addr(),
+        )
+        .await
+        .unwrap();
+    let (response, _) = receive(&listening, WAIT)
+        .await
+        .expect("an answer at the named endpoint");
+    assert_eq!(response.service_type, ServiceType::SearchResponseExtended);
+    assert!(receive(&asking, SILENCE).await.is_none());
+
+    let silent = DeviceServer::start_at("127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
+    assert!(
+        answered(&asking, silent.local_addr(), &extended_from(&asking, &[]))
+            .await
+            .is_none(),
+        "a server without a description does not answer the extended search either"
+    );
 }

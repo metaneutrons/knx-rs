@@ -16,6 +16,7 @@ use knx_rs_core::cemi::CemiFrame;
 use knx_rs_core::knxip::dib::{
     DeviceInformation, KnxMedium, ServiceFamily, supported_service_families_dib,
 };
+use knx_rs_core::knxip::srp::{SrpSequence, SrpType};
 use knx_rs_core::knxip::{
     ConnectionHeader, DEVICE_MGMT_CONNECTION, E_CONNECTION_ID, E_CONNECTION_TYPE, E_NO_ERROR,
     E_NO_MORE_CONNECTIONS, HostProtocol, Hpai, KnxIpFrame, ServiceType, TUNNEL_IA_BASE, tunnel_crd,
@@ -169,9 +170,22 @@ impl DeviceDescription {
         }
     }
 
-    /// The Device Information DIB and the Supported Service Families DIB that
-    /// answer a search or description request. The server supports core and
+    /// The service families the server supports, with their versions: core and
     /// tunnelling, and routing when it joined the multicast group.
+    ///
+    /// Core is advertised in version 1 although the server answers the extended
+    /// search of version 2: it has nothing else of version 2 (TCP connections,
+    /// secure sessions), and a client that sees version 2 expects them.
+    fn families(routing: bool) -> Vec<(ServiceFamily, u8)> {
+        let mut families = vec![(ServiceFamily::Core, 1), (ServiceFamily::Tunneling, 1)];
+        if routing {
+            families.push((ServiceFamily::Routing, 1));
+        }
+        families
+    }
+
+    /// The Device Information DIB and the Supported Service Families DIB that
+    /// answer a search or description request.
     fn dibs(&self, routing: bool) -> Vec<u8> {
         let information = DeviceInformation {
             medium: self.medium,
@@ -187,13 +201,52 @@ impl DeviceDescription {
             mac_address: self.mac_address,
             friendly_name: &self.name,
         };
-        let mut families = vec![(ServiceFamily::Core, 1), (ServiceFamily::Tunneling, 1)];
-        if routing {
-            families.push((ServiceFamily::Routing, 1));
-        }
         let mut dibs = information.to_bytes().to_vec();
-        dibs.extend(supported_service_families_dib(&families));
+        dibs.extend(supported_service_families_dib(&Self::families(routing)));
         dibs
+    }
+
+    /// Whether a `SEARCH_REQUEST_EXTENDED` with these search request
+    /// parameters (the bytes after the discovery endpoint) is to be answered.
+    ///
+    /// The server answers only if it understands and satisfies every
+    /// *mandatory* parameter: programming mode, MAC address and service
+    /// selectors that match it, and no parameter of a kind it does not know. A
+    /// parameter that is not mandatory never keeps the server from answering.
+    /// The request for description blocks is met as far as the server can: the
+    /// answer always has the Device Information and the Supported Service
+    /// Families, and a block the server does not have is left out, as the
+    /// protocol says. A block of parameters that cannot be parsed is not
+    /// answered.
+    fn answers_extended_search(&self, srps: &[u8], routing: bool) -> bool {
+        let Ok(srps) = SrpSequence::parse(srps) else {
+            return false;
+        };
+        let families = Self::families(routing);
+        for srp in &srps {
+            let data = srp.data();
+            // `Some(true)`: satisfied, `Some(false)`: understood but not satisfied,
+            // `None`: not understood, which includes data of the wrong size.
+            let satisfied = match srp.srp_type() {
+                Some(SrpType::SelectByProgrammingMode) if data.is_empty() => {
+                    Some(self.programming_mode)
+                }
+                Some(SrpType::SelectByMacAddress) if data.len() == 6 => {
+                    Some(data == self.mac_address)
+                }
+                Some(SrpType::SelectByService) if data.len() == 2 => Some(
+                    families
+                        .iter()
+                        .any(|(family, version)| family.to_raw() == data[0] && *version >= data[1]),
+                ),
+                Some(SrpType::RequestDibs) if !data.is_empty() => Some(true),
+                _ => None,
+            };
+            if satisfied != Some(true) && srp.is_mandatory() {
+                return false;
+            }
+        }
+        true
     }
 }
 
@@ -332,8 +385,17 @@ async fn stop_requested(stop: &mut watch::Receiver<bool>) {
 /// routing when it joined the multicast group). The control endpoint in the
 /// answer is an address the requester can reach: the bound address, or, for a
 /// socket bound to all interfaces, the one the system sends from towards the
-/// requester. Without a description the server does not answer. The extended
-/// search (`SEARCH_REQUEST_EXTENDED`) is not answered either.
+/// requester. Without a description the server does not answer.
+///
+/// The extended search (`SEARCH_REQUEST_EXTENDED`, which XKNX, and with it Home
+/// Assistant, sends first) is answered with a `SEARCH_RESPONSE_EXTENDED` that has the same blocks. The
+/// server honours the selectors a client may add (programming mode, MAC
+/// address, supported service) and answers only if it satisfies every mandatory
+/// one, or one it does not know. Description blocks a client asks for beyond
+/// the Device Information and the Supported Service Families (IP
+/// configuration, tunnelling slots, extended device information) are not
+/// provided and are left out of the answer. The server advertises the core
+/// family in version 1, as it has no other part of version 2.
 ///
 /// # Stopping
 ///
@@ -689,6 +751,9 @@ async fn handle_packet(data: &[u8], src: SocketAddr, socket: &UdpSocket, state: 
             handle_tunneling_ack(socket, src, &frame, &mut state.tunnels).await;
         }
         ServiceType::SearchRequest => handle_search(socket, src, &frame, state).await,
+        ServiceType::SearchRequestExtended => {
+            handle_search_extended(socket, src, &frame, state).await;
+        }
         ServiceType::DescriptionRequest => handle_description(socket, src, &frame, state).await,
         _ => {
             tracing::trace!(service = ?frame.service_type, "ignoring");
@@ -715,6 +780,39 @@ async fn handle_search(
     };
     tracing::debug!("search request from {src}, answered to {reply_to}");
     let response = KnxIpFrame::search_response(
+        control_endpoint(socket, src),
+        &description.dibs(state.routing),
+    );
+    if let Some(bytes) = serialize_frame(&response) {
+        let _ = socket.send_to(&bytes, reply_to).await;
+    }
+}
+
+/// Answer a `SEARCH_REQUEST_EXTENDED` with the same blocks as a plain search
+/// response, in a `SEARCH_RESPONSE_EXTENDED`, if the search request parameters
+/// allow it ([`DeviceDescription::answers_extended_search`]). The discovery
+/// endpoint is at the start of the body, the parameters follow it.
+async fn handle_search_extended(
+    socket: &UdpSocket,
+    src: SocketAddr,
+    frame: &KnxIpFrame,
+    state: &ServerState,
+) {
+    let Some(description) = state.description.borrow().clone() else {
+        tracing::trace!("extended search request from {src}: no description, not answered");
+        return;
+    };
+    let Some(reply_to) = reply_endpoint(&frame.body, src) else {
+        tracing::debug!("extended search request from {src}: no usable discovery endpoint");
+        return;
+    };
+    let parameters = frame.body.get(usize::from(Hpai::LEN)..).unwrap_or_default();
+    if !description.answers_extended_search(parameters, state.routing) {
+        tracing::debug!("extended search request from {src}: its parameters exclude this server");
+        return;
+    }
+    tracing::debug!("extended search request from {src}, answered to {reply_to}");
+    let response = KnxIpFrame::search_response_extended(
         control_endpoint(socket, src),
         &description.dibs(state.routing),
     );
@@ -1645,6 +1743,125 @@ mod tests {
         assert_eq!(
             next_ack_deadline(&tunnels),
             Some(now + Duration::from_secs(2))
+        );
+    }
+
+    // ── Extended search parameters ───────────────────────────────
+
+    fn described(programming_mode: bool) -> DeviceDescription {
+        let mut description = DeviceDescription::new(
+            "Test",
+            IndividualAddress::from_raw(0x1164),
+            [0, 1, 2, 3, 4, 5],
+            [0x02, 0x42, 0xAC, 0x11, 0x00, 0x10],
+        );
+        description.programming_mode = programming_mode;
+        description
+    }
+
+    #[test]
+    fn a_request_without_parameters_is_answered() {
+        assert!(described(false).answers_extended_search(&[], false));
+    }
+
+    #[test]
+    fn the_programming_mode_selector_needs_a_server_in_programming_mode() {
+        use knx_rs_core::knxip::srp::programming_mode_srp;
+        assert!(!described(false).answers_extended_search(&programming_mode_srp(), false));
+        assert!(described(true).answers_extended_search(&programming_mode_srp(), false));
+        // Not mandatory (flag cleared): it narrows nothing.
+        assert!(described(false).answers_extended_search(&[0x02, 0x01], false));
+        // Data where there is none: not understood, so a mandatory one excludes.
+        assert!(!described(true).answers_extended_search(&[0x03, 0x81, 0x00], false));
+        assert!(described(true).answers_extended_search(&[0x03, 0x01, 0x00], false));
+    }
+
+    #[test]
+    fn the_mac_selector_needs_the_servers_own_address() {
+        use knx_rs_core::knxip::srp::mac_address_srp;
+        let own = [0x02, 0x42, 0xAC, 0x11, 0x00, 0x10];
+        assert!(described(false).answers_extended_search(&mac_address_srp(own), false));
+        assert!(
+            !described(false).answers_extended_search(&mac_address_srp([1, 2, 3, 4, 5, 6]), false)
+        );
+        // A MAC of the wrong length is not understood.
+        assert!(!described(false).answers_extended_search(&[0x07, 0x82, 1, 2, 3, 4, 5], false));
+    }
+
+    #[test]
+    fn the_service_selector_needs_the_family_in_at_least_the_version() {
+        use knx_rs_core::knxip::srp::service_srp;
+        let answers = |srp: &[u8], routing| described(false).answers_extended_search(srp, routing);
+        assert!(answers(&service_srp(ServiceFamily::Tunneling, 1), false));
+        // Tunnelling version 2 is the TCP form, which the server does not have.
+        assert!(!answers(&service_srp(ServiceFamily::Tunneling, 2), false));
+        // Core is advertised in version 1.
+        assert!(answers(&service_srp(ServiceFamily::Core, 1), false));
+        assert!(!answers(&service_srp(ServiceFamily::Core, 2), false));
+        // Routing only with the multicast group.
+        assert!(!answers(&service_srp(ServiceFamily::Routing, 1), false));
+        assert!(answers(&service_srp(ServiceFamily::Routing, 1), true));
+        assert!(!answers(
+            &service_srp(ServiceFamily::DeviceManagement, 1),
+            true
+        ));
+    }
+
+    #[test]
+    fn an_srp_the_server_does_not_know_excludes_it_only_if_it_is_mandatory() {
+        let answers = |srp: &[u8]| described(false).answers_extended_search(srp, false);
+        // The reference "invalid" SRP (type 0), and a type nobody defined.
+        assert!(!answers(&[0x02, 0x80]));
+        assert!(answers(&[0x02, 0x00]));
+        assert!(!answers(&[0x03, 0xFE, 0xAA]));
+        assert!(answers(&[0x03, 0x7E, 0xAA]));
+    }
+
+    #[test]
+    fn a_request_for_description_blocks_never_keeps_the_server_from_answering() {
+        use knx_rs_core::knxip::dib::DibType;
+        use knx_rs_core::knxip::srp::request_dibs_srp;
+        // What XKNX asks for: device information, service families, secured service
+        // families and tunnelling information; the last two the server does not have.
+        let srp = request_dibs_srp(&[
+            DibType::DeviceInformation,
+            DibType::SupportedServiceFamilies,
+            DibType::SecuredServiceFamilies,
+            DibType::TunnelingInformation,
+        ])
+        .unwrap();
+        assert!(described(false).answers_extended_search(&srp, false));
+        // With no description type in it, it asks for nothing and is not understood.
+        assert!(described(false).answers_extended_search(&[0x02, 0x04], false));
+        assert!(!described(false).answers_extended_search(&[0x02, 0x84], false));
+    }
+
+    #[test]
+    fn every_mandatory_parameter_has_to_be_satisfied() {
+        use knx_rs_core::knxip::srp::{mac_address_srp, programming_mode_srp, service_srp};
+        let own = [0x02, 0x42, 0xAC, 0x11, 0x00, 0x10];
+        let mut all = programming_mode_srp();
+        all.extend(mac_address_srp(own));
+        all.extend(service_srp(ServiceFamily::Tunneling, 1));
+        assert!(described(true).answers_extended_search(&all, false));
+        assert!(
+            !described(false).answers_extended_search(&all, false),
+            "not in programming mode"
+        );
+        let mut other_mac = programming_mode_srp();
+        other_mac.extend(mac_address_srp([9; 6]));
+        assert!(!described(true).answers_extended_search(&other_mac, false));
+    }
+
+    #[test]
+    fn a_block_of_parameters_that_cannot_be_parsed_is_not_answered() {
+        let answers = |srps: &[u8]| described(true).answers_extended_search(srps, false);
+        assert!(!answers(&[0x08, 0x82, 1, 2]), "length beyond the data");
+        assert!(!answers(&[0x01, 0x81]), "length below the header");
+        assert!(!answers(&[0x02]), "a lone length byte");
+        assert!(
+            !answers(&[0x02, 0x81, 0x05, 0x01]),
+            "a good parameter does not excuse a bad one"
         );
     }
 }
