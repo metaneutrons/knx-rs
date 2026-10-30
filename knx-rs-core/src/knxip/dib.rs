@@ -8,6 +8,7 @@
 //! exposes typed access to the fixed-layout Device Information DIB.
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 use core::iter::FusedIterator;
 
@@ -556,6 +557,107 @@ impl<'a> DeviceInformationDib<'a> {
     }
 }
 
+// ── Building DIBs ────────────────────────────────────────────────────────────
+
+/// KNXnet/IP service family, as listed in a Supported Service Families DIB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ServiceFamily {
+    /// KNXnet/IP Core (discovery, description, connection management).
+    Core = 0x02,
+    /// KNXnet/IP Device Management.
+    DeviceManagement = 0x03,
+    /// KNXnet/IP Tunnelling.
+    Tunneling = 0x04,
+    /// KNXnet/IP Routing.
+    Routing = 0x05,
+    /// KNXnet/IP Remote Logging.
+    RemoteLogging = 0x06,
+    /// KNXnet/IP Remote Configuration and Diagnosis.
+    RemoteConfiguration = 0x07,
+    /// KNXnet/IP Object Server.
+    ObjectServer = 0x08,
+}
+
+impl ServiceFamily {
+    /// Return the service family code used on the wire.
+    pub const fn to_raw(self) -> u8 {
+        self as u8
+    }
+}
+
+/// The fields of a Device Information DIB, for building one.
+///
+/// [`DeviceInformation::to_bytes`] writes the fixed 54-byte layout that
+/// [`DeviceInformationDib`] reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceInformation<'a> {
+    /// KNX medium of the device.
+    pub medium: KnxMedium,
+    /// Whether the device is in programming mode (bit 0 of the device status).
+    pub programming_mode: bool,
+    /// KNX individual address in wire representation.
+    pub individual_address: u16,
+    /// Combined project-installation identifier (project number and installation number).
+    pub project_installation_identifier: u16,
+    /// Six-byte KNX serial number.
+    pub serial_number: [u8; 6],
+    /// IPv4 routing multicast address, all zeros if the device does not route.
+    pub routing_multicast_address: [u8; 4],
+    /// Six-byte Ethernet MAC address.
+    pub mac_address: [u8; 6],
+    /// Friendly name. It is written as ISO-8859-1, cut after 30 bytes, and a
+    /// character outside that set becomes `?`.
+    pub friendly_name: &'a str,
+}
+
+impl DeviceInformation<'_> {
+    /// Serialize to the 54-byte Device Information DIB.
+    pub fn to_bytes(&self) -> [u8; DeviceInformationDib::LEN] {
+        let mut dib = [0u8; DeviceInformationDib::LEN];
+        // The structure length is the constant 54, which fits in a byte.
+        dib[0] = u8::try_from(DeviceInformationDib::LEN).unwrap_or(u8::MAX);
+        dib[1] = DeviceInformationDib::TYPE.to_raw();
+        dib[KNX_MEDIUM_OFFSET] = self.medium.to_raw();
+        dib[DEVICE_STATUS_OFFSET] = u8::from(self.programming_mode);
+        dib[INDIVIDUAL_ADDRESS_OFFSET..][..INDIVIDUAL_ADDRESS_LEN]
+            .copy_from_slice(&self.individual_address.to_be_bytes());
+        dib[PROJECT_INSTALLATION_ID_OFFSET..][..PROJECT_INSTALLATION_ID_LEN]
+            .copy_from_slice(&self.project_installation_identifier.to_be_bytes());
+        dib[SERIAL_NUMBER_OFFSET..][..SERIAL_NUMBER_LEN].copy_from_slice(&self.serial_number);
+        dib[ROUTING_MULTICAST_OFFSET..][..ROUTING_MULTICAST_LEN]
+            .copy_from_slice(&self.routing_multicast_address);
+        dib[MAC_ADDRESS_OFFSET..][..MAC_ADDRESS_LEN].copy_from_slice(&self.mac_address);
+        for (slot, ch) in dib[FRIENDLY_NAME_OFFSET..][..FRIENDLY_NAME_LEN]
+            .iter_mut()
+            .zip(self.friendly_name.chars())
+        {
+            *slot = u8::try_from(u32::from(ch)).unwrap_or(b'?');
+        }
+        dib
+    }
+}
+
+/// How many service families fit into one DIB: its length is a single byte.
+const MAX_SERVICE_FAMILIES: usize = (u8::MAX as usize - DIB_HEADER_LEN) / 2;
+
+/// Build a Supported Service Families DIB from `(family, version)` pairs.
+///
+/// More than 126 pairs do not fit into one DIB and are left out.
+pub fn supported_service_families_dib(families: &[(ServiceFamily, u8)]) -> Vec<u8> {
+    let families = &families[..families.len().min(MAX_SERVICE_FAMILIES)];
+    let mut dib = Vec::with_capacity(DIB_HEADER_LEN + 2 * families.len());
+    // At most 2 + 2 * 126 = 254 bytes, so the length fits in a byte.
+    dib.push(u8::try_from(DIB_HEADER_LEN + 2 * families.len()).unwrap_or(u8::MAX));
+    dib.push(DibType::SupportedServiceFamilies.to_raw());
+    for (family, version) in families {
+        dib.push(family.to_raw());
+        dib.push(*version);
+    }
+    dib
+}
+
 #[cfg(test)]
 #[allow(
     clippy::cast_possible_truncation,
@@ -792,5 +894,168 @@ mod tests {
             DibSequence::parse(&[2, 0xF0, 2, 0xF0]),
             Err(DibParseError::DuplicateDescriptionType { type_code: 0xF0 })
         );
+    }
+
+    // ── Building ────────────────────────────────────────────────
+
+    // Cross-implementation vector from XKNX's SearchResponse test fixture (the same
+    // one the discovery client is tested against).
+    const XKNX_SEARCH_RESPONSE: [u8; 80] = [
+        0x06, 0x10, 0x02, 0x02, 0x00, 0x50, 0x08, 0x01, 0xC0, 0xA8, 0x2A, 0x0A, 0x0E, 0x57, 0x36,
+        0x01, 0x02, 0x00, 0x11, 0x00, 0x00, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0xE0, 0x00,
+        0x17, 0x0C, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x47, 0x69, 0x72, 0x61, 0x20, 0x4B, 0x4E,
+        0x58, 0x2F, 0x49, 0x50, 0x2D, 0x52, 0x6F, 0x75, 0x74, 0x65, 0x72, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x02, 0x02, 0x01, 0x03, 0x02, 0x04,
+        0x01, 0x05, 0x01, 0x07, 0x01,
+    ];
+
+    fn router_information(name: &str) -> DeviceInformation<'_> {
+        DeviceInformation {
+            medium: KnxMedium::Tp1,
+            programming_mode: false,
+            individual_address: 0x1100,
+            project_installation_identifier: 0,
+            serial_number: [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            routing_multicast_address: [224, 0, 23, 12],
+            mac_address: [1, 2, 3, 4, 5, 6],
+            friendly_name: name,
+        }
+    }
+
+    #[test]
+    fn the_builders_reproduce_a_reference_search_response_byte_for_byte() {
+        let mut dibs = router_information("Gira KNX/IP-Router").to_bytes().to_vec();
+        dibs.extend(supported_service_families_dib(&[
+            (ServiceFamily::Core, 1),
+            (ServiceFamily::DeviceManagement, 2),
+            (ServiceFamily::Tunneling, 1),
+            (ServiceFamily::Routing, 1),
+            (ServiceFamily::RemoteConfiguration, 1),
+        ]));
+        let control = crate::knxip::Hpai {
+            protocol: crate::knxip::HostProtocol::Ipv4Udp,
+            ip: [192, 168, 42, 10],
+            port: 3671,
+        };
+        let frame = crate::knxip::KnxIpFrame::search_response(control, &dibs);
+        assert_eq!(frame.to_bytes(), XKNX_SEARCH_RESPONSE);
+    }
+
+    #[test]
+    fn a_built_device_information_dib_reads_back_through_the_parser() {
+        let information = DeviceInformation {
+            medium: KnxMedium::Ip,
+            programming_mode: true,
+            individual_address: 0x1164,
+            project_installation_identifier: 0x0123,
+            serial_number: [0, 1, 2, 3, b'S', b'D'],
+            routing_multicast_address: [0; 4],
+            mac_address: [0x02, 0x42, 0xAC, 0x11, 0x00, 0x10],
+            friendly_name: "SnapDog",
+        };
+        let bytes = information.to_bytes();
+        let dib = DeviceInformationDib::find_in(&bytes).unwrap().unwrap();
+        assert_eq!(dib.knx_medium(), Some(KnxMedium::Ip));
+        assert!(dib.is_programming_mode());
+        assert_eq!(dib.individual_address(), 0x1164);
+        assert_eq!(dib.project_installation_identifier(), 0x0123);
+        assert_eq!(dib.serial_number(), [0, 1, 2, 3, b'S', b'D']);
+        assert_eq!(dib.routing_multicast_address(), [0; 4]);
+        assert_eq!(dib.mac_address(), [0x02, 0x42, 0xAC, 0x11, 0x00, 0x10]);
+        assert_eq!(dib.friendly_name(), "SnapDog");
+        assert_eq!(
+            DeviceInformation {
+                programming_mode: false,
+                ..information
+            }
+            .to_bytes()[DEVICE_STATUS_OFFSET],
+            0
+        );
+    }
+
+    #[test]
+    fn the_friendly_name_is_latin1_padded_and_cut_after_30_bytes() {
+        let name = |text: &str| router_information(text).to_bytes();
+        // ISO-8859-1: "ü" is one byte, 0xFC, and decodes back.
+        let bytes = name("Küche");
+        assert_eq!(
+            &bytes[FRIENDLY_NAME_OFFSET..FRIENDLY_NAME_OFFSET + 6],
+            b"K\xFCche\0"
+        );
+        assert_eq!(
+            DeviceInformationDib::find_in(&bytes)
+                .unwrap()
+                .unwrap()
+                .friendly_name(),
+            "Küche"
+        );
+        // What ISO-8859-1 cannot express becomes a question mark.
+        let bytes = name("Zone \u{20AC}");
+        assert_eq!(
+            DeviceInformationDib::find_in(&bytes)
+                .unwrap()
+                .unwrap()
+                .friendly_name(),
+            "Zone ?"
+        );
+        // A longer name is cut; the field has no terminator then, and still parses.
+        let long = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let bytes = name(long);
+        assert_eq!(
+            DeviceInformationDib::find_in(&bytes)
+                .unwrap()
+                .unwrap()
+                .friendly_name(),
+            &long[..FRIENDLY_NAME_LEN]
+        );
+        assert_eq!(bytes.len(), DeviceInformationDib::LEN);
+    }
+
+    #[test]
+    fn a_built_service_families_dib_has_the_documented_layout() {
+        let dib = supported_service_families_dib(&[
+            (ServiceFamily::Core, 1),
+            (ServiceFamily::Tunneling, 1),
+        ]);
+        assert_eq!(dib, [6, 0x02, 0x02, 1, 0x04, 1]);
+        let sequence = DibSequence::parse(&dib).unwrap();
+        assert!(sequence.get(DibType::SupportedServiceFamilies).is_some());
+        assert_eq!(supported_service_families_dib(&[]), [2, 0x02]);
+    }
+
+    #[test]
+    fn more_service_families_than_fit_are_left_out() {
+        let many = vec![(ServiceFamily::Core, 1); 200];
+        let dib = supported_service_families_dib(&many);
+        assert_eq!(dib.len(), 254);
+        assert_eq!(usize::from(dib[0]), dib.len());
+        assert!(DibSequence::parse(&dib).is_ok());
+    }
+
+    #[test]
+    fn the_discovery_frames_have_the_documented_bodies() {
+        use crate::knxip::{Hpai, KnxIpFrame, ServiceType};
+        let endpoint = Hpai::nat_udp(3671);
+        for (frame, service) in [
+            (
+                KnxIpFrame::search_request(endpoint),
+                ServiceType::SearchRequest,
+            ),
+            (
+                KnxIpFrame::description_request(endpoint),
+                ServiceType::DescriptionRequest,
+            ),
+        ] {
+            assert_eq!(frame.service_type, service);
+            assert_eq!(frame.body, endpoint.to_bytes());
+            assert_eq!(KnxIpFrame::parse(&frame.to_bytes()).unwrap(), frame);
+        }
+        let dibs = router_information("x").to_bytes();
+        let response = KnxIpFrame::description_response(&dibs);
+        assert_eq!(response.service_type, ServiceType::DescriptionResponse);
+        assert_eq!(response.body, dibs);
+        let search = KnxIpFrame::search_response(endpoint, &dibs);
+        assert_eq!(&search.body[..8], &endpoint.to_bytes());
+        assert_eq!(&search.body[8..], &dibs);
     }
 }
