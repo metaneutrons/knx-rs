@@ -81,7 +81,7 @@ Changes for earlier versions are listed in the [changelog](CHANGELOG.md).
   `recv()` remains frame-only.
 - **Device server** — accept incoming tunnel connections from ETS on port 3671, simultaneous multicast routing and unicast tunneling.
   Frames are delivered to tunnel clients as `L_Data.ind`, a client's `L_Data.req` is confirmed with an `L_Data.con`, a client that
-  does not acknowledge a frame is dropped, and the server task never waits for its consumer. `stop()` and `shutdown()` (and
+  does not acknowledge a frame is dropped without delaying the other clients (each has its own queue), and the server task never waits for its consumer. `stop()` and `shutdown()` (and
   dropping the server) release the UDP socket. Started with a `DeviceDescription` (`DeviceServer::start_with`), it answers `SEARCH_REQUEST` and
   `DESCRIPTION_REQUEST`, so discovery (ETS "Discover interfaces", `knx_rs_ip::discover`) finds it and a client can
   describe it; without one it stays silent and has to be added by IP address. The extended search
