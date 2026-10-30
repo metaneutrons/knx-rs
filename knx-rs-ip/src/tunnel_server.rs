@@ -11,10 +11,14 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
+use knx_rs_core::address::IndividualAddress;
 use knx_rs_core::cemi::CemiFrame;
+use knx_rs_core::knxip::dib::{
+    DeviceInformation, KnxMedium, ServiceFamily, supported_service_families_dib,
+};
 use knx_rs_core::knxip::{
     ConnectionHeader, DEVICE_MGMT_CONNECTION, E_CONNECTION_ID, E_CONNECTION_TYPE, E_NO_ERROR,
-    E_NO_MORE_CONNECTIONS, Hpai, KnxIpFrame, ServiceType, TUNNEL_IA_BASE, tunnel_crd,
+    E_NO_MORE_CONNECTIONS, HostProtocol, Hpai, KnxIpFrame, ServiceType, TUNNEL_IA_BASE, tunnel_crd,
 };
 use knx_rs_core::message::MessageCode;
 use tokio::net::UdpSocket;
@@ -116,6 +120,83 @@ struct InFlight {
     last_error: Option<String>,
 }
 
+/// What a [`DeviceServer`] tells a client that searches for it or asks for its
+/// description: the device it presents itself as.
+///
+/// A server started without a description does not answer `SEARCH_REQUEST` and
+/// `DESCRIPTION_REQUEST`, so ETS "Discover interfaces" and
+/// [`discover`](crate::discovery::discover) do not find it, and it cannot be
+/// described to a client that adds it by address. Start it with
+/// [`DeviceServer::start_with`] or [`DeviceServer::start_at_with`], and keep the
+/// individual address and the programming mode current with
+/// [`DeviceServer::set_description`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceDescription {
+    /// Friendly name, shown by discovery. At most 30 ISO-8859-1 bytes are sent.
+    pub name: String,
+    /// Individual address of the device.
+    pub individual_address: IndividualAddress,
+    /// Six-byte KNX serial number.
+    pub serial_number: [u8; 6],
+    /// Six-byte Ethernet MAC address.
+    pub mac_address: [u8; 6],
+    /// KNX medium. [`KnxMedium::Ip`] for a server on an IP network.
+    pub medium: KnxMedium,
+    /// Combined project-installation identifier; 0 if the device has none.
+    pub project_installation_identifier: u16,
+    /// Whether the device is in programming mode. ETS shows it, and a device in
+    /// programming mode is the one an individual address is assigned to.
+    pub programming_mode: bool,
+}
+
+impl DeviceDescription {
+    /// A description of an IP device that is not in programming mode and
+    /// belongs to no project.
+    pub fn new(
+        name: impl Into<String>,
+        individual_address: IndividualAddress,
+        serial_number: [u8; 6],
+        mac_address: [u8; 6],
+    ) -> Self {
+        Self {
+            name: name.into(),
+            individual_address,
+            serial_number,
+            mac_address,
+            medium: KnxMedium::Ip,
+            project_installation_identifier: 0,
+            programming_mode: false,
+        }
+    }
+
+    /// The Device Information DIB and the Supported Service Families DIB that
+    /// answer a search or description request. The server supports core and
+    /// tunnelling, and routing when it joined the multicast group.
+    fn dibs(&self, routing: bool) -> Vec<u8> {
+        let information = DeviceInformation {
+            medium: self.medium,
+            programming_mode: self.programming_mode,
+            individual_address: self.individual_address.raw(),
+            project_installation_identifier: self.project_installation_identifier,
+            serial_number: self.serial_number,
+            routing_multicast_address: if routing {
+                KNX_MULTICAST_ADDR.octets()
+            } else {
+                [0; 4]
+            },
+            mac_address: self.mac_address,
+            friendly_name: &self.name,
+        };
+        let mut families = vec![(ServiceFamily::Core, 1), (ServiceFamily::Tunneling, 1)];
+        if routing {
+            families.push((ServiceFamily::Routing, 1));
+        }
+        let mut dibs = information.to_bytes().to_vec();
+        dibs.extend(supported_service_families_dib(&families));
+        dibs
+    }
+}
+
 /// Incoming frame from a tunnel client or multicast.
 #[derive(Debug)]
 pub enum ServerEvent {
@@ -195,6 +276,10 @@ struct ServerState {
     /// Turns `true` when the server is to stop. Its sender is owned by the
     /// [`DeviceServer`], so dropping the server stops the task, too.
     stop: watch::Receiver<bool>,
+    /// What the server answers to a search or description request; `None`: nothing.
+    description: watch::Receiver<Option<DeviceDescription>>,
+    /// Whether the server joined the routing multicast group.
+    routing: bool,
 }
 
 impl ServerState {
@@ -238,6 +323,18 @@ async fn stop_requested(stop: &mut watch::Receiver<bool>) {
 /// oldest frame is dropped, so a client that acknowledges, only slowly, cannot
 /// make the server hold an unbounded queue.
 ///
+/// # Discovery
+///
+/// Started with a [`DeviceDescription`] ([`DeviceServer::start_with`],
+/// [`DeviceServer::start_at_with`]), the server answers `SEARCH_REQUEST` and
+/// `DESCRIPTION_REQUEST` with its name, individual address, serial number, MAC
+/// address and the service families it supports (core and tunnelling, and
+/// routing when it joined the multicast group). The control endpoint in the
+/// answer is an address the requester can reach: the bound address, or, for a
+/// socket bound to all interfaces, the one the system sends from towards the
+/// requester. Without a description the server does not answer. The extended
+/// search (`SEARCH_REQUEST_EXTENDED`) is not answered either.
+///
 /// # Stopping
 ///
 /// [`DeviceServer::shutdown`] stops the server and returns once its socket is
@@ -251,6 +348,7 @@ pub struct DeviceServer {
     tx_cmd: mpsc::Sender<ServerCmd>,
     local_addr: SocketAddr,
     stop: watch::Sender<bool>,
+    description: watch::Sender<Option<DeviceDescription>>,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -271,6 +369,26 @@ impl DeviceServer {
     ///
     /// Returns [`KnxIpError`] if the socket cannot be created.
     pub async fn start(local_addr: Ipv4Addr) -> Result<Self, KnxIpError> {
+        Self::start_described(local_addr, None).await
+    }
+
+    /// Start the device server as [`DeviceServer::start`] does, and answer
+    /// search and description requests with `description`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnxIpError`] if the socket cannot be created.
+    pub async fn start_with(
+        local_addr: Ipv4Addr,
+        description: DeviceDescription,
+    ) -> Result<Self, KnxIpError> {
+        Self::start_described(local_addr, Some(description)).await
+    }
+
+    async fn start_described(
+        local_addr: Ipv4Addr,
+        description: Option<DeviceDescription>,
+    ) -> Result<Self, KnxIpError> {
         let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, KNX_PORT);
         let socket = UdpSocket::bind(bind_addr).await?;
         let bound_addr = socket.local_addr()?;
@@ -291,7 +409,12 @@ impl DeviceServer {
             KNX_PORT,
         )));
 
-        Ok(Self::spawn(socket, multicast_target, bound_addr))
+        Ok(Self::spawn(
+            socket,
+            multicast_target,
+            bound_addr,
+            description,
+        ))
     }
 
     /// Start the device server on a specific unicast address.
@@ -304,22 +427,54 @@ impl DeviceServer {
     ///
     /// Returns [`KnxIpError`] if the socket cannot be created.
     pub async fn start_at(bind_addr: SocketAddr) -> Result<Self, KnxIpError> {
+        Self::start_at_described(bind_addr, None).await
+    }
+
+    /// Start the device server on a specific unicast address as
+    /// [`DeviceServer::start_at`] does, and answer search and description
+    /// requests with `description`. Without the multicast group, only a search
+    /// request sent to this address reaches it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KnxIpError`] if the socket cannot be created.
+    pub async fn start_at_with(
+        bind_addr: SocketAddr,
+        description: DeviceDescription,
+    ) -> Result<Self, KnxIpError> {
+        Self::start_at_described(bind_addr, Some(description)).await
+    }
+
+    async fn start_at_described(
+        bind_addr: SocketAddr,
+        description: Option<DeviceDescription>,
+    ) -> Result<Self, KnxIpError> {
         let socket = UdpSocket::bind(bind_addr).await?;
         let local_addr = socket.local_addr()?;
 
         tracing::info!(%local_addr, "KNXnet/IP device server started");
 
-        Ok(Self::spawn(socket, None, local_addr))
+        Ok(Self::spawn(socket, None, local_addr, description))
+    }
+
+    /// Replace what the server answers to search and description requests, for
+    /// instance when ETS assigned a new individual address or the programming
+    /// mode changed. Starts answering, if the server was started without a
+    /// description.
+    pub fn set_description(&self, description: DeviceDescription) {
+        self.description.send_replace(Some(description));
     }
 
     fn spawn(
         socket: UdpSocket,
         multicast_target: Option<SocketAddr>,
         local_addr: SocketAddr,
+        description: Option<DeviceDescription>,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::channel(64);
         let (cmd_tx, cmd_rx) = mpsc::channel(16);
         let (stop_tx, stop_rx) = watch::channel(false);
+        let (description_tx, description_rx) = watch::channel(description);
 
         let task = tokio::spawn(server_task(
             socket,
@@ -327,6 +482,7 @@ impl DeviceServer {
             event_tx,
             cmd_rx,
             stop_rx,
+            description_rx,
         ));
 
         Self {
@@ -334,6 +490,7 @@ impl DeviceServer {
             tx_cmd: cmd_tx,
             local_addr,
             stop: stop_tx,
+            description: description_tx,
             task: Some(task),
         }
     }
@@ -424,12 +581,15 @@ async fn server_task(
     event_tx: mpsc::Sender<ServerEvent>,
     mut cmd_rx: mpsc::Receiver<ServerCmd>,
     stop: watch::Receiver<bool>,
+    description: watch::Receiver<Option<DeviceDescription>>,
 ) {
     let mut state = ServerState {
         tunnels: Vec::new(),
         next_channel_id: 1,
         events: EventQueue::new(event_tx),
         stop,
+        description,
+        routing: multicast_target.is_some(),
     };
     let mut buf = [0u8; RECV_BUF_SIZE];
     let cleanup = tokio::time::interval(tokio::time::Duration::from_secs(CLEANUP_INTERVAL_SECS));
@@ -528,13 +688,105 @@ async fn handle_packet(data: &[u8], src: SocketAddr, socket: &UdpSocket, state: 
         ServiceType::TunnelingAck => {
             handle_tunneling_ack(socket, src, &frame, &mut state.tunnels).await;
         }
-        ServiceType::SearchRequest => {
-            // Discovery — respond with device info (simplified)
-            tracing::debug!("search request from {src}");
-        }
+        ServiceType::SearchRequest => handle_search(socket, src, &frame, state).await,
+        ServiceType::DescriptionRequest => handle_description(socket, src, &frame, state).await,
         _ => {
             tracing::trace!(service = ?frame.service_type, "ignoring");
         }
+    }
+}
+
+/// Answer a `SEARCH_REQUEST` with the control endpoint and the description of
+/// the server, to the discovery endpoint the request names (the sender, for a
+/// request in NAT mode). Without a description there is nothing to answer.
+async fn handle_search(
+    socket: &UdpSocket,
+    src: SocketAddr,
+    frame: &KnxIpFrame,
+    state: &ServerState,
+) {
+    let Some(description) = state.description.borrow().clone() else {
+        tracing::trace!("search request from {src}: no description, not answered");
+        return;
+    };
+    let Some(reply_to) = reply_endpoint(&frame.body, src) else {
+        tracing::debug!("search request from {src}: no usable discovery endpoint");
+        return;
+    };
+    tracing::debug!("search request from {src}, answered to {reply_to}");
+    let response = KnxIpFrame::search_response(
+        control_endpoint(socket, src),
+        &description.dibs(state.routing),
+    );
+    if let Some(bytes) = serialize_frame(&response) {
+        let _ = socket.send_to(&bytes, reply_to).await;
+    }
+}
+
+/// Answer a `DESCRIPTION_REQUEST` with the description of the server, to the
+/// control endpoint the request names (the sender, for a request in NAT mode).
+async fn handle_description(
+    socket: &UdpSocket,
+    src: SocketAddr,
+    frame: &KnxIpFrame,
+    state: &ServerState,
+) {
+    let Some(description) = state.description.borrow().clone() else {
+        tracing::trace!("description request from {src}: no description, not answered");
+        return;
+    };
+    let Some(reply_to) = reply_endpoint(&frame.body, src) else {
+        tracing::debug!("description request from {src}: no usable control endpoint");
+        return;
+    };
+    tracing::debug!("description request from {src}, answered to {reply_to}");
+    let response = KnxIpFrame::description_response(&description.dibs(state.routing));
+    if let Some(bytes) = serialize_frame(&response) {
+        let _ = socket.send_to(&bytes, reply_to).await;
+    }
+}
+
+/// Where the answer to a request goes: the UDP endpoint in the request's HPAI,
+/// or the sender for a request in NAT mode. `None` for a body that holds no
+/// HPAI, or one for another protocol than UDP.
+fn reply_endpoint(body: &[u8], src: SocketAddr) -> Option<SocketAddr> {
+    let hpai = Hpai::parse(body)?;
+    (hpai.protocol == HostProtocol::Ipv4Udp).then(|| hpai_to_socket_addr(hpai, src))
+}
+
+/// The control endpoint a response names: an address the requester can reach
+/// the server at. A socket bound to one address says it; a socket bound to all
+/// interfaces does not, so it is the address the system would send from to
+/// reach the requester. KNXnet/IP HPAI carries IPv4 only, so for an IPv6
+/// requester, or when no address can be found, it is the NAT-mode endpoint
+/// (the requester then uses the source of the answer).
+fn control_endpoint(socket: &UdpSocket, requester: SocketAddr) -> Hpai {
+    let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
+    let SocketAddr::V4(_) = requester else {
+        return Hpai::nat_udp(port);
+    };
+    let ip = match socket.local_addr() {
+        Ok(SocketAddr::V4(bound)) if !bound.ip().is_unspecified() => Some(*bound.ip()),
+        _ => source_address_towards(requester),
+    };
+    ip.map_or_else(
+        || Hpai::nat_udp(port),
+        |ip| Hpai {
+            protocol: HostProtocol::Ipv4Udp,
+            ip: ip.octets(),
+            port,
+        },
+    )
+}
+
+/// The IPv4 address the system sends from to reach `target`, found by
+/// connecting a throwaway UDP socket (which sends nothing).
+fn source_address_towards(target: SocketAddr) -> Option<Ipv4Addr> {
+    let probe = std::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    probe.connect(target).ok()?;
+    match probe.local_addr().ok()? {
+        SocketAddr::V4(local) if !local.ip().is_unspecified() => Some(*local.ip()),
+        _ => None,
     }
 }
 

@@ -38,7 +38,7 @@ pub use error::{KnxIpError, Result};
 pub use multiplex::{MultiplexHandle, Multiplexer};
 pub use router::{KNX_MULTICAST_ADDR, KNX_PORT, RouterConnection};
 pub use tunnel::{TunnelConfig, TunnelConnection};
-pub use tunnel_server::{DeviceServer, ServerEvent};
+pub use tunnel_server::{DeviceDescription, DeviceServer, ServerEvent};
 pub use url::{ConnectionSpec, connect, parse_url};
 
 use core::future::Future;

@@ -407,4 +407,56 @@ mod tests {
             Err(SearchResponseParseError::ControlEndpoint)
         ));
     }
+
+    // ── Against a DeviceServer ──────────────────────────────────
+
+    use crate::tunnel_server::{DeviceDescription, DeviceServer};
+    use knx_rs_core::address::IndividualAddress;
+
+    async fn discover_unicast(server: &DeviceServer) -> Vec<GatewayInfo> {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let hpai = Hpai {
+            protocol: HostProtocol::Ipv4Udp,
+            ip: [127, 0, 0, 1],
+            port: socket.local_addr().unwrap().port(),
+        };
+        discover_on(
+            socket,
+            hpai,
+            server.local_addr(),
+            Duration::from_millis(600),
+        )
+        .await
+        .unwrap()
+    }
+
+    /// The client that finds knxd, a router or a gateway finds a `DeviceServer` that has a
+    /// description (issue 105), with its name, individual address and control endpoint.
+    #[tokio::test]
+    async fn finds_a_device_server_that_was_given_a_description() {
+        let server = DeviceServer::start_at_with(
+            "127.0.0.1:0".parse().unwrap(),
+            DeviceDescription::new(
+                "SnapDog Kitchen",
+                IndividualAddress::from_raw(0x1164),
+                [0, 1, 2, 3, 4, 5],
+                [2, 0x42, 0xAC, 0x11, 0, 0x10],
+            ),
+        )
+        .await
+        .unwrap();
+        let found = discover_unicast(&server).await;
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].name, "SnapDog Kitchen");
+        assert_eq!(found[0].individual_address, 0x1164);
+        assert_eq!(found[0].address, server.local_addr());
+    }
+
+    #[tokio::test]
+    async fn does_not_find_a_device_server_without_a_description() {
+        let server = DeviceServer::start_at("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        assert!(discover_unicast(&server).await.is_empty());
+    }
 }

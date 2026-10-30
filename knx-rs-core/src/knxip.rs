@@ -334,6 +334,48 @@ impl KnxIpFrame {
         }
     }
 
+    /// Build a search request: the endpoint the client wants the answer at.
+    #[must_use]
+    pub fn search_request(discovery: Hpai) -> Self {
+        Self {
+            service_type: ServiceType::SearchRequest,
+            body: discovery.to_bytes().to_vec(),
+        }
+    }
+
+    /// Build a search response: the server's control endpoint followed by its
+    /// description information blocks (see [`dib`]), at least the Device
+    /// Information and the Supported Service Families.
+    #[must_use]
+    pub fn search_response(control: Hpai, dibs: &[u8]) -> Self {
+        let mut body = Vec::with_capacity(Hpai::LEN as usize + dibs.len());
+        body.extend_from_slice(&control.to_bytes());
+        body.extend_from_slice(dibs);
+        Self {
+            service_type: ServiceType::SearchResponse,
+            body,
+        }
+    }
+
+    /// Build a description request: the client's control endpoint.
+    #[must_use]
+    pub fn description_request(control: Hpai) -> Self {
+        Self {
+            service_type: ServiceType::DescriptionRequest,
+            body: control.to_bytes().to_vec(),
+        }
+    }
+
+    /// Build a description response: the description information blocks of
+    /// the server (see [`dib`]).
+    #[must_use]
+    pub fn description_response(dibs: &[u8]) -> Self {
+        Self {
+            service_type: ServiceType::DescriptionResponse,
+            body: dibs.to_vec(),
+        }
+    }
+
     /// Build a connect request from control/data HPAIs and a CRI block.
     #[must_use]
     pub fn connect_request(control: Hpai, data: Hpai, cri: &[u8]) -> Self {
