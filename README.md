@@ -81,7 +81,7 @@ Changes for earlier versions are listed in the [changelog](CHANGELOG.md).
   `recv()` remains frame-only.
 - **Device server** — accept incoming tunnel connections from ETS on port 3671, simultaneous multicast routing and unicast tunneling.
   Frames are delivered to tunnel clients as `L_Data.ind`, a client's `L_Data.req` is confirmed with an `L_Data.con`, a client that
-  does not acknowledge a frame is dropped, and the server task never waits for its consumer. `stop()` and `shutdown()` (and
+  does not acknowledge a frame is dropped without delaying the other clients (each has its own queue), and the server task never waits for its consumer. `stop()` and `shutdown()` (and
   dropping the server) release the UDP socket. It does not yet answer `SEARCH_REQUEST` and `DESCRIPTION_REQUEST`, so ETS
   discovery does not find it ([#105](https://github.com/metaneutrons/knx-rs/issues/105)); add it by IP address instead
 - **Discovery** — search request/response for finding gateways on the local network

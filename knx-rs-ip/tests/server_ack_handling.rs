@@ -48,13 +48,15 @@ async fn unacknowledged_tunnel_client_is_dropped_after_the_retries() {
     );
 }
 
+/// Each tunnel client has its own queue and its own acknowledgement, so a client that
+/// never answers holds up no frame of the others, not even the first (issue 106). The
+/// silent client connects first, which is where it used to be served first.
 #[tokio::test]
-async fn silent_client_costs_the_other_clients_at_most_one_frame() {
+async fn a_silent_client_delays_no_frame_to_the_other_clients() {
     let server = start().await;
     let silent = RawClient::connect(server.local_addr()).await;
     let live = RawClient::connect(server.local_addr()).await;
 
-    let mut delays = Vec::new();
     for round in 0u8..3 {
         let sent = Instant::now();
         server
@@ -63,17 +65,85 @@ async fn silent_client_costs_the_other_clients_at_most_one_frame() {
             .unwrap();
         let (seq, _) = live.recv_request(WAIT).await.expect("live client frame");
         live.ack(seq).await;
-        delays.push(sent.elapsed());
-    }
-    drop(silent);
-    // The first frame may wait for the silent client's retries once.
-    for (round, delay) in delays.iter().enumerate().skip(1) {
         assert!(
-            *delay < Duration::from_millis(500),
-            "frame {round} reached the live client after {delay:?}: \
-             a client that never acknowledged still holds up the server"
+            sent.elapsed() < Duration::from_millis(500),
+            "frame {round} reached the live client after {:?}: \
+             a client that never acknowledged still holds up the server",
+            sent.elapsed()
         );
     }
+    drop(silent);
+}
+
+/// A client that acknowledges, only slowly, gets every frame, in order, although the
+/// application sent them all at once: the frames wait in its queue, one on the wire.
+#[tokio::test]
+async fn a_slow_client_receives_every_frame_in_order() {
+    let server = start().await;
+    let slow = RawClient::connect(server.local_addr()).await;
+
+    for value in 0u8..6 {
+        server
+            .send_frame(group_write(MessageCode::LDataInd, value))
+            .await
+            .unwrap();
+    }
+    for expected in 0u8..6 {
+        let (seq, cemi) = slow.recv_request(WAIT).await.expect("queued frame");
+        assert_eq!(seq, expected, "sequence counters count up");
+        assert_eq!(
+            *cemi.last().unwrap(),
+            0x80 | expected,
+            "frames arrive in the order they were sent"
+        );
+        // Nothing else is on the wire while this one is unacknowledged.
+        assert!(
+            slow.recv_request(Duration::from_millis(100))
+                .await
+                .is_none(),
+            "a second frame was sent before the first was acknowledged"
+        );
+        slow.ack(seq).await;
+    }
+}
+
+/// While a silent client runs through its retries and is dropped, the live one keeps
+/// receiving a steady stream, without a gap.
+#[tokio::test]
+async fn the_live_client_keeps_receiving_while_the_silent_one_is_dropped() {
+    let server = start().await;
+    let silent = RawClient::connect(server.local_addr()).await;
+    let live = RawClient::connect(server.local_addr()).await;
+
+    let started = Instant::now();
+    let mut longest_gap = Duration::ZERO;
+    let mut last = Instant::now();
+    for value in 0u8..14 {
+        server
+            .send_frame(group_write(MessageCode::LDataInd, value))
+            .await
+            .unwrap();
+        let (seq, cemi) = live.recv_request(WAIT).await.expect("live client frame");
+        assert_eq!(seq, value, "sequence counters count up without a gap");
+        assert_eq!(*cemi.last().unwrap(), 0x80 | value);
+        live.ack(seq).await;
+        longest_gap = longest_gap.max(last.elapsed());
+        last = Instant::now();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    assert!(
+        started.elapsed() > Duration::from_secs(3),
+        "long enough for the retries"
+    );
+    assert!(
+        longest_gap < Duration::from_millis(800),
+        "a frame to the live client waited {longest_gap:?}"
+    );
+    assert_eq!(
+        silent.heartbeat_within(Duration::from_secs(2)).await,
+        Some(E_CONNECTION_ID),
+        "the silent client's tunnel is gone"
+    );
 }
 
 #[tokio::test]

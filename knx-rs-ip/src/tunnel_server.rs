@@ -38,10 +38,14 @@ const CLEANUP_INTERVAL_SECS: u64 = 30;
 /// channel's own capacity, when the application does not keep up.
 const MAX_EVENT_BACKLOG: usize = 1024;
 
-/// How many confirmations a tunnel client may be owed at once. A client that
-/// sends faster than the server can confirm does not make the server hold an
-/// unbounded queue; the excess is not confirmed.
-const MAX_PENDING_CONFIRMATIONS: usize = 64;
+/// How many frames may wait for one tunnel client, beyond the one on the wire.
+///
+/// A client that acknowledges slower than the application sends does not make
+/// the server hold an unbounded queue: when it is full the oldest frame is
+/// dropped. This covers the confirmations a client is owed as well, so a
+/// client that sends faster than the server can confirm is not confirmed for
+/// the excess.
+const MAX_CLIENT_QUEUE: usize = 128;
 
 /// A tunnel client connection.
 struct TunnelClient {
@@ -51,8 +55,65 @@ struct TunnelClient {
     send_seq: u8,
     recv_seq: u8,
     last_heartbeat: tokio::time::Instant,
-    /// `L_Data.con` frames owed to this client for the `L_Data.req` it sent, in order.
-    pending_confirmations: VecDeque<Vec<u8>>,
+    /// cEMI frames for this client, oldest first: indications, and the
+    /// `L_Data.con` it is owed for each `L_Data.req` it sent. One of them is on
+    /// the wire at a time ([`TunnelClient::in_flight`]).
+    outbox: VecDeque<Vec<u8>>,
+    /// The tunnelling request that waits for this client's acknowledgement.
+    in_flight: Option<InFlight>,
+    /// Whether an overflow of `outbox` was reported since it last drained.
+    overflow_reported: bool,
+}
+
+impl TunnelClient {
+    const fn new(
+        channel_id: u8,
+        ctrl_addr: SocketAddr,
+        data_addr: SocketAddr,
+        now: tokio::time::Instant,
+    ) -> Self {
+        Self {
+            channel_id,
+            ctrl_addr,
+            data_addr,
+            send_seq: 0,
+            recv_seq: 0,
+            last_heartbeat: now,
+            outbox: VecDeque::new(),
+            in_flight: None,
+            overflow_reported: false,
+        }
+    }
+
+    /// Queue a cEMI frame for this client. When [`MAX_CLIENT_QUEUE`] frames
+    /// wait already, the oldest one is dropped.
+    fn enqueue(&mut self, cemi: Vec<u8>) {
+        if self.outbox.len() >= MAX_CLIENT_QUEUE {
+            self.outbox.pop_front();
+            if !self.overflow_reported {
+                self.overflow_reported = true;
+                tracing::warn!(
+                    channel_id = self.channel_id,
+                    client = %self.data_addr,
+                    "tunnel client does not keep up, oldest frames dropped"
+                );
+            }
+        }
+        self.outbox.push_back(cemi);
+    }
+}
+
+/// A tunnelling request on the wire.
+struct InFlight {
+    sequence: u8,
+    /// The complete KNXnet/IP datagram, sent again unchanged on a retry.
+    datagram: Vec<u8>,
+    /// How often it was sent.
+    attempts: u8,
+    /// When the client has to have acknowledged it, or it is sent again.
+    deadline: tokio::time::Instant,
+    /// The error of the last send, if it failed.
+    last_error: Option<String>,
 }
 
 /// Incoming frame from a tunnel client or multicast.
@@ -160,6 +221,22 @@ async fn stop_requested(stop: &mut watch::Receiver<bool>) {
 /// clear) once it has taken the request over. The request still arrives as a
 /// [`ServerEvent::TunnelFrame`]. Other message codes from a client are not
 /// confirmed.
+///
+/// # Slow clients
+///
+/// Every tunnel client has its own queue and one frame on the wire at a time,
+/// as the tunnelling protocol demands, and the server never waits for an
+/// acknowledgement: the next frame of that client goes out when the previous
+/// one is acknowledged, and an acknowledgement that stays away is noticed at
+/// its deadline. A client that does not acknowledge therefore delays only
+/// itself. A frame it has not acknowledged after three attempts, one second
+/// apart, costs it its tunnel. A send that fails counts as an attempt, too, and
+/// the next one follows after the same interval; the error is reported when
+/// the client is dropped.
+///
+/// At most 128 frames wait for a client. When it falls further behind, the
+/// oldest frame is dropped, so a client that acknowledges, only slowly, cannot
+/// make the server hold an unbounded queue.
 ///
 /// # Stopping
 ///
@@ -286,6 +363,9 @@ impl DeviceServer {
     /// Each tunnel client has to acknowledge the frame: it is sent up to three
     /// times, one second apart, and a client that never acknowledges is
     /// disconnected (and sent a `DISCONNECT_REQUEST` on a best-effort basis).
+    /// The call returns once the frame is queued for the clients: each has its
+    /// own queue, so a client that does not answer delays no frame to the
+    /// others (see "Slow clients" on [`DeviceServer`]).
     ///
     /// # Errors
     ///
@@ -363,6 +443,7 @@ async fn server_task(
         if state.stopping() {
             break;
         }
+        let ack_deadline = next_ack_deadline(&state.tunnels);
         tokio::select! {
             () = stop_requested(&mut state.stop) => break,
 
@@ -391,14 +472,14 @@ async fn server_task(
 
             () = state.events.deliver(), if state.events.has_backlog() => {}
 
+            () = ack_due(ack_deadline) => {
+                expire_acks(&socket, &mut state.tunnels).await;
+            }
+
             _ = cleanup.tick() => {
                 cleanup_stale_tunnels(&mut state.tunnels);
             }
         }
-
-        // Requests may have arrived during any of the above, also while it waited
-        // for an acknowledgement.
-        send_confirmations(&socket, &mut state).await;
     }
 
     // Tell the tunnel clients, best effort: nobody waits for the answers.
@@ -444,7 +525,9 @@ async fn handle_packet(data: &[u8], src: SocketAddr, socket: &UdpSocket, state: 
             handle_tunneling_request(socket, src, &frame, &mut state.tunnels, &mut state.events)
                 .await;
         }
-        ServiceType::TunnelingAck => {} // client ack, nothing to do
+        ServiceType::TunnelingAck => {
+            handle_tunneling_ack(socket, src, &frame, &mut state.tunnels).await;
+        }
         ServiceType::SearchRequest => {
             // Discovery — respond with device info (simplified)
             tracing::debug!("search request from {src}");
@@ -522,15 +605,12 @@ async fn handle_connect(
         *next_channel_id = 1;
     }
 
-    tunnels.push(TunnelClient {
+    tunnels.push(TunnelClient::new(
         channel_id,
         ctrl_addr,
         data_addr,
-        send_seq: 0,
-        recv_seq: 0,
-        last_heartbeat: tokio::time::Instant::now(),
-        pending_confirmations: VecDeque::new(),
-    });
+        tokio::time::Instant::now(),
+    ));
 
     tracing::info!(channel_id, %ctrl_addr, "tunnel client connected");
 
@@ -704,18 +784,12 @@ async fn handle_tunneling_request(
     // Parse CEMI
     let cemi_data = &frame.body[ConnectionHeader::LEN as usize..];
     if let Ok(cemi) = CemiFrame::parse(cemi_data) {
-        // The server owes the client a confirmation for each L_Data.req. It is
-        // sent by the server task once this packet is dealt with: sending needs
-        // the client's acknowledgement, and this function does not wait.
+        // The server owes the client a confirmation for each L_Data.req. It joins the
+        // client's queue behind what is already waiting, and goes out as soon as the
+        // client has acknowledged what is on the wire.
         if let Some(confirmation) = confirmation_of(&cemi) {
-            if tunnel.pending_confirmations.len() < MAX_PENDING_CONFIRMATIONS {
-                tunnel.pending_confirmations.push_back(confirmation);
-            } else {
-                tracing::warn!(
-                    channel_id = ch.channel_id,
-                    "too many unconfirmed requests, confirmation skipped"
-                );
-            }
+            tunnel.enqueue(confirmation);
+            pump(socket, tunnel).await;
         }
         events.push(ServerEvent::TunnelFrame(cemi));
     }
@@ -741,25 +815,6 @@ fn confirmation_of(cemi: &CemiFrame) -> Option<Vec<u8>> {
     confirmation[0] = MessageCode::LDataCon as u8;
     *confirmation.get_mut(control_1)? &= !CONFIRM_FLAG;
     Some(confirmation)
-}
-
-/// Send the confirmations the tunnel clients are owed, oldest first. Every send
-/// waits for the client's acknowledgement and serves other packets meanwhile,
-/// which may owe more confirmations; those are sent in the same pass.
-async fn send_confirmations(socket: &UdpSocket, state: &mut ServerState) {
-    loop {
-        if state.stopping() {
-            return;
-        }
-        let Some((channel_id, confirmation)) = state.tunnels.iter_mut().find_map(|t| {
-            t.pending_confirmations
-                .pop_front()
-                .map(|confirmation| (t.channel_id, confirmation))
-        }) else {
-            return;
-        };
-        send_tunneling_to(socket, state, channel_id, &confirmation).await;
-    }
 }
 
 async fn send_tunneling_ack(
@@ -791,15 +846,11 @@ async fn send_to_all(
         }
     }
 
-    // Send as tunneling indication to all tunnel clients. The table changes
-    // while the acknowledgements are awaited (clients connect and leave), so
-    // work from the channels that exist now.
-    let channels: Vec<u8> = state.tunnels.iter().map(|t| t.channel_id).collect();
-    for channel_id in channels {
-        if state.stopping() {
-            return;
-        }
-        send_tunneling_to(socket, state, channel_id, &cemi).await;
+    // Queue it for every tunnel client. Each client has its own queue and its own
+    // acknowledgement, so one that does not answer holds up only itself.
+    for tunnel in &mut state.tunnels {
+        tunnel.enqueue(cemi.to_vec());
+        pump(socket, tunnel).await;
     }
 }
 
@@ -830,150 +881,173 @@ async fn send_to_tunnel_client(
     channel_id: u8,
     cemi: &CemiFrame,
 ) {
-    send_tunneling_to(socket, state, channel_id, &as_indication(cemi)).await;
+    if let Some(tunnel) = state
+        .tunnels
+        .iter_mut()
+        .find(|t| t.channel_id == channel_id)
+    {
+        tunnel.enqueue(as_indication(cemi).into_owned());
+        pump(socket, tunnel).await;
+    }
+}
+
+/// Put the next queued frame of `tunnel` on the wire, unless one is waiting for
+/// its acknowledgement. Never waits: the acknowledgement is handled when it
+/// arrives ([`handle_tunneling_ack`]) or missing at its deadline
+/// ([`expire_acks`]).
+async fn pump(socket: &UdpSocket, tunnel: &mut TunnelClient) {
+    if tunnel.in_flight.is_some() {
+        return;
+    }
+    let sequence = tunnel.send_seq;
+    // A frame that cannot be serialized cannot happen for cEMI that came out of a
+    // CemiFrame, and the client is not at fault; it is skipped.
+    let datagram = loop {
+        let Some(cemi) = tunnel.outbox.pop_front() else {
+            tunnel.overflow_reported = false;
+            return;
+        };
+        let request = KnxIpFrame::tunneling_request(tunnel.channel_id, sequence, &cemi);
+        if let Some(datagram) = serialize_frame(&request) {
+            break datagram;
+        }
+    };
+    tunnel.in_flight = Some(InFlight {
+        sequence,
+        datagram,
+        attempts: 0,
+        deadline: tokio::time::Instant::now(),
+        last_error: None,
+    });
+    transmit(socket, tunnel).await;
+}
+
+/// Send the request in flight (again) and set when it has to be acknowledged.
+///
+/// A failed send counts as an attempt like an unanswered one, and the next one
+/// follows after the usual interval, not at once: an error that goes away
+/// (a full socket buffer, a route that is briefly missing) does not cost a
+/// healthy client its tunnel, and one that stays is reported with its cause.
+async fn transmit(socket: &UdpSocket, tunnel: &mut TunnelClient) {
+    let Some(in_flight) = tunnel.in_flight.as_mut() else {
+        return;
+    };
+    in_flight.attempts += 1;
+    in_flight.deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
+    match socket.send_to(&in_flight.datagram, tunnel.data_addr).await {
+        Ok(_) => in_flight.last_error = None,
+        Err(e) => {
+            tracing::debug!(
+                channel = tunnel.channel_id,
+                attempt = in_flight.attempts,
+                error = %e,
+                "send failed"
+            );
+            in_flight.last_error = Some(e.to_string());
+        }
+    }
+}
+
+/// The client acknowledged what is on the wire: the next frame may go.
+async fn handle_tunneling_ack(
+    socket: &UdpSocket,
+    src: SocketAddr,
+    frame: &KnxIpFrame,
+    tunnels: &mut [TunnelClient],
+) {
+    let Some(header) = ConnectionHeader::parse(&frame.body) else {
+        return;
+    };
+    let Some(tunnel) = tunnels
+        .iter_mut()
+        .find(|t| t.channel_id == header.channel_id && t.data_addr == src)
+    else {
+        return;
+    };
+    if tunnel
+        .in_flight
+        .as_ref()
+        .is_some_and(|f| f.sequence == header.sequence_counter)
+    {
+        tunnel.in_flight = None;
+        tunnel.send_seq = header.sequence_counter.wrapping_add(1);
+        pump(socket, tunnel).await;
+    }
+}
+
+/// When the first request that waits for an acknowledgement is due, if any.
+fn next_ack_deadline(tunnels: &[TunnelClient]) -> Option<tokio::time::Instant> {
+    tunnels
+        .iter()
+        .filter_map(|t| t.in_flight.as_ref().map(|f| f.deadline))
+        .min()
+}
+
+/// Resolves at `deadline`; never, if there is none. Cancel-safe.
+async fn ack_due(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Send again what a client has not acknowledged in time, up to
+/// [`MAX_RETRIES`] times. A client that never acknowledges is dropped.
+async fn expire_acks(socket: &UdpSocket, tunnels: &mut Vec<TunnelClient>) {
+    let now = tokio::time::Instant::now();
+    let mut lost = Vec::new();
+    for tunnel in tunnels.iter_mut() {
+        let Some(in_flight) = tunnel.in_flight.as_ref() else {
+            continue;
+        };
+        if in_flight.deadline > now {
+            continue;
+        }
+        if in_flight.attempts < MAX_RETRIES {
+            tracing::debug!(
+                channel = tunnel.channel_id,
+                attempt = in_flight.attempts,
+                "ack timeout"
+            );
+            transmit(socket, tunnel).await;
+        } else {
+            lost.push(tunnel.channel_id);
+        }
+    }
+    for channel_id in lost {
+        drop_lost_tunnel(socket, tunnels, channel_id).await;
+    }
 }
 
 /// Forget a tunnel client whose acknowledgements stayed away and tell it, best
 /// effort, so that a client that is merely cut off knows to reconnect.
-async fn drop_lost_tunnel(
-    socket: &UdpSocket,
-    tunnels: &mut Vec<TunnelClient>,
-    channel_id: u8,
-    data_addr: SocketAddr,
-) {
-    let Some(position) = tunnels
-        .iter()
-        .position(|t| t.channel_id == channel_id && t.data_addr == data_addr)
-    else {
+async fn drop_lost_tunnel(socket: &UdpSocket, tunnels: &mut Vec<TunnelClient>, channel_id: u8) {
+    let Some(position) = tunnels.iter().position(|t| t.channel_id == channel_id) else {
         return;
     };
     let tunnel = tunnels.remove(position);
-    tracing::warn!(
-        channel_id,
-        client = %tunnel.ctrl_addr,
-        "tunnel client dropped: no acknowledgement after {MAX_RETRIES} attempts"
-    );
+    let failed_send = tunnel
+        .in_flight
+        .as_ref()
+        .and_then(|f| f.last_error.as_deref());
+    if let Some(error) = failed_send {
+        tracing::warn!(
+            channel_id,
+            client = %tunnel.data_addr,
+            error,
+            "tunnel client dropped: sending to it failed {MAX_RETRIES} times"
+        );
+    } else {
+        tracing::warn!(
+            channel_id,
+            client = %tunnel.ctrl_addr,
+            "tunnel client dropped: no acknowledgement after {MAX_RETRIES} attempts"
+        );
+    }
     let port = socket.local_addr().map_or(KNX_PORT, |addr| addr.port());
     let request = KnxIpFrame::disconnect_request(channel_id, Hpai::nat_udp(port));
     if let Some(bytes) = serialize_frame(&request) {
         let _ = socket.send_to(&bytes, tunnel.ctrl_addr).await;
-    }
-}
-
-/// Send a tunneling request to a client and wait for its ack, up to
-/// [`MAX_RETRIES`] times. A client that never acknowledges is dropped.
-///
-/// The tunnel is looked up again by channel id wherever the table may have
-/// changed: packets are served while the ack is awaited.
-async fn send_tunneling_to(
-    socket: &UdpSocket,
-    state: &mut ServerState,
-    channel_id: u8,
-    cemi: &[u8],
-) {
-    let Some((seq, data_addr)) = state
-        .tunnels
-        .iter()
-        .find(|t| t.channel_id == channel_id)
-        .map(|t| (t.send_seq, t.data_addr))
-    else {
-        return;
-    };
-    let frame = KnxIpFrame::tunneling_request(channel_id, seq, cemi);
-    let Some(frame_bytes) = serialize_frame(&frame) else {
-        // Cannot happen for a cEMI frame that came out of a CemiFrame; the
-        // client is not at fault.
-        return;
-    };
-
-    for attempt in 0..MAX_RETRIES {
-        if let Err(e) = socket.send_to(&frame_bytes, data_addr).await {
-            tracing::debug!(channel = channel_id, attempt = attempt + 1, error = %e, "send failed");
-            continue;
-        }
-
-        match wait_for_tunneling_ack(socket, state, channel_id, data_addr, seq).await {
-            AckWait::Received => {
-                if let Some(tunnel) = state
-                    .tunnels
-                    .iter_mut()
-                    .find(|t| t.channel_id == channel_id && t.data_addr == data_addr)
-                {
-                    tunnel.send_seq = seq.wrapping_add(1);
-                }
-                return;
-            }
-            AckWait::Gone | AckWait::Stopped => return,
-            AckWait::TimedOut => {
-                tracing::debug!(channel = channel_id, attempt = attempt + 1, "ack timeout");
-            }
-        }
-    }
-
-    tracing::debug!(channel = channel_id, "no ack after {MAX_RETRIES} attempts");
-    drop_lost_tunnel(socket, &mut state.tunnels, channel_id, data_addr).await;
-}
-
-/// How waiting for a tunnelling ack ended.
-enum AckWait {
-    Received,
-    TimedOut,
-    /// The tunnel left (disconnect request) while the ack was awaited.
-    Gone,
-    /// The server was asked to stop.
-    Stopped,
-}
-
-/// Wait for a `TunnelingAck` matching the given channel and sequence.
-///
-/// Every other packet is served at once rather than set aside: a tunnelling
-/// request of this very client is acknowledged now (the client may wait for
-/// that before it reads our frame, and both would wait for each other),
-/// heartbeats are answered, other clients can connect.
-async fn wait_for_tunneling_ack(
-    socket: &UdpSocket,
-    state: &mut ServerState,
-    channel_id: u8,
-    expected_src: SocketAddr,
-    seq: u8,
-) -> AckWait {
-    let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
-    let mut buf = [0u8; RECV_BUF_SIZE];
-
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return AckWait::TimedOut;
-        }
-
-        let received = tokio::select! {
-            biased;
-            () = stop_requested(&mut state.stop) => return AckWait::Stopped,
-            received = tokio::time::timeout(remaining, socket.recv_from(&mut buf)) => received,
-        };
-        let Ok(Ok((n, src))) = received else {
-            return AckWait::TimedOut;
-        };
-
-        // Check if this is our ack
-        if let Ok(frame) = KnxIpFrame::parse(&buf[..n])
-            && frame.service_type == ServiceType::TunnelingAck
-            && let Some(ack_ch) = ConnectionHeader::parse(&frame.body)
-            && src == expected_src
-            && ack_ch.channel_id == channel_id
-            && ack_ch.sequence_counter == seq
-        {
-            return AckWait::Received;
-        }
-
-        handle_packet(&buf[..n], src, socket, state).await;
-        if !state
-            .tunnels
-            .iter()
-            .any(|t| t.channel_id == channel_id && t.data_addr == expected_src)
-        {
-            return AckWait::Gone;
-        }
     }
 }
 
@@ -995,6 +1069,7 @@ mod tests {
     use super::*;
     use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
     use knx_rs_core::types::Priority;
+    use std::time::Duration;
 
     fn event(ga: u16) -> ServerEvent {
         ServerEvent::TunnelFrame(CemiFrame::new_l_data(
@@ -1109,5 +1184,215 @@ mod tests {
         assert!(!queue.has_backlog());
         queue.push(event(3)); // must not panic or grow
         assert!(!queue.has_backlog());
+    }
+
+    // ── Per-client sending ───────────────────────────────────────
+
+    const LOOPBACK: &str = "127.0.0.1:0";
+
+    async fn socket() -> UdpSocket {
+        UdpSocket::bind(LOOPBACK).await.unwrap()
+    }
+
+    fn client(channel_id: u8, data_addr: SocketAddr) -> TunnelClient {
+        TunnelClient::new(
+            channel_id,
+            data_addr,
+            data_addr,
+            tokio::time::Instant::now(),
+        )
+    }
+
+    #[test]
+    fn a_full_queue_drops_the_oldest_frame_and_keeps_the_order() {
+        let mut tunnel = client(1, "127.0.0.1:9".parse().unwrap());
+        for n in 0..=MAX_CLIENT_QUEUE {
+            tunnel.enqueue(vec![u8::try_from(n % 256).unwrap(), 0xAA]);
+        }
+        assert_eq!(
+            tunnel.outbox.len(),
+            MAX_CLIENT_QUEUE,
+            "the queue is bounded"
+        );
+        assert_eq!(tunnel.outbox.front().unwrap()[0], 1, "frame 0 was dropped");
+        assert_eq!(
+            tunnel.outbox.back().unwrap()[0],
+            u8::try_from(MAX_CLIENT_QUEUE % 256).unwrap(),
+            "the newest frame is kept"
+        );
+        assert!(tunnel.overflow_reported, "the overflow is reported once");
+    }
+
+    #[tokio::test]
+    async fn one_frame_is_on_the_wire_and_an_ack_releases_the_next_with_the_next_sequence() {
+        let server = socket().await;
+        let peer = socket().await;
+        let mut tunnel = client(7, peer.local_addr().unwrap());
+        tunnel.enqueue(vec![0x29, 0x00]);
+        tunnel.enqueue(vec![0x29, 0x01]);
+        pump(&server, &mut tunnel).await;
+
+        let mut buf = [0u8; 64];
+        let (n, _) = peer.recv_from(&mut buf).await.unwrap();
+        let first = KnxIpFrame::parse(&buf[..n]).unwrap();
+        assert_eq!(
+            ConnectionHeader::parse(&first.body)
+                .unwrap()
+                .sequence_counter,
+            0
+        );
+        assert_eq!(tunnel.outbox.len(), 1, "the second frame waits for the ack");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), peer.recv_from(&mut buf))
+                .await
+                .is_err(),
+            "nothing else is sent before the ack"
+        );
+
+        // An ack for another sequence counter does not release it.
+        let stale = KnxIpFrame::tunneling_ack(7, 9, E_NO_ERROR);
+        handle_tunneling_ack(
+            &server,
+            peer.local_addr().unwrap(),
+            &stale,
+            std::slice::from_mut(&mut tunnel),
+        )
+        .await;
+        assert!(tunnel.in_flight.is_some());
+        assert_eq!(tunnel.send_seq, 0);
+
+        let ack = KnxIpFrame::tunneling_ack(7, 0, E_NO_ERROR);
+        handle_tunneling_ack(
+            &server,
+            peer.local_addr().unwrap(),
+            &ack,
+            std::slice::from_mut(&mut tunnel),
+        )
+        .await;
+        let (n, _) = peer.recv_from(&mut buf).await.unwrap();
+        let second = KnxIpFrame::parse(&buf[..n]).unwrap();
+        assert_eq!(
+            ConnectionHeader::parse(&second.body)
+                .unwrap()
+                .sequence_counter,
+            1
+        );
+        assert!(tunnel.outbox.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_ack_from_another_address_does_not_count() {
+        let server = socket().await;
+        let peer = socket().await;
+        let stranger = socket().await;
+        let mut tunnel = client(7, peer.local_addr().unwrap());
+        tunnel.enqueue(vec![0x29, 0x00]);
+        pump(&server, &mut tunnel).await;
+        let ack = KnxIpFrame::tunneling_ack(7, 0, E_NO_ERROR);
+        handle_tunneling_ack(
+            &server,
+            stranger.local_addr().unwrap(),
+            &ack,
+            std::slice::from_mut(&mut tunnel),
+        )
+        .await;
+        assert!(
+            tunnel.in_flight.is_some(),
+            "only the client's own address may acknowledge"
+        );
+    }
+
+    /// A send that fails is an attempt, and the next one follows after the usual
+    /// interval, not at once: three immediate errors used to drop a client and blame
+    /// its acknowledgement.
+    #[tokio::test(start_paused = true)]
+    async fn a_failing_send_is_retried_after_the_interval_and_the_cause_is_kept() {
+        let server = socket().await;
+        // An IPv6 destination from an IPv4 socket: the send fails at once, everywhere.
+        let mut tunnels = vec![client(3, "[::1]:9".parse().unwrap())];
+        tunnels[0].enqueue(vec![0x29, 0x00]);
+        pump(&server, &mut tunnels[0]).await;
+
+        let in_flight = tunnels[0].in_flight.as_ref().unwrap();
+        assert_eq!(in_flight.attempts, 1);
+        assert!(in_flight.last_error.is_some(), "the send error is recorded");
+        let due = in_flight.deadline;
+        assert!(
+            due >= tokio::time::Instant::now() + REQUEST_TIMEOUT,
+            "the retry waits one interval"
+        );
+
+        // Nothing happens before the deadline.
+        expire_acks(&server, &mut tunnels).await;
+        assert_eq!(tunnels[0].in_flight.as_ref().unwrap().attempts, 1);
+
+        for attempt in 2..=MAX_RETRIES {
+            tokio::time::advance(REQUEST_TIMEOUT).await;
+            expire_acks(&server, &mut tunnels).await;
+            assert_eq!(tunnels.len(), 1, "still connected after attempt {attempt}");
+            assert_eq!(tunnels[0].in_flight.as_ref().unwrap().attempts, attempt);
+        }
+        tokio::time::advance(REQUEST_TIMEOUT).await;
+        expire_acks(&server, &mut tunnels).await;
+        assert!(
+            tunnels.is_empty(),
+            "dropped after {MAX_RETRIES} failed attempts"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_client_is_retried_three_times_with_the_same_sequence_and_then_dropped() {
+        let server = socket().await;
+        let peer = socket().await;
+        let mut tunnels = vec![client(5, peer.local_addr().unwrap())];
+        tunnels[0].enqueue(vec![0x29, 0x00]);
+        pump(&server, &mut tunnels[0]).await;
+        for _ in 1..MAX_RETRIES {
+            tokio::time::advance(REQUEST_TIMEOUT).await;
+            expire_acks(&server, &mut tunnels).await;
+        }
+        let mut buf = [0u8; 64];
+        for _ in 0..MAX_RETRIES {
+            let (n, _) = peer.recv_from(&mut buf).await.unwrap();
+            let frame = KnxIpFrame::parse(&buf[..n]).unwrap();
+            assert_eq!(
+                ConnectionHeader::parse(&frame.body)
+                    .unwrap()
+                    .sequence_counter,
+                0
+            );
+        }
+        tokio::time::advance(REQUEST_TIMEOUT).await;
+        expire_acks(&server, &mut tunnels).await;
+        assert!(tunnels.is_empty());
+        // And the client is told, as far as that is possible.
+        let (n, _) = peer.recv_from(&mut buf).await.unwrap();
+        assert_eq!(
+            KnxIpFrame::parse(&buf[..n]).unwrap().service_type,
+            ServiceType::DisconnectRequest
+        );
+    }
+
+    #[test]
+    fn the_next_deadline_is_the_earliest_of_all_clients() {
+        let now = tokio::time::Instant::now();
+        let mut tunnels = vec![
+            client(1, "127.0.0.1:9".parse().unwrap()),
+            client(2, "127.0.0.1:9".parse().unwrap()),
+        ];
+        assert_eq!(next_ack_deadline(&tunnels), None);
+        let flight = |after: u64| InFlight {
+            sequence: 0,
+            datagram: Vec::new(),
+            attempts: 1,
+            deadline: now + Duration::from_secs(after),
+            last_error: None,
+        };
+        tunnels[0].in_flight = Some(flight(5));
+        tunnels[1].in_flight = Some(flight(2));
+        assert_eq!(
+            next_ack_deadline(&tunnels),
+            Some(now + Duration::from_secs(2))
+        );
     }
 }
