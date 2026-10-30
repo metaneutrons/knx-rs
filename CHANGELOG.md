@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.13.0](https://github.com/metaneutrons/knx-rs/compare/v0.12.0...v0.13.0) (2026-10-30)
+
+
+### Features
+
+* **ip:** answer search and description requests when given a device description ([#114](https://github.com/metaneutrons/knx-rs/issues/114)) ([11c5251](https://github.com/metaneutrons/knx-rs/commit/11c52513f88a7bb19f2dc70db5b567cb296a543a))
+* **ip:** answer SEARCH_REQUEST_EXTENDED and honour its search parameters ([#115](https://github.com/metaneutrons/knx-rs/issues/115)) ([c0c0947](https://github.com/metaneutrons/knx-rs/commit/c0c09477d24c3f311fd1040968dcea5c40341340))
+
+
+### Bug Fixes
+
+* **ip:** send to each tunnel client from its own queue and delay a retry after a failed send ([#112](https://github.com/metaneutrons/knx-rs/issues/112)) ([dc55242](https://github.com/metaneutrons/knx-rs/commit/dc55242a47c6d86d1195d8e5e8c88b0b1408bb84))
+
 ## [0.12.0](https://github.com/metaneutrons/knx-rs/compare/v0.11.0...v0.12.0) (2026-10-29)
 
 
