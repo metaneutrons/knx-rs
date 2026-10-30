@@ -1058,4 +1058,69 @@ mod tests {
         assert_eq!(&search.body[..8], &endpoint.to_bytes());
         assert_eq!(&search.body[8..], &dibs);
     }
+
+    // Extended search vectors from XKNX's search_request_extended_test.py and
+    // search_response_extended_test.py.
+    #[test]
+    fn the_extended_search_frames_reproduce_the_reference_vectors() {
+        use crate::knxip::srp::{mac_address_srp, programming_mode_srp};
+        use crate::knxip::{HostProtocol, Hpai, KnxIpFrame, ServiceType};
+
+        let multicast = Hpai {
+            protocol: HostProtocol::Ipv4Udp,
+            ip: [224, 0, 23, 12],
+            port: 3671,
+        };
+        // No SRP.
+        let request = KnxIpFrame::search_request_extended(multicast, &[]);
+        assert_eq!(
+            request.to_bytes(),
+            [
+                0x06, 0x10, 0x02, 0x0B, 0x00, 0x0E, 0x08, 0x01, 0xE0, 0x00, 0x17, 0x0C, 0x0E, 0x57
+            ]
+        );
+        // The programming mode SRP.
+        let request = KnxIpFrame::search_request_extended(multicast, &programming_mode_srp());
+        assert_eq!(
+            request.to_bytes(),
+            [
+                0x06, 0x10, 0x02, 0x0B, 0x00, 0x10, 0x08, 0x01, 0xE0, 0x00, 0x17, 0x0C, 0x0E, 0x57,
+                0x02, 0x81
+            ]
+        );
+        // Two SRPs, parsed back.
+        let mut srps = programming_mode_srp();
+        srps.extend(mac_address_srp([1, 2, 3, 4, 5, 6]));
+        let request = KnxIpFrame::search_request_extended(multicast, &srps);
+        assert_eq!(
+            request.to_bytes(),
+            [
+                0x06, 0x10, 0x02, 0x0B, 0x00, 0x18, 0x08, 0x01, 0xE0, 0x00, 0x17, 0x0C, 0x0E, 0x57,
+                0x02, 0x81, 0x08, 0x82, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
+            ]
+        );
+        let parsed = KnxIpFrame::parse(&request.to_bytes()).unwrap();
+        assert_eq!(parsed.service_type, ServiceType::SearchRequestExtended);
+        assert_eq!(parsed, request);
+
+        // The extended response is the search response with another service type.
+        let mut dibs = router_information("Gira KNX/IP-Router").to_bytes().to_vec();
+        dibs.extend(supported_service_families_dib(&[
+            (ServiceFamily::Core, 1),
+            (ServiceFamily::DeviceManagement, 2),
+            (ServiceFamily::Tunneling, 1),
+            (ServiceFamily::Routing, 1),
+            (ServiceFamily::RemoteConfiguration, 1),
+        ]));
+        let control = Hpai {
+            protocol: HostProtocol::Ipv4Udp,
+            ip: [192, 168, 42, 10],
+            port: 3671,
+        };
+        let response = KnxIpFrame::search_response_extended(control, &dibs);
+        let mut reference = XKNX_SEARCH_RESPONSE;
+        reference[2..4].copy_from_slice(&0x020C_u16.to_be_bytes());
+        assert_eq!(response.to_bytes(), reference);
+        assert_eq!(response.service_type, ServiceType::SearchResponseExtended);
+    }
 }

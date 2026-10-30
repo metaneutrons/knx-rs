@@ -22,6 +22,7 @@ use alloc::vec::Vec;
 use core::fmt;
 
 pub mod dib;
+pub mod srp;
 
 /// KNXnet/IP header length (always 6 bytes).
 pub const HEADER_LEN: u8 = 0x06;
@@ -341,6 +342,28 @@ impl KnxIpFrame {
             service_type: ServiceType::SearchRequest,
             body: discovery.to_bytes().to_vec(),
         }
+    }
+
+    /// Build an extended search request: the discovery endpoint of the client,
+    /// followed by search request parameters (see [`srp`]), which may be none.
+    #[must_use]
+    pub fn search_request_extended(discovery: Hpai, srps: &[u8]) -> Self {
+        let mut body = Vec::with_capacity(Hpai::LEN as usize + srps.len());
+        body.extend_from_slice(&discovery.to_bytes());
+        body.extend_from_slice(srps);
+        Self {
+            service_type: ServiceType::SearchRequestExtended,
+            body,
+        }
+    }
+
+    /// Build an extended search response. Its body has the layout of a search
+    /// response: the control endpoint, then the description blocks.
+    #[must_use]
+    pub fn search_response_extended(control: Hpai, dibs: &[u8]) -> Self {
+        let mut frame = Self::search_response(control, dibs);
+        frame.service_type = ServiceType::SearchResponseExtended;
+        frame
     }
 
     /// Build a search response: the server's control endpoint followed by its

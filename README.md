@@ -85,7 +85,8 @@ Changes for earlier versions are listed in the [changelog](CHANGELOG.md).
   dropping the server) release the UDP socket. Started with a `DeviceDescription` (`DeviceServer::start_with`), it answers `SEARCH_REQUEST` and
   `DESCRIPTION_REQUEST`, so discovery (ETS "Discover interfaces", `knx_rs_ip::discover`) finds it and a client can
   describe it; without one it stays silent and has to be added by IP address. The extended search
-  (`SEARCH_REQUEST_EXTENDED`) is not answered
+  (`SEARCH_REQUEST_EXTENDED`, which XKNX sends first) is answered as well, honouring the programming mode, MAC address and
+  service selectors; IP configuration, tunnelling slots and extended device information blocks are not provided
 - **Discovery** — search request/response for finding gateways on the local network
 - **Multiplexer** — fan out one connection into multiple independent handles
 - **URL parsing** — `udp://`, `tunnel://`, `router://` with multicast auto-detection
