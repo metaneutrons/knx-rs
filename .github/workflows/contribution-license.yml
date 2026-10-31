@@ -1,0 +1,32 @@
+name: Contribution licence
+
+# pull_request_target runs the workflow and the script from the base branch, so a pull request
+# cannot change the check that judges it. Nothing from the pull request is checked out or executed.
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  declaration:
+    name: Contribution licence declaration
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check the declaration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_API: repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}
+          MAINTAINERS: metaneutrons
+        run: |
+          set -euo pipefail
+          gh api "$PR_API" > "$RUNNER_TEMP/pr.json"
+          gh api --paginate --slurp "$PR_API/commits" | jq 'add // []' > "$RUNNER_TEMP/commits.json"
+          python3 -I scripts/check-contribution-license.py "$RUNNER_TEMP/pr.json" "$RUNNER_TEMP/commits.json"

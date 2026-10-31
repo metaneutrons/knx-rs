@@ -391,4 +391,4 @@ We are grateful for the OpenKNX community's work in creating and maintaining an 
 
 ## License
 
-GPL-3.0-only — see [LICENSE](LICENSE).
+GPL-3.0-only — see [LICENSE](LICENSE). Contributions are accepted under the [Contribution Licence](CONTRIBUTION-LICENSE.md).
