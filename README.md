@@ -24,40 +24,62 @@ in the changelog. CI verifies every workspace crate against the MSRV.
 | [knx-rs-tp](knx-rs-tp/) | [![crates.io](https://img.shields.io/crates/v/knx-rs-tp.svg)](https://crates.io/crates/knx-rs-tp) | [![docs.rs](https://img.shields.io/docsrs/knx-rs-tp)](https://docs.rs/knx-rs-tp) | ✅ | TP-UART data link layer for embedded targets *(WIP)* |
 | [knx-rs-prod](knx-rs-prod/) | [![crates.io](https://img.shields.io/crates/v/knx-rs-prod.svg)](https://crates.io/crates/knx-rs-prod) | [![docs.rs](https://img.shields.io/docsrs/knx-rs-prod)](https://docs.rs/knx-rs-prod) | ❌ | `.knxprod` builder — registration hash, split, RSA signing (bring your own ETS key), and package |
 
-## ⚠️ Migrating from 0.10 to 0.11
+## ⚠️ Migrating from 0.13 to 0.14
 
-**0.11.0 contains breaking API changes in `knx-rs-core`, `knx-rs-device` and
-`knx-rs-prod`.** Cargo treats each `0.x` minor as a breaking boundary, so a `"0.10"`
-dependency will *not* pick up `0.11` automatically — bump your version requirement
-deliberately and apply the changes below. Upgrade all knx-rs crates together:
-`knx-rs-ip`, `knx-rs-device` and `knx-rs-tp` use `knx-rs-core` types in their APIs, and
-mixing versions ends in type mismatches.
+**0.14.0 changes the behaviour of the DPT codec in `knx-rs-core`.** Most of it compiles
+unchanged and fails or differs at run time, so read the list before upgrading. Cargo treats
+each `0.x` minor as a breaking boundary, so a `"0.13"` dependency will *not* pick up `0.14`
+automatically. Upgrade all knx-rs crates together: `knx-rs-ip`, `knx-rs-device` and
+`knx-rs-tp` use `knx-rs-core` types in their APIs, and mixing versions ends in type
+mismatches. `knx-rs-ip` and `knx-rs-device` call the codec, so their group-value handling
+follows the changes below.
 
-### knx-rs-core
+### knx-rs-core: encoders are strict
 
-- **`knxip::KnxIpError` is gone.** The alias was deprecated since 0.3.1; use
-  `KnxIpParseError`. The connection error `knx_rs_ip::KnxIpError` is not affected.
+`dpt::encode` returns `DptError::OutOfRange` where 0.13 clamped, masked or padded the value:
 
-### knx-rs-device
+- A number outside the range of the field, for example below −128 or above 127 for DPT 6,
+  above 65535 for DPT 7, outside the 16-bit range for DPT 8, above 999999 for DPT 15 given
+  as a number, a percentage above 100, a scene number above 63 (DPT 17 and 18).
+- A `DptValue::Bytes` for a multi-field DPT must have exactly the octets of the DPT. It is
+  never shortened or padded.
+- DPT 28 rejects a NUL character in the text, because the receiver would cut the text there.
 
-- **`DataProperty::access()` is gone.** It was deprecated since 0.3.1; use
-  `access_level()` for the typed `AccessLevel`, or `access_level() as u8` for the raw byte.
+Decoding stays lenient: octets beyond the length of the DPT are ignored, reserved bits are
+not read. DPT 16 stays lossy on purpose (cut at 14 characters, `?` for a character the
+character set cannot represent), so a long display text still encodes.
 
-### knx-rs-prod
+### knx-rs-core: other `DptValue` variants and values
 
-- **zip 9.** Archives are written with zip 9; zip 8 carries RUSTSEC-2026-0367 to 0369.
-- **No third-party types in the API.** Errors from the XML parser and the ZIP library, and
-  keys from the RSA library, are wrapped in this crate's own types. A new major release of
-  one of those libraries is therefore no longer a breaking change here.
-  - `KnxprodError::Xml` holds an `XmlError`, `KnxprodError::Zip` an `ArchiveError`, both
-    re-exported at the crate root. Messages and source chains read as before; the
-    `quick_xml` and `zip` error types themselves are no longer reachable.
-  - `KnxprodError` no longer implements `From<quick_xml::Error>` or
-    `From<zip::result::ZipError>`. Code that used `?` on those errors in a function
-    returning `KnxprodError` has to convert them into its own error type.
-  - `SigningKey::public_key()` returns a `VerifyingKey`, and `verify_directory_signature`
-    takes a `&VerifyingKey` instead of an `&rsa::RsaPublicKey`.
-- **`KnxprodError` is `#[non_exhaustive]`.** Exhaustive `match`es need a `_ =>` arm.
+| DPT | 0.13 decodes to | 0.14 decodes to |
+|-----|-----------------|-----------------|
+| 15.000 (access data) | `UInt`, six decimal digits only | `Bytes`, four octets (BCD digits, flags and index). The BCD digits are checked. Encoding still accepts a `UInt` of up to six digits, with all flags and the index 0. |
+| 27.001 (32-bit set) | `Int` | `UInt`, a bit set |
+| 6.020 (status with mode) | `Int` | `UInt`, a bit field with a one-hot mode. A flag is 1 when set, as in the ETS master data. |
+| 251.600 (RGBW) | `UInt`, four octets | `Bytes`, **six octets**: R, G, B, W, a reserved octet and four validity bits. The four-octet form is neither produced nor accepted. |
+| 26.001 (scene info) | `UInt`, low six bits only | `UInt`, seven bits, the inactive flag is kept |
+| 238.xxx | `UInt`, low six bits only | `UInt`, the whole octet |
+| 16.000 (ASCII) | any octet, read as Latin-1 | an octet above `0x7F` is an `OutOfRange` error; 16.001 is unchanged |
+
+DPT 9 follows the standard more closely:
+
+- The encoded value `0x7FFF` means invalid data. It decodes to `Float(NaN)`, and
+  `Float(NaN)` encodes to it. 0.13 decoded `0x7FFF` as a number and encoded `NaN` as 0.
+- The largest value is 670433.28, the smallest −671088.64. Anything outside is an
+  `OutOfRange` error.
+- The mantissa is rounded once to the nearest step instead of being truncated while the
+  exponent grows, so large values can encode one step differently.
+
+`Dpt::wire_size()` and the other size functions follow: 251 changes from four to six octets.
+The groups that 0.13 answered with `DptWireSize::Unknown` have a size now, and DPT 24 and 267
+are `VariableBytes` like DPT 28.
+
+### What is new and not breaking
+
+Every main group of KNX Standard `03_07_02` now has a codec (20 to 25, 30, 31, 200 to 284),
+plus 275, 285 and 288 from the ETS master data. 0.13 answered these with
+`DptError::UnsupportedDpt`. The new module `dpt::typed` names the fields of several
+multi-field types; see [DPT Coverage](#dpt-coverage).
 
 Changes for earlier versions are listed in the [changelog](CHANGELOG.md).
 
