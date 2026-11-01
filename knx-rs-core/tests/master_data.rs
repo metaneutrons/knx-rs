@@ -18,6 +18,7 @@
 
 use std::collections::BTreeMap;
 
+use knx_rs_core::dpt::typed::TypedDpt;
 use knx_rs_core::dpt::{self, Dpt, DptValue, DptWireSize};
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -227,4 +228,193 @@ fn the_float_subtypes_encode_the_range_the_master_data_gives() {
         checked += 1;
     }
     assert!(checked > 20, "only {checked} float subtypes had a range");
+}
+
+/// The `Bit` fields of one subtype with their position counted from the least significant bit of
+/// the whole value, in the order the master data lists them (most significant first).
+fn bit_positions(xml: &str, id: &str) -> Vec<(String, u32)> {
+    let mut reader = Reader::from_str(xml);
+    let mut inside = false;
+    let mut fields: Vec<(Option<String>, u32)> = Vec::new();
+    loop {
+        let event = reader.read_event().unwrap();
+        let (e, is_start) = match &event {
+            Event::Start(e) => (e, true),
+            Event::Empty(e) => (e, false),
+            Event::End(e) => {
+                if inside && e.name().as_ref() == "DatapointSubtype" {
+                    break;
+                }
+                continue;
+            }
+            Event::Eof => break,
+            _ => continue,
+        };
+        let name = e.name().as_ref().to_owned();
+        if name == "DatapointSubtype" && attr(e, "Id").as_deref() == Some(id) {
+            inside = true;
+            if !is_start {
+                break;
+            }
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        match name.as_str() {
+            "Bit" => fields.push((attr(e, "Name"), 1)),
+            "Reserved" | "UnsignedInteger" | "SignedInteger" | "Float" | "Enumeration" => {
+                fields.push((None, attr(e, "Width").unwrap().parse().unwrap()));
+            }
+            _ => {}
+        }
+    }
+    let total: u32 = fields.iter().map(|(_, w)| w).sum();
+    let mut offset = 0;
+    let mut bits = Vec::new();
+    for (name, width) in fields {
+        offset += width;
+        if let Some(name) = name {
+            bits.push((name, total - offset));
+        }
+    }
+    bits
+}
+
+/// A flag of the master data: its name, how to read it from the typed value, and whether the
+/// wire bit is set when the flag is not (the validity bits of DPT 235).
+type Flag<T> = (&'static str, fn(&T) -> bool, bool);
+
+/// Every flag the master data lists sits on the bit it gives: the whole value with only that bit
+/// set reads as exactly that flag, and no other flag moves.
+fn check<T: TypedDpt>(xml: &str, id: &str, flags: &[Flag<T>]) {
+    let bits = bit_positions(xml, id);
+    assert_eq!(bits.len(), flags.len(), "{id}: number of flags");
+    for (name, position) in bits {
+        let (_, read, invert) = flags
+            .iter()
+            .find(|(n, _, _)| *n == name)
+            .unwrap_or_else(|| panic!("{id}: no field for the master data flag {name}"));
+        let mut octets = vec![0u8; T::LEN];
+        // Counted from the least significant bit, the last octet first.
+        let octet = T::LEN - 1 - (position / 8) as usize;
+        octets[octet] |= 1 << (position % 8);
+        // Fields that must be valid for the others to decode are in range at all zeros.
+        let set = T::decode(&octets).unwrap();
+        let zero = T::decode(&vec![0u8; T::LEN]).unwrap();
+        assert_ne!(read(&set), read(&zero), "{id}: {name} on bit {position}");
+        assert_eq!(read(&set), !invert, "{id}: {name}");
+        // And no other flag moved.
+        for (other, read_other, _) in flags.iter().filter(|(n, _, _)| *n != name) {
+            assert_eq!(
+                read_other(&set),
+                read_other(&zero),
+                "{id}: {name} moved {other}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_typed_flags_sit_on_the_bits_the_master_data_gives() {
+    use knx_rs_core::dpt::typed::{
+        DateTime, MeteringValue, Rgbw, StatusLightingActuator, TariffActiveEnergy,
+    };
+
+    let Ok(path) = std::env::var("KNX_MASTER_XML") else {
+        eprintln!("KNX_MASTER_XML is not set: master data tests skipped");
+        return;
+    };
+    let xml = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
+    let xml = xml.trim_start_matches('\u{feff}');
+
+    check::<StatusLightingActuator>(
+        xml,
+        "DPST-207-600",
+        &[
+            ("Failure", |v| v.failure, false),
+            ("LocalOverride", |v| v.local_override, false),
+            ("Dimming", |v| v.dimming, false),
+            (
+                "StaircaseLighting Function",
+                |v| v.staircase_lighting,
+                false,
+            ),
+            ("NightModeActive", |v| v.night_mode_active, false),
+            ("Forced", |v| v.forced, false),
+            ("Locked", |v| v.locked, false),
+            ("ValidActualValue", |v| v.valid_actual_value, false),
+        ],
+    );
+    check::<TariffActiveEnergy>(
+        xml,
+        "DPST-235-1",
+        &[
+            ("ElectricalEngergyValidity", |v| v.energy_valid, true),
+            ("TariffValidity", |v| v.tariff_valid, true),
+        ],
+    );
+    check::<Rgbw>(
+        xml,
+        "DPST-251-600",
+        &[
+            ("mR", |v| v.red_valid, false),
+            ("mG", |v| v.green_valid, false),
+            ("mB", |v| v.blue_valid, false),
+            ("mW", |v| v.white_valid, false),
+        ],
+    );
+    check::<MeteringValue>(
+        xml,
+        "DPST-229-1",
+        &[
+            ("AlarmUnAck", |v| v.status.alarm_unacknowledged, false),
+            ("InAlarm", |v| v.status.in_alarm, false),
+            ("Overridden", |v| v.status.overridden, false),
+            ("Fault", |v| v.status.fault, false),
+            ("OutOfService", |v| v.status.out_of_service, false),
+        ],
+    );
+    // The date and time flags: the master data lists the clock quality, not the SRC bit. Every
+    // flag the master data lists must be one that decodes. Fields that hold a range cannot be
+    // all zero, so the zero value is a valid date with only the flags to look at.
+    let bits = bit_positions(xml, "DPST-19-1");
+    let by_name = |n: &str| {
+        bits.iter()
+            .find(|(name, _)| name == n)
+            .map(|(_, p)| *p)
+            .unwrap()
+    };
+    let positions = [
+        ("Fault", by_name("Fault")),
+        ("Working Day", by_name("Working Day")),
+        ("No WD", by_name("No WD")),
+        ("No Year", by_name("No Year")),
+        ("No Date", by_name("No Date")),
+        ("No Day of Week", by_name("No Day of Week")),
+        ("No Time", by_name("No Time")),
+        ("Standard Summer Time", by_name("Standard Summer Time")),
+        ("Quality of clock", by_name("Quality of clock")),
+    ];
+    let base = [126u8, 11, 1, 0xF2, 24, 5, 0, 0];
+    let read: [fn(&DateTime) -> bool; 9] = [
+        |v| v.fault,
+        |v| v.working_day,
+        |v| v.working_day_invalid,
+        |v| v.year_invalid,
+        |v| v.date_invalid,
+        |v| v.day_of_week_invalid,
+        |v| v.time_invalid,
+        |v| v.summer_time,
+        |v| v.clock_synchronised,
+    ];
+    for ((name, position), read) in positions.iter().zip(read) {
+        let mut octets = base;
+        octets[7 - (position / 8) as usize] |= 1 << (position % 8);
+        assert!(read(&DateTime::decode(&octets).unwrap()), "19.001: {name}");
+        assert!(
+            !read(&DateTime::decode(&base).unwrap()),
+            "19.001: {name} at zero"
+        );
+    }
 }
