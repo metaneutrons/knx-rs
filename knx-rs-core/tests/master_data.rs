@@ -13,7 +13,8 @@
 //! The file is not part of this repository. Point `KNX_MASTER_XML` at a copy, for example
 //! `curl -o /tmp/knx_master.xml https://update.knx.org/data/XML/project-23/knx_master.xml`, and run
 //! `KNX_MASTER_XML=/tmp/knx_master.xml cargo test -p knx-rs-core --test master_data`. Without the
-//! variable the tests report that and pass.
+//! variable the tests report that and pass. CI fetches the file in the Linux test job and sets the
+//! variable; if the download fails the job continues with a warning and the tests skip.
 
 use std::collections::BTreeMap;
 

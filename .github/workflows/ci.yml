@@ -64,6 +64,21 @@ jobs:
       - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-nextest,cargo-llvm-cov
+      # The master data tests (knx-rs-core/tests/master_data.rs) compare the DPT codecs with the
+      # file KNX publishes. It is fetched at run time and never stored in the repository. If the
+      # download fails or does not look like the file, the tests skip with a warning.
+      - name: Fetch the KNX master data
+        if: matrix.name == 'linux-x86_64'
+        shell: bash
+        run: |
+          file="$RUNNER_TEMP/knx_master.xml"
+          if curl --fail --silent --show-error --location --retry 3 --retry-delay 5 --max-time 60 \
+              --output "$file" https://update.knx.org/data/XML/project-23/knx_master.xml \
+              && grep -q '<MasterData ' "$file"; then
+            echo "KNX_MASTER_XML=$file" >> "$GITHUB_ENV"
+          else
+            echo "::warning::KNX master data not available, the master data tests are skipped"
+          fi
       # The knxd interoperability tests need Docker and run in their own job.
       - run: cargo nextest run --workspace --all-features --locked -E 'not (binary(knxd_client) | binary(knxd_device_server))'
       - name: Enforce line coverage floor
