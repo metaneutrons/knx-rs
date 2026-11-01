@@ -315,18 +315,22 @@ fn check<T: TypedDpt>(xml: &str, id: &str, flags: &[Flag<T>]) {
     }
 }
 
-#[test]
-fn the_typed_flags_sit_on_the_bits_the_master_data_gives() {
-    use knx_rs_core::dpt::typed::{
-        DateTime, MeteringValue, Rgbw, StatusLightingActuator, TariffActiveEnergy,
-    };
-
+/// The text of the master data file, or `None` (with a note) when `KNX_MASTER_XML` is not set.
+fn master_xml() -> Option<String> {
     let Ok(path) = std::env::var("KNX_MASTER_XML") else {
         eprintln!("KNX_MASTER_XML is not set: master data tests skipped");
-        return;
+        return None;
     };
     let xml = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
-    let xml = xml.trim_start_matches('\u{feff}');
+    Some(xml.trim_start_matches('\u{feff}').to_owned())
+}
+
+#[test]
+fn the_lighting_actuator_flags_sit_on_the_bits_the_master_data_gives() {
+    use knx_rs_core::dpt::typed::StatusLightingActuator;
+
+    let Some(xml) = master_xml() else { return };
+    let xml = xml.as_str();
 
     check::<StatusLightingActuator>(
         xml,
@@ -346,6 +350,15 @@ fn the_typed_flags_sit_on_the_bits_the_master_data_gives() {
             ("ValidActualValue", |v| v.valid_actual_value, false),
         ],
     );
+}
+
+#[test]
+fn the_metering_and_colour_flags_sit_on_the_bits_the_master_data_gives() {
+    use knx_rs_core::dpt::typed::{MeteringValue, Rgbw, TariffActiveEnergy};
+
+    let Some(xml) = master_xml() else { return };
+    let xml = xml.as_str();
+
     check::<TariffActiveEnergy>(
         xml,
         "DPST-235-1",
@@ -375,6 +388,15 @@ fn the_typed_flags_sit_on_the_bits_the_master_data_gives() {
             ("OutOfService", |v| v.status.out_of_service, false),
         ],
     );
+}
+
+#[test]
+fn the_date_time_flags_sit_on_the_bits_the_master_data_gives() {
+    use knx_rs_core::dpt::typed::DateTime;
+
+    let Some(xml) = master_xml() else { return };
+    let xml = xml.as_str();
+
     // The date and time flags: the master data lists the clock quality, not the SRC bit. Every
     // flag the master data lists must be one that decodes. Fields that hold a range cannot be
     // all zero, so the zero value is a valid date with only the flags to look at.
