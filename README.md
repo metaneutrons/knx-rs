@@ -333,6 +333,11 @@ Where the standard is ambiguous or contradicts itself (for example the axis orde
 validity polarity), the octets are carried as they are and nothing is
 interpreted; the sources of the open points are listed in `knx-rs-core/src/dpt/convert/compound.rs`.
 
+For the multi-field types whose layout is settled, `knx_rs_core::dpt::typed` names the fields on
+top of those octets: date (11.001), date and time (19.001), the status types 207.100, 207.105 and
+207.600, metering value (229.001), active energy with tariff (235.001) and RGBW (251.600). The bit
+positions of the flags are checked against the master data by the same test.
+
 ## Testing
 
 Validated against the [OpenKNX/knx](https://github.com/OpenKNX/knx) C++ reference stack:

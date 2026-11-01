@@ -28,10 +28,14 @@
 //! lossy encoder, for display text: it cuts at 14 characters and replaces a character the
 //! character set cannot represent by `?`.
 //!
+//! The [`typed`] module names the fields of the multi-field types whose layout is settled (date,
+//! date and time, the 207 status types, metering values, RGBW) on top of those octets.
+//!
 //! In DPT 9 the encoded value `0x7FFF` means invalid data; it decodes to `Float(NaN)`, and
 //! `Float(NaN)` encodes to it.
 
 mod convert;
+pub mod typed;
 
 use alloc::string::String;
 use alloc::vec::Vec;
