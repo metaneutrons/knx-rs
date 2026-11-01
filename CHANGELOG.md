@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.0](https://github.com/metaneutrons/knx-rs/compare/v0.13.0...v0.14.0) (2026-11-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** support every DPT main group of the KNX standard ([#118](https://github.com/metaneutrons/knx-rs/issues/118))
+
+### Features
+
+* **contrib:** add contribution licence and declaration check ([#116](https://github.com/metaneutrons/knx-rs/issues/116)) ([a146fc2](https://github.com/metaneutrons/knx-rs/commit/a146fc25256b0c3cfcd591ed368337bac4fc96cb))
+* **core:** add typed access to settled multi-field DPTs ([#119](https://github.com/metaneutrons/knx-rs/issues/119)) ([0ecb9ae](https://github.com/metaneutrons/knx-rs/commit/0ecb9ae4a283cc851715a1fea97ef0815ac4d93b))
+* **core:** support every DPT main group of the KNX standard ([#118](https://github.com/metaneutrons/knx-rs/issues/118)) ([b9bf927](https://github.com/metaneutrons/knx-rs/commit/b9bf92793e1141dcf9cd8a52b4cdb66a3652b36f))
+
 ## [0.13.0](https://github.com/metaneutrons/knx-rs/compare/v0.12.0...v0.13.0) (2026-10-30)
 
 

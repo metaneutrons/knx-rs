@@ -415,7 +415,7 @@ dependencies = [
 
 [[package]]
 name = "knx-rs-core"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "libm",
  "quick-xml",
@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "knx-rs-demo-client"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "knx-rs-core",
  "knx-rs-ip",
@@ -436,7 +436,7 @@ dependencies = [
 
 [[package]]
 name = "knx-rs-demo-device"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "knx-rs-core",
  "knx-rs-device",
@@ -449,14 +449,14 @@ dependencies = [
 
 [[package]]
 name = "knx-rs-device"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "knx-rs-core",
 ]
 
 [[package]]
 name = "knx-rs-ip"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "knx-rs-core",
  "knx-rs-device",
@@ -468,7 +468,7 @@ dependencies = [
 
 [[package]]
 name = "knx-rs-prod"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "base64",
  "clap",
@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "knx-rs-tp"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "knx-rs-core",
 ]
