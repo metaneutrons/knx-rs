@@ -12,27 +12,29 @@ fn round(v: f64) -> f64 {
     libm::round(v)
 }
 
-/// Convert a clamped `f64` to `u8`.
+/// Convert an `f64` to `u8`, rounding to nearest.
 ///
-/// Clamps to `[0, 255]` before conversion.
-const fn f64_to_u8(v: f64) -> u8 {
-    // SAFETY: value is clamped to [0, 255], truncation and sign loss are impossible.
+/// Returns `Err(OutOfRange)` for NaN, infinity and values outside `[0, 255]`.
+fn f64_to_u8(v: f64) -> Result<u8, DptError> {
+    let r = round(v);
+    if !r.is_finite() || !(0.0..=255.0).contains(&r) {
+        return Err(DptError::out_of_range("expected 0..=255"));
+    }
+    // SAFETY: range validated above.
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "value clamped to u8 range"
+        reason = "range validated above"
     )]
-    {
-        v.clamp(0.0, 255.0) as u8
-    }
+    Ok(r as u8)
 }
 
 /// Convert an `f64` to `u32`, rounding to nearest.
 ///
-/// Returns `Err(OutOfRange)` if the value is negative or exceeds `u32::MAX`.
+/// Returns `Err(OutOfRange)` for NaN, infinity, negative values and values above `u32::MAX`.
 fn f64_to_u32(v: f64) -> Result<u32, DptError> {
     let r = round(v);
-    if r < 0.0 || r > f64::from(u32::MAX) {
+    if !r.is_finite() || r < 0.0 || r > f64::from(u32::MAX) {
         return Err(DptError::out_of_range("expected 0..=4294967295"));
     }
     // SAFETY: range validated above.
@@ -46,10 +48,10 @@ fn f64_to_u32(v: f64) -> Result<u32, DptError> {
 
 /// Convert an `f64` to `i32`, rounding to nearest.
 ///
-/// Returns `Err(OutOfRange)` if the value exceeds `i32` range.
+/// Returns `Err(OutOfRange)` for NaN, infinity and values outside the `i32` range.
 fn f64_to_i32(v: f64) -> Result<i32, DptError> {
     let r = round(v);
-    if r < f64::from(i32::MIN) || r > f64::from(i32::MAX) {
+    if !r.is_finite() || r < f64::from(i32::MIN) || r > f64::from(i32::MAX) {
         return Err(DptError::out_of_range("expected -2147483648..=2147483647"));
     }
     // SAFETY: range validated above.
@@ -57,18 +59,19 @@ fn f64_to_i32(v: f64) -> Result<i32, DptError> {
     Ok(r as i32)
 }
 
-/// Convert a range-checked `f64` to `i64`.
+/// Convert an `f64` to `i64`, rounding to nearest.
 ///
-/// Precision loss is inherent: `f64` cannot represent all `i64` values.
-fn f64_to_i64(v: f64) -> i64 {
-    // SAFETY: round() returns a whole number; the cast is the best approximation.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "best approximation for f64→i64"
-    )]
-    {
-        round(v) as i64
+/// Precision loss is inherent: `f64` cannot represent all `i64` values. Returns
+/// `Err(OutOfRange)` for NaN, infinity and values outside the `i64` range.
+fn f64_to_i64(v: f64) -> Result<i64, DptError> {
+    let r = round(v);
+    // 2^63 is exactly representable; i64::MAX itself is not.
+    if !r.is_finite() || !(-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&r) {
+        return Err(DptError::out_of_range("expected a value in the i64 range"));
     }
+    // SAFETY: range validated above.
+    #[expect(clippy::cast_possible_truncation, reason = "range validated above")]
+    Ok(r as i64)
 }
 
 const fn check_len(payload: &[u8], min: usize) -> Result<(), DptError> {
@@ -131,6 +134,27 @@ fn val_u32(value: &DptValue) -> Result<u32, DptError> {
     }
 }
 
+/// Extract a `u32` that must not exceed `max` (the largest value the field can hold).
+///
+/// Encoders use this instead of clamping or masking: a value that does not fit the field is an
+/// error, not a different value on the bus.
+fn val_u32_max(value: &DptValue, max: u32) -> Result<u32, DptError> {
+    let v = val_u32(value)?;
+    if v > max {
+        return Err(DptError::out_of_range("value exceeds the range of the DPT"));
+    }
+    Ok(v)
+}
+
+/// Extract an `i32` that must lie within `[min, max]`.
+fn val_i32_range(value: &DptValue, min: i32, max: i32) -> Result<i32, DptError> {
+    let v = val_i32(value)?;
+    if !(min..=max).contains(&v) {
+        return Err(DptError::out_of_range("value exceeds the range of the DPT"));
+    }
+    Ok(v)
+}
+
 /// Extract an `i32` from a `DptValue`, coercing numeric types.
 fn val_i32(value: &DptValue) -> Result<i32, DptError> {
     match value {
@@ -156,7 +180,7 @@ fn val_i64(value: &DptValue) -> Result<i64, DptError> {
         DptValue::Int(v) => Ok(i64::from(*v)),
         DptValue::UInt(v) => Ok(i64::from(*v)),
         DptValue::Bool(v) => Ok(i64::from(*v)),
-        DptValue::Float(v) => Ok(f64_to_i64(*v)),
+        DptValue::Float(v) => f64_to_i64(*v),
         _ => Err(DptError::TypeMismatch),
     }
 }
@@ -170,26 +194,27 @@ pub fn decode(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
         3 => decode_masked(payload, DPT3_MASK),
         4 => decode_dpt4(payload),
         5 => decode_dpt5(dpt, payload),
-        6 => decode_dpt6(payload),
+        6 => decode_dpt6(dpt, payload),
         7 => decode_dpt7(payload),
         8 => decode_dpt8(payload),
         9 => decode_dpt9(payload),
         10 => decode_dpt10(payload),
-        11 => decode_dpt11(payload),
         12 => decode_dpt12(payload),
-        13 | 27 => decode_dpt13(payload),
+        13 => decode_dpt13(payload),
         14 => decode_dpt14(payload),
         15 => decode_dpt15(payload),
-        17 | 26 | 238 => decode_masked(payload, DPT17_MASK),
+        17 => decode_masked(payload, DPT17_MASK),
         18 => decode_dpt18(payload),
-        19 => decode_dpt19(payload),
+        26 => decode_masked(payload, DPT26_MASK),
+        27 => decode_dpt27(payload),
         29 => decode_dpt29(payload),
-        217 | 239 => decode_bytes(payload, 2),
-        219 | 221 | 235 => decode_bytes(payload, 6),
-        225 => decode_bytes(payload, 3),
-        231 | 234 => decode_dpt_locale(dpt, payload),
         232 => decode_dpt232(payload),
-        251 => decode_dpt251(payload),
+        // One octet, all eight bits used: enumerations and bit sets.
+        20 | 21 | 25 | 236 | 238 => decode_masked(payload, 0xFF),
+        22 => decode_uint_be(payload, 2),
+        30 => decode_uint_be(payload, 3),
+        23 => decode_masked(payload, DPT23_MASK),
+        31 => decode_masked(payload, DPT31_MASK),
         _ => Err(DptError::UnsupportedDpt(dpt)),
     }
 }
@@ -199,28 +224,28 @@ pub fn encode(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
         1 => encode_dpt1(value),
         2 => encode_masked(value, DPT2_MASK),
         3 => encode_masked(value, DPT3_MASK),
-        4 => encode_dpt4(value),
+        4 => encode_dpt4(dpt, value),
         5 => encode_dpt5(dpt, value),
-        6 => encode_dpt6(value),
+        6 => encode_dpt6(dpt, value),
         7 => encode_dpt7(value),
         8 => encode_dpt8(value),
         9 => encode_dpt9(value),
         10 => encode_dpt10(value),
-        11 => encode_dpt11(value),
         12 => encode_dpt12(value),
-        13 | 27 => encode_dpt13(value),
+        13 => encode_dpt13(value),
         14 => encode_dpt14(value),
         15 => encode_dpt15(value),
-        17 | 26 | 238 => encode_masked(value, DPT17_MASK),
+        17 => encode_masked(value, DPT17_MASK),
         18 => encode_dpt18(value),
-        19 => encode_dpt19(value),
+        26 => encode_masked(value, DPT26_MASK),
+        27 => encode_dpt27(value),
         29 => encode_dpt29(value),
-        217 | 239 => encode_bytes(value, 2),
-        219 | 221 | 235 => encode_bytes(value, 6),
-        225 => encode_bytes(value, 3),
-        231 | 234 => encode_dpt_locale(dpt, value),
         232 => encode_dpt232(value),
-        251 => encode_dpt251(value),
+        20 | 21 | 25 | 236 | 238 => encode_masked(value, 0xFF),
+        22 => encode_uint_be(value, 2),
+        30 => encode_uint_be(value, 3),
+        23 => encode_masked(value, DPT23_MASK),
+        31 => encode_masked(value, DPT31_MASK),
         _ => Err(DptError::UnsupportedDpt(dpt)),
     }
 }
@@ -236,7 +261,7 @@ fn encode_dpt1(value: &DptValue) -> Result<Vec<u8>, DptError> {
     Ok(alloc::vec![u8::from(val_bool(value)?)])
 }
 
-// ── Masked 1-byte unsigned DPTs (2, 3, 17) ───────────────────
+// ── 1-byte unsigned DPTs with a mask (2, 3, 17, 20-23, 25, 26, 31, 236, 238) ──
 
 /// DPT 2 (1-bit controlled): 2 significant bits.
 const DPT2_MASK: u8 = 0x03;
@@ -244,17 +269,47 @@ const DPT2_MASK: u8 = 0x03;
 const DPT3_MASK: u8 = 0x0F;
 /// DPT 17 (scene number): 6 significant bits (0–63).
 const DPT17_MASK: u8 = 0x3F;
+/// DPT 23 (N2, 2 bits): carried in the lower bits of the data field.
+const DPT23_MASK: u8 = 0x03;
+/// DPT 26 (scene info, `r1B1U6`): bit 7 reserved, bit 6 = inactive flag, bits 5..0 = scene.
+const DPT26_MASK: u8 = 0x7F;
+/// DPT 31 (N3, 3 bits): carried in the lower bits of the data field.
+const DPT31_MASK: u8 = 0x07;
 
 /// Decode a single byte masked to `mask` significant bits as a `UInt`.
+///
+/// Bits outside the mask are reserved; a receiver ignores them.
 fn decode_masked(payload: &[u8], mask: u8) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
     Ok(DptValue::UInt(u32::from(payload[0] & mask)))
 }
 
-/// Encode a `UInt` into a single byte masked to `mask` significant bits.
+/// Encode a `UInt` into a single byte. A value with bits outside `mask` is an error.
 fn encode_masked(value: &DptValue, mask: u8) -> Result<Vec<u8>, DptError> {
-    let v = val_u32(value)?;
-    Ok(alloc::vec![low_u8(v & u32::from(mask))])
+    let v = val_u32_max(value, u32::from(mask))?;
+    // Only the bits of `mask` can be set; only the contiguous low masks above are used.
+    Ok(alloc::vec![low_u8(v)])
+}
+
+/// Decode `len` octets as one big-endian unsigned number (DPT 22, 30: bit sets).
+fn decode_uint_be(payload: &[u8], len: usize) -> Result<DptValue, DptError> {
+    check_len(payload, len)?;
+    Ok(DptValue::UInt(
+        payload[..len]
+            .iter()
+            .fold(0u32, |acc, &b| (acc << 8) | u32::from(b)),
+    ))
+}
+
+/// Encode a `UInt` as `len` big-endian octets. A value that needs more is an error.
+fn encode_uint_be(value: &DptValue, len: usize) -> Result<Vec<u8>, DptError> {
+    let max = if len >= 4 {
+        u32::MAX
+    } else {
+        (1u32 << (8 * len)) - 1
+    };
+    let v = val_u32_max(value, max)?;
+    Ok(v.to_be_bytes()[4 - len..].to_vec())
 }
 
 // ── DPT 4: Character (1 byte) ────────────────────────────────
@@ -264,8 +319,10 @@ fn decode_dpt4(payload: &[u8]) -> Result<DptValue, DptError> {
     Ok(DptValue::UInt(u32::from(payload[0])))
 }
 
-fn encode_dpt4(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    let v = val_u32(value)?;
+fn encode_dpt4(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
+    // 4.001 is ASCII: the most significant bit is always 0. 4.002 is ISO 8859-1.
+    let max = if dpt.sub == 1 { 0x7F } else { 0xFF };
+    let v = val_u32_max(value, max)?;
     Ok(alloc::vec![low_u8(v)])
 }
 
@@ -291,30 +348,57 @@ fn encode_dpt5(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
     match dpt.sub {
         1 => {
             let v = val_f64(value)?;
-            Ok(alloc::vec![f64_to_u8(round(v * 255.0 / 100.0))])
+            if !(0.0..=100.0).contains(&v) {
+                return Err(DptError::out_of_range("expected 0..=100 %"));
+            }
+            Ok(alloc::vec![f64_to_u8(round(v * 255.0 / 100.0))?])
         }
         3 => {
             let v = val_f64(value)?;
-            Ok(alloc::vec![f64_to_u8(round(v * 255.0 / 360.0))])
+            if !(0.0..=360.0).contains(&v) {
+                return Err(DptError::out_of_range("expected 0..=360 degrees"));
+            }
+            Ok(alloc::vec![f64_to_u8(round(v * 255.0 / 360.0))?])
+        }
+        6 => {
+            // 5.006 (tariff): 255 shall not be transmitted.
+            let v = val_u32_max(value, 254)?;
+            Ok(alloc::vec![low_u8(v)])
         }
         _ => {
-            let v = val_u32(value)?;
-            Ok(alloc::vec![low_u8(v.min(255))])
+            let v = val_u32_max(value, 255)?;
+            Ok(alloc::vec![low_u8(v)])
         }
     }
 }
 
 // ── DPT 6: Signed 8-bit (1 byte) ─────────────────────────────
 
-fn decode_dpt6(payload: &[u8]) -> Result<DptValue, DptError> {
+/// 6.020 (`DPT_Status_Mode3`, `B5N3`): five status flags and a one-hot mode in bits 2..0.
+const DPT6_STATUS_MODE: u16 = 20;
+
+fn decode_dpt6(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
+    if dpt.sub == DPT6_STATUS_MODE {
+        // A bit field, not a number: bit 7 is flag a, not a sign.
+        return Ok(DptValue::UInt(u32::from(payload[0])));
+    }
     Ok(DptValue::Int(i32::from(i8::from_ne_bytes([payload[0]]))))
 }
 
-fn encode_dpt6(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    let v = val_i32(value)?;
-    let clamped = v.clamp(-128, 127);
-    Ok(alloc::vec![low_i8(clamped).to_ne_bytes()[0]])
+fn encode_dpt6(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
+    if dpt.sub == DPT6_STATUS_MODE {
+        let v = val_u32_max(value, 0xFF)?;
+        // The mode is exactly one of 001b, 010b and 100b.
+        if !matches!(v & 0x07, 0b001 | 0b010 | 0b100) {
+            return Err(DptError::out_of_range(
+                "6.020 mode (bits 2..0) must be 001, 010 or 100",
+            ));
+        }
+        return Ok(alloc::vec![low_u8(v)]);
+    }
+    let v = val_i32_range(value, -128, 127)?;
+    Ok(alloc::vec![low_i8(v).to_ne_bytes()[0]])
 }
 
 // ── DPT 7: Unsigned 16-bit (2 bytes) ─────────────────────────
@@ -327,9 +411,8 @@ fn decode_dpt7(payload: &[u8]) -> Result<DptValue, DptError> {
 }
 
 fn encode_dpt7(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    let v = val_u32(value)?;
-    let clamped = low_u16(v.min(65535));
-    Ok(clamped.to_be_bytes().to_vec())
+    let v = val_u32_max(value, 65535)?;
+    Ok(low_u16(v).to_be_bytes().to_vec())
 }
 
 // ── DPT 8: Signed 16-bit (2 bytes) ───────────────────────────
@@ -342,19 +425,28 @@ fn decode_dpt8(payload: &[u8]) -> Result<DptValue, DptError> {
 }
 
 fn encode_dpt8(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    let v = val_i32(value)?;
-    let clamped = low_i16(v.clamp(-32768, 32767));
-    Ok(clamped.to_be_bytes().to_vec())
+    let v = val_i32_range(value, -32768, 32767)?;
+    Ok(low_i16(v).to_be_bytes().to_vec())
 }
 
 // ── DPT 9: 16-bit float (2 bytes, KNX F16) ───────────────────
 //
 // Wire: `MEEEEMMM MMMMMMMM` — sign + 11-bit mantissa (two's complement), 4-bit exponent.
-// Value = 0.01 × mantissa × 2^exponent
+// Value = 0.01 × mantissa × 2^exponent.
+//
+// The encoded value 0x7FFF (mantissa 2047, exponent 15) denotes invalid data for every 9.xxx.
+// It decodes to `Float(NaN)`, and `Float(NaN)` encodes to it. The largest encodable value is
+// therefore 670 433,28 (mantissa 2046, exponent 15), the smallest -671 088,64.
+
+/// The wire value for "invalid data" in every DPT 9.xxx.
+const DPT9_INVALID: u16 = 0x7FFF;
 
 fn decode_dpt9(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 2)?;
     let raw = u16::from_be_bytes([payload[0], payload[1]]);
+    if raw == DPT9_INVALID {
+        return Ok(DptValue::Float(f64::NAN));
+    }
     let exponent = i32::from((raw >> 11) & 0x0F);
     let mantissa = {
         let m = i32::from(raw & 0x07FF);
@@ -367,31 +459,32 @@ fn decode_dpt9(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt9(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_f64(value)?;
-    // round once, then range-check without re-rounding
-    let scaled = round(v * 100.0);
-    if scaled < f64::from(i32::MIN) || scaled > f64::from(i32::MAX) {
-        return Err(DptError::out_of_range("KNX F16 mantissa overflow"));
+    if v.is_nan() {
+        return Ok(DPT9_INVALID.to_be_bytes().to_vec());
     }
-    #[expect(clippy::cast_possible_truncation, reason = "range validated above")]
-    let mut mantissa = scaled as i32;
-    let mut exponent: u16 = 0;
-
-    while mantissa > 2047 {
-        mantissa >>= 1;
-        exponent += 1;
+    if !v.is_finite() {
+        return Err(DptError::out_of_range("KNX F16 needs a finite value"));
     }
-    while mantissa < -2048 {
-        mantissa >>= 1;
-        exponent += 1;
+    let hundredths = v * 100.0;
+    // The smallest exponent whose mantissa fits; the value is rounded once, at that exponent.
+    for exponent in 0u16..=15 {
+        let mantissa = round(hundredths / f64::from(1u32 << exponent));
+        if !(-2048.0..=2047.0).contains(&mantissa) {
+            continue;
+        }
+        #[expect(clippy::cast_possible_truncation, reason = "range validated above")]
+        let m = mantissa as i32;
+        if exponent == 15 && m == 2047 {
+            // Would be 0x7FFF, the marker for invalid data.
+            break;
+        }
+        let sign: u16 = if m < 0 { 0x8000 } else { 0 };
+        let raw = sign | (exponent << 11) | low_u16((m & 0x07FF).unsigned_abs());
+        return Ok(raw.to_be_bytes().to_vec());
     }
-    if exponent > 15 {
-        return Err(DptError::out_of_range("KNX F16 exponent overflow (>15)"));
-    }
-
-    let m = low_u16((mantissa & 0x07FF).unsigned_abs());
-    let sign: u16 = if mantissa < 0 { 0x8000 } else { 0 };
-    let raw = sign | (exponent << 11) | m;
-    Ok(raw.to_be_bytes().to_vec())
+    Err(DptError::out_of_range(
+        "KNX F16 range is -671088.64 ..= 670433.28",
+    ))
 }
 
 // ── DPT 10: Time of day (3 bytes) ────────────────────────────
@@ -403,28 +496,17 @@ fn decode_dpt10(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt10(value: &DptValue) -> Result<Vec<u8>, DptError> {
     match value {
-        DptValue::Bytes(b) if b.len() >= 3 => Ok(b[..3].to_vec()),
+        DptValue::Bytes(b) if b.len() == 3 => Ok(b.clone()),
         DptValue::UInt(secs) => {
-            let total = (*secs).min(86399);
+            if *secs > 86399 {
+                return Err(DptError::out_of_range("expected 0..=86399 seconds"));
+            }
+            let total = *secs;
             let hours = low_u8(total / 3600);
             let minutes = low_u8((total % 3600) / 60);
             let seconds = low_u8(total % 60);
             Ok(alloc::vec![hours & 0x1F, minutes & 0x3F, seconds & 0x3F])
         }
-        _ => Err(DptError::TypeMismatch),
-    }
-}
-
-// ── DPT 11: Date (3 bytes) ───────────────────────────────────
-
-fn decode_dpt11(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 3)?;
-    Ok(DptValue::Bytes(payload[..3].to_vec()))
-}
-
-fn encode_dpt11(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    match value {
-        DptValue::Bytes(b) if b.len() >= 3 => Ok(b[..3].to_vec()),
         _ => Err(DptError::TypeMismatch),
     }
 }
@@ -466,50 +548,69 @@ fn decode_dpt14(payload: &[u8]) -> Result<DptValue, DptError> {
 
 fn encode_dpt14(value: &DptValue) -> Result<Vec<u8>, DptError> {
     let v = val_f64(value)?;
-    // f64→f32 narrowing: values outside f32 range become ±inf, which is acceptable
-    // for IEEE 754 wire encoding.
+    // f64→f32 narrowing is intentional for the IEEE 754 wire format. NaN and ±infinity are
+    // valid single-precision values and pass through; a finite value that is too large for
+    // single precision is an error rather than a silent ±infinity.
     #[expect(
         clippy::cast_possible_truncation,
         reason = "f64→f32 narrowing is intentional for IEEE 754 wire format"
     )]
     let f = v as f32;
+    if v.is_finite() && !f.is_finite() {
+        return Err(DptError::out_of_range("value exceeds the f32 range"));
+    }
     Ok(f.to_be_bytes().to_vec())
 }
 
-// ── DPT 15: Access data (4 bytes, 6-digit BCD) ───────────────
+// ── DPT 15: Access data (4 bytes) ────────────────────────────
+//
+// Octets 1..3 on the wire hold six BCD digits (D6..D1); the fourth octet carries the flags
+// E (detection error), P (permission), D (read direction), C (encryption) in bits 7..4 and the
+// index in bits 3..0. Decoding keeps all four octets (`Bytes`), so the permission flag survives.
+// Encoding accepts the same four octets, or a `UInt` of up to six decimal digits for a value
+// with all flags and the index 0.
+
+fn bcd_digits_valid(octets: &[u8]) -> bool {
+    octets.iter().all(|b| (b >> 4) <= 9 && (b & 0x0F) <= 9)
+}
 
 fn decode_dpt15(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 4)?;
-    let mut digits: u32 = 0;
-    let mut factor: u32 = 100_000;
-    for i in 0..6 {
-        let nibble = if i % 2 == 0 {
-            (payload[i / 2] >> 4) & 0x0F
-        } else {
-            payload[i / 2] & 0x0F
-        };
-        digits += u32::from(nibble) * factor;
-        factor /= 10;
+    if !bcd_digits_valid(&payload[..3]) {
+        return Err(DptError::out_of_range("DPT 15 digit above 9"));
     }
-    Ok(DptValue::UInt(digits))
+    Ok(DptValue::Bytes(payload[..4].to_vec()))
 }
 
 fn encode_dpt15(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    let mut v = val_u32(value)?.min(999_999);
-    let mut buf = [0u8; 4];
-    for i in (0..6).rev() {
-        let digit = low_u8(v % 10);
-        v /= 10;
-        if i % 2 == 0 {
-            buf[i / 2] |= digit << 4;
-        } else {
-            buf[i / 2] |= digit;
+    match value {
+        DptValue::Bytes(b) if b.len() == 4 => {
+            if !bcd_digits_valid(&b[..3]) {
+                return Err(DptError::out_of_range("DPT 15 digit above 9"));
+            }
+            Ok(b.clone())
+        }
+        DptValue::Bytes(_) => Err(DptError::out_of_range("DPT 15 has four octets")),
+        _ => {
+            let mut v = val_u32_max(value, 999_999)?;
+            let mut buf = [0u8; 4];
+            for i in (0..6).rev() {
+                let digit = low_u8(v % 10);
+                v /= 10;
+                if i % 2 == 0 {
+                    buf[i / 2] |= digit << 4;
+                } else {
+                    buf[i / 2] |= digit;
+                }
+            }
+            Ok(buf.to_vec())
         }
     }
-    Ok(buf.to_vec())
 }
 
 // ── DPT 18: Scene control (1 byte) ───────────────────────────
+//
+// `B1r1U6`: bit 7 = control (0 = activate, 1 = learn), bit 6 reserved (0), bits 5..0 = scene.
 
 fn decode_dpt18(payload: &[u8]) -> Result<DptValue, DptError> {
     check_len(payload, 1)?;
@@ -517,22 +618,26 @@ fn decode_dpt18(payload: &[u8]) -> Result<DptValue, DptError> {
 }
 
 fn encode_dpt18(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    let v = val_u32(value)?;
+    let v = val_u32_max(value, 0xFF)?;
+    if v & 0x40 != 0 {
+        return Err(DptError::out_of_range("DPT 18 bit 6 is reserved (0)"));
+    }
     Ok(alloc::vec![low_u8(v)])
 }
 
-// ── DPT 19: Date and time (8 bytes) ──────────────────────────
+// ── DPT 27: 32-bit set (4 bytes) ─────────────────────────────
+//
+// Bits 0..15 hold the states s0..s15 and bits 16..31 the masks m0..m15: a bit set, not a number.
 
-fn decode_dpt19(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 8)?;
-    Ok(DptValue::Bytes(payload[..8].to_vec()))
+fn decode_dpt27(payload: &[u8]) -> Result<DptValue, DptError> {
+    check_len(payload, 4)?;
+    Ok(DptValue::UInt(u32::from_be_bytes([
+        payload[0], payload[1], payload[2], payload[3],
+    ])))
 }
 
-fn encode_dpt19(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    match value {
-        DptValue::Bytes(b) if b.len() >= 8 => Ok(b[..8].to_vec()),
-        _ => Err(DptError::TypeMismatch),
-    }
+fn encode_dpt27(value: &DptValue) -> Result<Vec<u8>, DptError> {
+    Ok(val_u32(value)?.to_be_bytes().to_vec())
 }
 
 // ── DPT 29: Signed 64-bit (8 bytes) ──────────────────────────
@@ -558,52 +663,12 @@ fn decode_dpt232(payload: &[u8]) -> Result<DptValue, DptError> {
 }
 
 fn encode_dpt232(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    let rgb = val_u32(value)?.min(0x00FF_FFFF);
+    let rgb = val_u32_max(value, 0x00FF_FFFF)?;
     Ok(alloc::vec![
         low_u8((rgb >> 16) & 0xFF),
         low_u8((rgb >> 8) & 0xFF),
         low_u8(rgb & 0xFF),
     ])
-}
-
-// ── DPT 251: RGBW (4 bytes) ──────────────────────────────────
-
-fn decode_dpt251(payload: &[u8]) -> Result<DptValue, DptError> {
-    check_len(payload, 4)?;
-    let rgbw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-    Ok(DptValue::UInt(rgbw))
-}
-
-fn encode_dpt251(value: &DptValue) -> Result<Vec<u8>, DptError> {
-    Ok(val_u32(value)?.to_be_bytes().to_vec())
-}
-
-// ── DPT 217: Version (2 bytes) ────────────────────────────────
-
-// ── Byte-passthrough DPTs (generic) ──────────────────────────
-
-fn decode_bytes(payload: &[u8], len: usize) -> Result<DptValue, DptError> {
-    check_len(payload, len)?;
-    Ok(DptValue::Bytes(payload[..len].to_vec()))
-}
-
-fn encode_bytes(value: &DptValue, len: usize) -> Result<Vec<u8>, DptError> {
-    match value {
-        DptValue::Bytes(b) if b.len() >= len => Ok(b[..len].to_vec()),
-        _ => Err(DptError::TypeMismatch),
-    }
-}
-
-// ── DPT 231/234: Locale / Language code (2 or 4 bytes) ───────
-
-fn decode_dpt_locale(dpt: Dpt, payload: &[u8]) -> Result<DptValue, DptError> {
-    let min_len = if dpt.main == 231 { 4 } else { 2 };
-    decode_bytes(payload, min_len)
-}
-
-fn encode_dpt_locale(dpt: Dpt, value: &DptValue) -> Result<Vec<u8>, DptError> {
-    let min_len = if dpt.main == 231 { 4 } else { 2 };
-    encode_bytes(value, min_len)
 }
 
 // ── Tests ─────────────────────────────────────────────────────
@@ -735,11 +800,21 @@ mod tests {
 
     #[test]
     fn dpt15_access() {
+        // Six BCD digits and the flags/index octet; the permission flag (bit 7 of the last octet
+        // is E, bit 6 P) survives a round trip.
         let bytes = encode(DPT_ACCESS_DATA, &DptValue::UInt(123_456)).unwrap();
+        assert_eq!(bytes, &[0x12, 0x34, 0x56, 0x00]);
         assert_eq!(
             decode(DPT_ACCESS_DATA, &bytes).unwrap(),
-            DptValue::UInt(123_456)
+            DptValue::Bytes(vec![0x12, 0x34, 0x56, 0x00])
         );
+        let with_flags = [0x00, 0x00, 0x07, 0x53];
+        let decoded = decode(DPT_ACCESS_DATA, &with_flags).unwrap();
+        assert_eq!(decoded, DptValue::Bytes(with_flags.to_vec()));
+        assert_eq!(encode(DPT_ACCESS_DATA, &decoded).unwrap(), with_flags);
+        // A digit above 9 and a value above six digits are errors, not other numbers.
+        assert!(decode(DPT_ACCESS_DATA, &[0x1A, 0, 0, 0]).is_err());
+        assert!(encode(DPT_ACCESS_DATA, &DptValue::UInt(1_000_000)).is_err());
     }
 
     #[test]
@@ -792,13 +867,15 @@ mod tests {
     }
 
     #[test]
-    fn dpt251_rgbw() {
-        let bytes = encode(DPT_COLOUR_RGBW, &DptValue::UInt(0xFF80_4020)).unwrap();
-        assert_eq!(bytes, &[0xFF, 0x80, 0x40, 0x20]);
-        assert_eq!(
-            decode(DPT_COLOUR_RGBW, &bytes).unwrap(),
-            DptValue::UInt(0xFF80_4020)
-        );
+    fn dpt251_rgbw_is_six_octets_with_validity_bits() {
+        // R G B W, a reserved octet, and four reserved bits plus mR mG mB mW (1 = valid).
+        let value = DptValue::Bytes(vec![0xFF, 0x80, 0x40, 0x20, 0x00, 0x0F]);
+        let bytes = encode(DPT_COLOUR_RGBW, &value).unwrap();
+        assert_eq!(bytes, &[0xFF, 0x80, 0x40, 0x20, 0x00, 0x0F]);
+        assert_eq!(decode(DPT_COLOUR_RGBW, &bytes).unwrap(), value);
+        // The old four-octet form is neither produced nor accepted.
+        assert!(encode(DPT_COLOUR_RGBW, &DptValue::Bytes(vec![1, 2, 3, 4])).is_err());
+        assert!(decode(DPT_COLOUR_RGBW, &[1, 2, 3, 4]).is_err());
     }
 
     #[test]

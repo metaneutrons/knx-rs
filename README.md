@@ -68,7 +68,7 @@ Changes for earlier versions are listed in the [changelog](CHANGELOG.md).
 - **Addresses** — `IndividualAddress` (1.1.1), `GroupAddress` (1/0/1), with `Display`, `FromStr`, optional `serde`
 - **CEMI frames** — parse and serialize with full read/write access to all control fields
 - **TPDU / APDU** — structured PDU types with all ~60 APCI service codes
-- **DPT conversions** — 34 main groups, 100% parity with the C++ reference implementation
+- **DPT conversions** — every main group of KNX Standard `03_07_02` v02.02.01 (1 to 31 and 200 to 284), checked against the standard; the OpenKNX C++ reference serves as golden vectors for the groups it implements
 - **KNXnet/IP types** — frame header, service types, connection header, HPAI
 - **`no_std` + `alloc`** — runs on embedded targets (ARM Cortex-M, RISC-V)
 
@@ -300,27 +300,38 @@ Full documentation: [knx-rs-prod/HASHING.md](knx-rs-prod/HASHING.md)
 
 ## DPT Coverage
 
-All 34 main groups from the C++ reference are supported:
+Every main group of the KNX Standard "Datapoint Types" (`03_07_02`, v02.02.01) has a codec:
+1 to 31 and 200 to 284 (the standard defines no 208, 226 to 228, 233 and 258 to 264).
 
-| DPT | Type | DPT | Type |
-|-----|------|-----|------|
-| 1 | Boolean | 17 | Scene number |
-| 2 | Controlled boolean | 18 | Scene control |
-| 3 | Controlled step | 19 | Date and time |
-| 4 | Character | 26 | Scene info |
-| 5 | Unsigned 8-bit | 27 | 32-bit field |
-| 6 | Signed 8-bit | 28 | Unicode string |
-| 7 | Unsigned 16-bit | 29 | Signed 64-bit |
-| 8 | Signed 16-bit | 217 | Version |
-| 9 | 16-bit float | 219 | Alarm info |
-| 10 | Time of day | 221 | Serial number |
-| 11 | Date | 225 | Scaling speed |
-| 12 | Unsigned 32-bit | 231 | Locale |
-| 13 | Signed 32-bit | 232 | RGB |
-| 14 | IEEE 754 float | 234 | Language code |
-| 15 | Access data | 235 | Active energy |
-| 16 | String (ASCII/Latin-1) | 238 | Scene config |
-| 239 | Flagged scaling | 251 | RGBW |
+| Groups | Value type | Notes |
+|--------|------------|-------|
+| 1, 2, 3 | `Bool`, `UInt` | 1 to 4 bits |
+| 4 | `UInt` | character (4.001 ASCII, 4.002 ISO 8859-1) |
+| 5 | `UInt`, `Float` | 5.001 and 5.003 scaled, the rest raw |
+| 6, 8, 13 | `Int` | 6.020 (status with mode) is a bit field (a set flag is 1) and decodes to `UInt` |
+| 7, 12 | `UInt` | |
+| 9, 14 | `Float` | 9: the wire value `0x7FFF` (invalid data) is `NaN` in both directions |
+| 15 | `Bytes` | six BCD digits plus the flags and index octet |
+| 16, 24, 28 | `Text` | 16: 14 octets, 24: ISO 8859-1 and 28: UTF-8, both NUL-terminated |
+| 17, 18, 26 | `UInt` | scene number, scene control, scene info (the inactive flag is kept) |
+| 20, 21, 22, 23, 25, 27, 30, 31, 236, 238 | `UInt` | enumerations and bit sets of 1 to 32 bits |
+| 29 | `Int64` | |
+| 232 | `UInt` | RGB as `0x00RRGGBB` |
+| 10, 11, 19, 200 to 224, 225 to 257, 265 to 284 | `Bytes` | multi-field groups as the exact octets of the format (251 RGBW is six octets, with its validity bits) |
+
+Multi-field groups are carried unchanged because the standard defines no receiver behaviour for
+reserved bits or out-of-range fields. Encoding is strict (a value that does not fit is an error,
+never clamped or padded); decoding is lenient. Not covered by a typed value: the field-level
+structure of the `Bytes` groups.
+
+Beyond the standard, 275 (four F16), 285 (IPv6 address) and 288 (brightness and colour with
+transition) are carried as in the ETS 6.3 master data. The sizes of all groups are checked against
+`knx_master.xml` by `knx-rs-core/tests/master_data.rs`; the file is not in the repository, set
+`KNX_MASTER_XML` to a copy to run it (the test skips without it).
+
+Where the standard is ambiguous or contradicts itself (for example the axis order in 243.600, the
+validity polarity), the octets are carried as they are and nothing is
+interpreted; the sources of the open points are listed in `knx-rs-core/src/dpt/convert/compound.rs`.
 
 ## Testing
 
