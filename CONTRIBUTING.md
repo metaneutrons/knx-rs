@@ -42,5 +42,15 @@ Describe the user-visible behavior, compatibility impact, and verification
 performed. Pull requests are squash-merged after all required checks pass and
 review conversations are resolved.
 
+## Contribution licence
+
+Every contribution is licensed under the terms in
+[CONTRIBUTION-LICENSE.md](CONTRIBUTION-LICENSE.md) (Apache-2.0 for your
+contribution, GPL-3.0-only for the project as a whole). You accept it by ticking
+the licence box in the pull request description. The `Contribution licence`
+check fails until the box is ticked. If several people author a pull request,
+each of them adds a `Signed-off-by:` line with their own email address to their
+commits.
+
 For security issues, follow [SECURITY.md](SECURITY.md) instead of opening a
 public pull request.
