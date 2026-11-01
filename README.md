@@ -308,7 +308,7 @@ Every main group of the KNX Standard "Datapoint Types" (`03_07_02`, v02.02.01) h
 | 1, 2, 3 | `Bool`, `UInt` | 1 to 4 bits |
 | 4 | `UInt` | character (4.001 ASCII, 4.002 ISO 8859-1) |
 | 5 | `UInt`, `Float` | 5.001 and 5.003 scaled, the rest raw |
-| 6, 8, 13 | `Int` | 6.020 (status with mode) is a bit field and decodes to `UInt` |
+| 6, 8, 13 | `Int` | 6.020 (status with mode) is a bit field (a set flag is 1) and decodes to `UInt` |
 | 7, 12 | `UInt` | |
 | 9, 14 | `Float` | 9: the wire value `0x7FFF` (invalid data) is `NaN` in both directions |
 | 15 | `Bytes` | six BCD digits plus the flags and index octet |
@@ -330,7 +330,7 @@ transition) are carried as in the ETS 6.3 master data. The sizes of all groups a
 `KNX_MASTER_XML` to a copy to run it (the test skips without it).
 
 Where the standard is ambiguous or contradicts itself (for example the axis order in 243.600, the
-validity polarity, the SRC bit in 19.001), the octets are carried as they are and nothing is
+validity polarity), the octets are carried as they are and nothing is
 interpreted; the sources of the open points are listed in `knx-rs-core/src/dpt/convert/compound.rs`.
 
 ## Testing

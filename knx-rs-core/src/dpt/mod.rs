@@ -647,6 +647,30 @@ mod tests {
     }
 
     #[test]
+    fn date_and_time_carries_the_source_reliability_bit() {
+        // 19.001 as xknx and calimero read it: the last octet is CLQ (bit 7), SRC (bit 6) and six
+        // reserved bits. Whatever the octets hold survives a round trip.
+        let dpt = DPT_DATETIME;
+        for last in [0x00u8, 0x40, 0x80, 0xC0] {
+            let octets = alloc::vec![126, 11, 1, 0, 0, 0, 0x04, last];
+            let value = DptValue::Bytes(octets.clone());
+            assert_eq!(encode(dpt, &value).unwrap(), octets);
+            assert_eq!(decode(dpt, &octets).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn status_with_mode_reads_a_set_flag_as_one() {
+        // 6.020 as the ETS master data and calimero read it: flags A to E in bits 7 to 3 are 1 when
+        // set. All five set with mode 2 is 0xFC, none set with mode 0 is 0x01.
+        let dpt = Dpt::new(6, 20);
+        assert_eq!(decode(dpt, &[0xFC]).unwrap(), DptValue::UInt(0xFC));
+        assert_eq!(encode(dpt, &DptValue::UInt(0xFC)).unwrap(), [0xFC]);
+        assert_eq!(decode(dpt, &[0x01]).unwrap(), DptValue::UInt(0x01));
+        assert_eq!(encode(dpt, &DptValue::UInt(0x01)).unwrap(), [0x01]);
+    }
+
+    #[test]
     fn float16_marks_invalid_data_with_7fff() {
         let dpt = DPT_VALUE_TEMP;
         let decoded = decode(dpt, &[0x7F, 0xFF]).unwrap();

@@ -39,14 +39,17 @@
 //!   valid. 273 and 274: the mask bits say 1 means valid.
 //! - 25.1000: busy in the high nibble, nak in the low nibble.
 //!
+//! Decided where the sources disagree:
+//!
+//! - 19.001 (and every group that starts with it) follows xknx, calimero and the figure of the
+//!   standard: bit 7 of the last octet is the clock quality (CLQ), bit 6 is the SRC bit, the other
+//!   six bits are reserved. The ETS master data and note 15 of the standard still call all seven
+//!   lower bits reserved. The octets are carried unchanged, so both readings round-trip.
+//! - 6.020 follows the ETS master data, calimero and the usual implementations: a status flag is 1
+//!   when set. The standard's text says 0 = set and 1 = clear. The value is the byte as it is.
+//!
 //! Still open:
 //!
-//! - 19.001 (and every group that starts with it): the SRC bit (bit 6 of the last octet, next to
-//!   the clock quality in bit 7) is in the figure of the standard and implemented by xknx and
-//!   calimero, but not in the ETS master data, and note 15 of the standard calls those bits
-//!   reserved.
-//! - 6.020: the standard says a status flag is 0 = set and 1 = clear; the ETS master data, calimero
-//!   and the usual implementations take 1 = set.
 //! - 21.1010, 22.1010 and 30.1010 (channel activation): the standard's text numbers the channels
 //!   from bit 0, the ETS master data has channel 1 as the most significant bit.
 //! - 207.100 and 207.105: the bit diagrams disagree with the attribute tables, and the master
