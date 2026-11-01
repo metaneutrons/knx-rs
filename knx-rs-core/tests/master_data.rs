@@ -49,6 +49,36 @@ fn attr(e: &BytesStart<'_>, name: &str) -> Option<String> {
         })
 }
 
+/// An empty subtype from its `DatapointSubtype` element.
+fn new_subtype(e: &BytesStart<'_>, main: u16) -> Subtype {
+    Subtype {
+        main,
+        sub: attr(e, "Number").unwrap().parse().unwrap(),
+        name: attr(e, "Name").unwrap_or_default(),
+        width_sum: Some(0),
+        float_range: None,
+    }
+}
+
+/// Add one field element to the subtype: its width, and the range of the first `Float`.
+fn add_field(s: &mut Subtype, e: &BytesStart<'_>, floats: &mut u32) {
+    let kind = e.name().as_ref().to_owned();
+    let width = match kind.as_str() {
+        "Bit" => Some(1),
+        "RefType" => None,
+        _ => attr(e, "Width").and_then(|w| w.parse::<u32>().ok()),
+    };
+    s.width_sum = s.width_sum.zip(width).map(|(a, b)| a + b);
+    if kind == "Float" {
+        *floats += 1;
+        let lo = attr(e, "MinValue").and_then(|v| v.parse::<f64>().ok());
+        let hi = attr(e, "MaxValue").and_then(|v| v.parse::<f64>().ok());
+        s.float_range = (*floats == 1).then(|| lo.zip(hi)).flatten();
+    } else if *floats > 0 {
+        s.float_range = None;
+    }
+}
+
 fn parse(xml: &str) -> Master {
     let mut reader = Reader::from_str(xml);
     let mut sizes = BTreeMap::new();
@@ -77,34 +107,15 @@ fn parse(xml: &str) -> Master {
             }
             "DatapointSubtype" => {
                 floats = 0;
-                current = Some(Subtype {
-                    main,
-                    sub: attr(e, "Number").unwrap().parse().unwrap(),
-                    name: attr(e, "Name").unwrap_or_default(),
-                    width_sum: Some(0),
-                    float_range: None,
-                });
+                current = Some(new_subtype(e, main));
                 if !is_start {
                     subtypes.extend(current.take());
                 }
             }
             "Reserved" | "Bit" | "UnsignedInteger" | "SignedInteger" | "Float" | "Enumeration"
             | "String" | "RefType" => {
-                let Some(s) = current.as_mut() else { continue };
-                let kind = e.name().as_ref().to_owned();
-                let width = match kind.as_str() {
-                    "Bit" => Some(1),
-                    "RefType" => None,
-                    _ => attr(e, "Width").and_then(|w| w.parse::<u32>().ok()),
-                };
-                s.width_sum = s.width_sum.zip(width).map(|(a, b)| a + b);
-                if kind == "Float" {
-                    floats += 1;
-                    let lo = attr(e, "MinValue").and_then(|v| v.parse::<f64>().ok());
-                    let hi = attr(e, "MaxValue").and_then(|v| v.parse::<f64>().ok());
-                    s.float_range = (floats == 1).then(|| lo.zip(hi)).flatten();
-                } else if floats > 0 {
-                    s.float_range = None;
+                if let Some(s) = current.as_mut() {
+                    add_field(s, e, &mut floats);
                 }
             }
             _ => {}
