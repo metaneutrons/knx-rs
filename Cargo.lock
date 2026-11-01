@@ -418,6 +418,7 @@ name = "knx-rs-core"
 version = "0.13.0"
 dependencies = [
  "libm",
+ "quick-xml",
  "serde",
  "serde_json",
 ]

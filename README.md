@@ -324,6 +324,11 @@ reserved bits or out-of-range fields. Encoding is strict (a value that does not 
 never clamped or padded); decoding is lenient. Not covered by a typed value: the field-level
 structure of the `Bytes` groups.
 
+Beyond the standard, 275 (four F16), 285 (IPv6 address) and 288 (brightness and colour with
+transition) are carried as in the ETS 6.3 master data. The sizes of all groups are checked against
+`knx_master.xml` by `knx-rs-core/tests/master_data.rs`; the file is not in the repository, set
+`KNX_MASTER_XML` to a copy to run it (the test skips without it).
+
 Where the standard is ambiguous or contradicts itself (for example the axis order in 243.600, the
 validity polarity, the SRC bit in 19.001), the octets are carried as they are and nothing is
 interpreted; the sources of the open points are listed in `knx-rs-core/src/dpt/convert/compound.rs`.

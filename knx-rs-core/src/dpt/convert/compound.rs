@@ -16,29 +16,50 @@
 //! - Reserved bits and field ranges are not interpreted: the standard defines no receiver
 //!   behaviour for them, and a stack that sits between devices must not alter them.
 //!
-//! Open points in the standard
+//! Sources and open points
 //!
-//! Version 02.02.01 of `03_07_02` is ambiguous or inconsistent in a few places. These groups are
-//! carried as octets precisely so that none of this is interpreted here:
+//! The groups 20 to 284 follow KNX Standard `03_07_02` v02.02.01. Groups 275 (four F16, HVAC
+//! setpoints), 285 (IPv6 address) and 288 (brightness and colour with transition) are not in that
+//! version; their layout is the one in the ETS 6.3 master data (`knx_master.xml`, project schema
+//! 23, version 313), which KNX publishes and ships in every project export.
 //!
-//! - 19.001 (and every group that starts with it): the SRC bit is in the figure and the field
-//!   table, but note 15 still calls the lower seven bits of the first octet reserved.
-//! - 243.600: the figure orders the axes y, x; the field table and 242.600 order them x, y.
-//! - 245.600: the format string is incomplete; the six octets follow from the figure.
-//! - 247.600: the bit after the date and time is not named. 248.600: `RatedDur` is eight bits but
-//!   refers to a 16-bit type (7.006), and no scaling is given.
-//! - 207.100 and 207.105: the bit diagrams disagree with the attribute tables.
-//! - 237.600: the table and the sentence below it give opposite meanings to the address bit.
-//! - 229.001: the value information field is "N8, 00h to 7Fh" but its codes run from 80h.
-//! - 230.1000: the medium enumeration is in another document.
-//! - 206.105: the header says N8U16, the layout says U16N8 (the layout is the wire order).
+//! The standard is ambiguous or inconsistent in a few places. The master data settles some of
+//! them (the layout, field order, and the polarity of bits as ETS uses them); the octets are
+//! carried unchanged either way.
+//!
+//! Settled by the master data (the standard's reading is confirmed):
+//!
+//! - 237.600: the address indicator bit is 1 for a group address.
+//! - 242.600 and 243.600: the x axis comes before the y axis, and 243.600 starts with the 16-bit
+//!   fade time (the master data has 242.600, the libraries xknx and calimero have both).
+//! - 245.600: three N4, four reserved bits, three N2, two reserved bits, U16, U8 (six octets).
+//! - 247.600: date and time, then two U16 (twelve octets). 248.600: `RatedDur` is a plain U8.
+//! - 206.105: the U16 delay comes before the N8 mode. 230.1000: the medium enumeration is listed.
+//! - 235.001: 0 means valid. 249.600, 251.600, 240.800, 241.800, 242.600, 250.600 and 252: 1 means
+//!   valid. 273 and 274: the mask bits say 1 means valid.
+//! - 25.1000: busy in the high nibble, nak in the low nibble.
+//!
+//! Still open:
+//!
+//! - 19.001 (and every group that starts with it): the SRC bit (bit 6 of the last octet, next to
+//!   the clock quality in bit 7) is in the figure of the standard and implemented by xknx and
+//!   calimero, but not in the ETS master data, and note 15 of the standard calls those bits
+//!   reserved.
+//! - 6.020: the standard says a status flag is 0 = set and 1 = clear; the ETS master data, calimero
+//!   and the usual implementations take 1 = set.
+//! - 21.1010, 22.1010 and 30.1010 (channel activation): the standard's text numbers the channels
+//!   from bit 0, the ETS master data has channel 1 as the most significant bit.
+//! - 207.100 and 207.105: the bit diagrams disagree with the attribute tables, and the master
+//!   data has only 207.600.
+//! - 237.600: the sentence below the table in the standard gives the opposite meaning to the
+//!   address bit (the master data agrees with the table).
+//! - 229.001: the standard says "N8, 00h to 7Fh" but the codes run from 80h.
 //! - 273.004 refers to 9.007 (relative humidity) where 9.029 (absolute humidity) is meant.
-//! - 277 to 284: the extensions for energy registers are not defined in this document (unit of
-//!   reactive energy, tariff of registers without one, padding of the 12-octet string).
-//! - The polarity of validity bits differs between groups: 1 means "not valid" in 235, 269 and 277
-//!   to 284, and "valid" in 249, 251, 273 and 274.
+//! - 277 to 284, 200 to 205 and the other groups that are not in the master data: the extensions
+//!   for energy registers are not defined in the standard (unit of reactive energy, tariff of
+//!   registers without one, padding of the 12-octet string).
 //! - The chapter headings of 240.800 and 249.600 give octet counts (2 and 4) that differ from their
-//!   formats (3 and 6); the formats are followed.
+//!   formats (3 and 6); the formats are followed, and the master data agrees.
 //! - Z8 (groups 200 to 205): the last octet means status in a response and command in a write,
 //!   and the standard says these types do not apply to ordinary group objects. The octet is
 //!   carried without a decision about which it is.
@@ -62,11 +83,11 @@ pub(super) const fn len(main: u16) -> Option<usize> {
         215 | 216 | 218 | 248 | 252 => 5,
         212 | 219 | 221 | 222 | 224 | 229 | 235 | 242 | 245 | 249 | 251 | 274 => 6,
         271 | 272 => 7,
-        19 | 213 | 230 | 243 | 255 | 273 => 8,
+        19 | 213 | 230 | 243 | 255 | 273 | 275 | 288 => 8,
         265 | 268 => 9,
         247 | 257 | 266 => 12,
         269 => 14,
-        256 => 16,
+        256 | 285 => 16,
         270 => 20,
         277 => 36,
         278 => 42,

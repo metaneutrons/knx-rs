@@ -16,7 +16,8 @@
 //! | `Text` | 16, 24, 28 |
 //! | `Bytes` | every other multi-field group (10, 11, 15, 19, 200 to 224, 225 to 257, 265 to 284) |
 //!
-//! All main groups of KNX Standard `03_07_02` v02.02.01 are supported. A multi-field group is
+//! All main groups of KNX Standard `03_07_02` v02.02.01 are supported, and 275, 285 and 288 from
+//! the ETS master data. A multi-field group is
 //! carried as the exact octets of its format, in transmission order, so that no field and no
 //! reserved bit is lost; see the `Bytes` variant.
 //!
@@ -107,7 +108,7 @@ impl Dpt {
                 DptWireSize::Bytes(6)
             }
             271 | 272 => DptWireSize::Bytes(7),
-            19 | 29 | 213 | 230 | 243 | 255 | 273 | 275 => DptWireSize::Bytes(8),
+            19 | 29 | 213 | 230 | 243 | 255 | 273 | 275 | 288 => DptWireSize::Bytes(8),
             265 | 268 => DptWireSize::Bytes(9),
             247 | 257 | 266 => DptWireSize::Bytes(12),
             16 | 269 => DptWireSize::Bytes(14),
@@ -507,14 +508,15 @@ mod tests {
         }
     }
 
-    /// Every main group of KNX Standard `03_07_02` v02.02.01 (the overview table and the chapters).
+    /// Every main group of KNX Standard `03_07_02` v02.02.01 and of the ETS 6.3 master data.
     const SPEC_MAIN_GROUPS: &[u16] = &[
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
         26, 27, 28, 29, 30, 31, 200, 201, 202, 203, 204, 205, 206, 207, 209, 210, 211, 212, 213,
         214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 229, 230, 231, 232, 234, 235,
         236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253,
         254, 255, 256, 257, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 276, 277, 278, 279,
-        280, 281, 282, 283, 284,
+        280, 281, 282, 283, 284, // Not in v02.02.01, but in the ETS 6.3 master data.
+        275, 285, 288,
     ];
 
     /// A value of the shape the codec of `dpt` uses, with every field zero (valid for all).
