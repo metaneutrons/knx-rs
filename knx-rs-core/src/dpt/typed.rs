@@ -32,9 +32,9 @@
 //!
 //! Sources: KNX Standard `03_07_02` v02.02.01 and the ETS master data (`knx_master.xml`, schema
 //! 23, version 313). Where they differ, the choice is the one of the codec (see its module
-//! documentation). For 207.100 and 207.105 the bit diagrams of the standard show fewer
-//! attribute bits (`00BBBBBB` and `0000BBBB`) than the attribute tables define (bits 0 to 3 and 0
-//! to 4). The tables are followed, as xknx does; the ETS master data does not list these types.
+//! documentation). For 207.100 and 207.105 the bit diagrams of the standard disagree with the
+//! attribute tables; the tables are followed, see [`StatusBuc`] and [`StatusAct`] for the
+//! details and the reasons. The ETS master data does not list these types.
 //!
 //! Not covered: types whose layout the standard leaves open (the Z8 groups 200 to 205 and the
 //! energy registers 277 to 284), and the other subtypes of the groups above, which would need
@@ -331,6 +331,21 @@ impl TypedDpt for DateTime {
 ///
 /// Two octets: the actual relative power in percent and four attribute bits. The power is
 /// range-checked (0 to 100) only while `relative_power_valid` is set on decoding.
+///
+/// # Contradiction in the standard
+///
+/// KNX Standard 03.07.02 (Interworking, Datapoint Types) v02.02.01, section 4.13.1, page 148
+/// (<https://support.knx.org/hc/en-us/articles/15392604906514-Interworking-Datapoint-types>)
+/// draws the attribute octet as `00BBBBBB`, that is, six usable bits. The attribute table of
+/// the same section defines bits 0 to 3 (`PrelBurnerValid`, `Fault`, `StatusStage1`,
+/// `StatusStage2`) and calls bits 4 to 7 reserved, default 0. The two cannot both hold, and
+/// bits 4 and 5 are in neither reading a defined flag.
+///
+/// This type follows the table: it names exactly the four attributes the table defines and
+/// writes the other bits as 0. Reasons: only the table gives the attributes a name and a
+/// meaning, a diagram of fewer reserved bits does not add any, and xknx implements the same
+/// four bits. The ETS master data (schema 23, version 313) does not list 207.100, so there is
+/// no third source. A receiver of a frame with bits 4 to 7 set ignores them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[allow(clippy::struct_excessive_bools)]
@@ -353,6 +368,7 @@ impl TypedDpt for StatusBuc {
 
     fn decode(payload: &[u8]) -> Result<Self, DptError> {
         let [power, attributes] = octets::<2>(payload)?;
+        // The attribute table (bits 0 to 3), not the `00BBBBBB` diagram; see the type docs.
         let value = Self {
             relative_power: power,
             relative_power_valid: flag(attributes, 0),
@@ -380,6 +396,20 @@ impl TypedDpt for StatusBuc {
 ///
 /// Two octets: the actual position in percent and five attribute bits. There is no validity bit,
 /// the position is always range-checked (0 to 100).
+///
+/// # Contradiction in the standard
+///
+/// KNX Standard 03.07.02 (Interworking, Datapoint Types) v02.02.01, section 4.13.5, page 151
+/// (<https://support.knx.org/hc/en-us/articles/15392604906514-Interworking-Datapoint-types>)
+/// draws the attribute octet as `0000BBBB`, that is, four usable bits. The attribute table of
+/// the same section defines five: bits 0 to 3 (`Failure`, `ManualOverride`, `CalibrationMode`,
+/// `ValveKick`) and bit 4 (`SynchronizationMode`), and calls only bits 5 to 7 reserved.
+///
+/// This type follows the table, so `synchronization_mode` (bit 4) is read and written. Reasons:
+/// following the diagram would drop a flag the table names and explains, and a device that
+/// reports a stroke-model synchronisation would then look idle. xknx also implements five bits.
+/// The ETS master data (schema 23, version 313) does not list 207.105, so there is no third
+/// source. A receiver of a frame with bits 5 to 7 set ignores them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[allow(clippy::struct_excessive_bools)]
@@ -404,6 +434,7 @@ impl TypedDpt for StatusAct {
 
     fn decode(payload: &[u8]) -> Result<Self, DptError> {
         let [position, attributes] = octets::<2>(payload)?;
+        // The attribute table (bits 0 to 4), not the `0000BBBB` diagram; see the type docs.
         ensure(position <= 100, "position outside 0..=100")?;
         Ok(Self {
             position,
