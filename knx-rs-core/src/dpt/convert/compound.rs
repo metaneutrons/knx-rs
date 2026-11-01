@@ -47,17 +47,20 @@
 //!   lower bits reserved. The octets are carried unchanged, so both readings round-trip.
 //! - 6.020 follows the ETS master data, calimero and the usual implementations: a status flag is 1
 //!   when set. The standard's text says 0 = set and 1 = clear. The value is the byte as it is.
+//! - Wherever the standard and the ETS master data disagree, ETS is followed:
+//!   - 21.1010, 22.1010 and 30.1010 (channel activation): channel 1 is the most significant bit
+//!     (bit 7, 15 and 23 of the `UInt`), not bit 0 as the standard's text numbers them. xknx
+//!     follows the standard's text here.
+//!   - 237.600: the address bit is 1 for a group address (the table of the standard and ETS; the
+//!     sentence below the table of the standard says the opposite).
+//!   - 229.001: `ValInfField` is a whole octet; ETS lists codes from 0 to 177, not only 00h to 7Fh.
 //!
 //! Still open:
 //!
-//! - 21.1010, 22.1010 and 30.1010 (channel activation): the standard's text numbers the channels
-//!   from bit 0, the ETS master data has channel 1 as the most significant bit.
 //! - 207.100 and 207.105: the bit diagrams disagree with the attribute tables, and the master
-//!   data has only 207.600.
-//! - 237.600: the sentence below the table in the standard gives the opposite meaning to the
-//!   address bit (the master data agrees with the table).
-//! - 229.001: the standard says "N8, 00h to 7Fh" but the codes run from 80h.
-//! - 273.004 refers to 9.007 (relative humidity) where 9.029 (absolute humidity) is meant.
+//!   data has only 207.600, so there is nothing to follow.
+//! - 273.004 (absolute humidity) refers to 9.007 (relative humidity) in the standard where 9.029
+//!   is meant; ETS has no value reference for it. The octets are carried, so it does not matter.
 //! - 277 to 284, 200 to 205 and the other groups that are not in the master data: the extensions
 //!   for energy registers are not defined in the standard (unit of reactive energy, tariff of
 //!   registers without one, padding of the 12-octet string).

@@ -671,6 +671,23 @@ mod tests {
     }
 
     #[test]
+    fn channel_activation_has_channel_one_in_the_most_significant_bit() {
+        // 21.1010, 22.1010 and 30.1010 as ETS lists the fields: channel 1 first, so bit 7, 15 or
+        // 23 of the value, not bit 0 as the text of the standard numbers it.
+        let cases: &[(Dpt, usize, u32)] = &[
+            (Dpt::new(21, 1010), 1, 0x80),
+            (Dpt::new(22, 1010), 2, 0x8000),
+            (Dpt::new(30, 1010), 3, 0x80_0000),
+        ];
+        for &(dpt, octets, channel_one) in cases {
+            let wire = channel_one.to_be_bytes();
+            let wire = &wire[4 - octets..];
+            assert_eq!(decode(dpt, wire).unwrap(), DptValue::UInt(channel_one));
+            assert_eq!(encode(dpt, &DptValue::UInt(channel_one)).unwrap(), wire);
+        }
+    }
+
+    #[test]
     fn float16_marks_invalid_data_with_7fff() {
         let dpt = DPT_VALUE_TEMP;
         let decoded = decode(dpt, &[0x7F, 0xFF]).unwrap();
