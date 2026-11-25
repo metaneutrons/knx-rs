@@ -8,7 +8,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{RawClient, group_write};
+use common::{RawClient, WAIT, group_write};
 use knx_rs_core::address::{DestinationAddress, GroupAddress, IndividualAddress};
 use knx_rs_core::cemi::CemiFrame;
 use knx_rs_core::message::MessageCode;
@@ -35,15 +35,19 @@ async fn consumer_that_sends_from_its_receive_loop_does_not_deadlock() {
     let mut server = DeviceServer::start_at("127.0.0.1:0".parse().unwrap())
         .await
         .unwrap();
-    let client = Arc::new(RawClient::connect(server.local_addr()).await);
-    let _acker = Arc::clone(&client).spawn_acker();
+    let client = RawClient::connect(server.local_addr()).await;
 
-    // A burst larger than the event queue (64) arrives in one go. The group
-    // address counts the requests, so the order can be checked.
+    // Fill the event queue (64) and its backlog before the consumer starts.
+    // Wait for each L_Data.con so the UDP receive buffer cannot lose the burst.
     for i in 0..BURST {
         let seq = u8::try_from(i % 256).unwrap();
         client.send_request(seq, &write_to(i)).await;
+        let (confirmation_seq, _) = client.recv_request(WAIT).await.unwrap_or_else(|| {
+            panic!("missing confirmation for request {i} before the consumer started")
+        });
+        client.ack(confirmation_seq).await;
     }
+    let _acker = Arc::new(client).spawn_acker();
 
     // The consumer answers every event with a batch of frames, from the same
     // task that receives, which is how a bus access unit is driven.
