@@ -42,15 +42,28 @@ Describe the user-visible behavior, compatibility impact, and verification
 performed. Pull requests are squash-merged after all required checks pass and
 review conversations are resolved.
 
-## Contribution licence
+## Contributor License Agreement (CLA)
 
-Every contribution is licensed under the terms in
-[CONTRIBUTION-LICENSE.md](CONTRIBUTION-LICENSE.md) (Apache-2.0 for your
-contribution, GPL-3.0-only for the project as a whole). You accept it by ticking
-the licence box in the pull request description. The `Contribution licence`
-check fails until the box is ticked. If several people author a pull request,
-each of them adds a `Signed-off-by:` line with their own email address to their
-commits.
+You retain copyright. Under the CLA, you license your contribution under
+Apache-2.0. This lets Fabian Schmieder distribute it as part of knx-rs under
+permissive or proprietary terms, subject to the Apache licence and its notice
+requirements. The current knx-rs release uses GPL-3.0-only.
+[English agreement](CONTRIBUTION-LICENSE.md) · [Deutsche Fassung](CONTRIBUTION-LICENSE.de.md)
+
+1. Read the agreement and tick the versioned CLA box in your pull request.
+   Identify third-party material, its source and its licence in the description.
+2. If several people contributed, each signs their own commits with
+   `git commit -s`. Each named co-author adds their own `Signed-off-by:` line
+   with the same email used in their `Co-authored-by:` line. For this project
+   the sign-off records acceptance of the CLA under section 8.
+3. Before merging, check that any disclosed third-party licences permit the
+   intended uses. Keep the PR declaration in the squash commit and retain the
+   original sign-offs for multi-author PRs in its message.
+
+The required **Contribution licence declaration** check runs again when the PR
+description or its commits change. The maintainer and the project's dependency,
+release and CI bots are exempt for their own submissions. The check examines
+other authors on those PRs too.
 
 For security issues, follow [SECURITY.md](SECURITY.md) instead of opening a
 public pull request.

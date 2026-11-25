@@ -27,6 +27,6 @@ jobs:
           MAINTAINERS: metaneutrons
         run: |
           set -euo pipefail
-          gh api "$PR_API" > "$RUNNER_TEMP/pr.json"
+          gh api -H 'Accept: application/vnd.github.full+json' "$PR_API" > "$RUNNER_TEMP/pr.json"
           gh api --paginate --slurp "$PR_API/commits" | jq 'add // []' > "$RUNNER_TEMP/commits.json"
           python3 -I scripts/check-contribution-license.py "$RUNNER_TEMP/pr.json" "$RUNNER_TEMP/commits.json"
