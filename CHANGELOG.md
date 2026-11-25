@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/metaneutrons/knx-rs/compare/v0.14.0...v0.14.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **contrib:** enforce the CLA for contributors on every pull request ([#128](https://github.com/metaneutrons/knx-rs/issues/128)) ([51c6c91](https://github.com/metaneutrons/knx-rs/commit/51c6c9127ebd4587b1e341d2474217a326a68d76))
+
 ## [0.14.0](https://github.com/metaneutrons/knx-rs/compare/v0.13.0...v0.14.0) (2026-11-01)
 
 
