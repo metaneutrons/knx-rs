@@ -429,4 +429,8 @@ We are grateful for the OpenKNX community's work in creating and maintaining an 
 
 ## License
 
-GPL-3.0-only — see [LICENSE](LICENSE). Contributions are accepted under the [Contribution Licence](CONTRIBUTION-LICENSE.md).
+knx-rs is distributed under [GPL-3.0-only](LICENSE). New contributions are
+licensed under Apache-2.0 through the [Contributor License Agreement](CONTRIBUTION-LICENSE.md).
+This allows those contributions to be used in future releases under other terms,
+including licences without copyleft. Third-party material remains subject to its
+own licence.
